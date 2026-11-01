@@ -1,0 +1,6 @@
+{
+  "name": "সালমা ফুড কর্ণার - Salma Food Corner",
+  "description": "অনলাইন ফুড অর্ডারিং, ডেলিভারি ট্র্যাকিং, লয়্যালটি পয়েন্ট, ইনকাম-এক্সপেন্স লেজার এবং এআই চ্যাটবট সহ একটি আধুনিক রেস্টুরেন্ট অ্যাপ।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
