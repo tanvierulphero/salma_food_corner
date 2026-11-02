@@ -1,11 +1,25 @@
 @import "tailwindcss";
 
 @layer base {
-  body {
+  html, body {
     font-family: 'Hind Siliguri', 'Inter', sans-serif;
-    background-color: #fffbeb; /* Light yellow warm tint */
+    background-color: #1c1917; /* Dark stone ambient backdrop for mobile frame */
     color: #1f2937;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
   }
+}
+
+/* Hide scrollbars on horizontal touch carousels */
+.scrollbar-none::-webkit-scrollbar,
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-none,
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 @keyframes pulse-slow {

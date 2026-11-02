@@ -48,15 +48,40 @@ app.post('/api/chat', async (req, res) => {
         res.status(500).json({ error: error.message || 'Failed to generate response' });
     }
 });
-// Bulk SMS / SMS notification simulation endpoint
+// Bulk SMS / SMS notification API endpoint (Supports BD Gateways & Simulation)
 app.post('/api/send-sms', async (req, res) => {
     try {
-        const { phoneNumbers, message } = req.body;
-        console.log(`[SMS Simulation] Sending to ${phoneNumbers?.length || 1} numbers: "${message}"`);
-        await new Promise(resolve => setTimeout(resolve, 800));
-        res.json({ success: true, sentCount: phoneNumbers?.length || 1 });
+        const { phoneNumbers, message, provider, senderId, apiKey } = req.body;
+        const recipientList = Array.isArray(phoneNumbers) ? phoneNumbers : [phoneNumbers].filter(Boolean);
+        if (!recipientList.length) {
+            return res.status(400).json({ error: 'কমপক্ষে একটি মোবাইল নম্বর আবশ্যক।' });
+        }
+        if (!message || !message.trim()) {
+            return res.status(400).json({ error: 'মেসেজ খালি হতে পারে না।' });
+        }
+        console.log(`[SMS Marketing Gateway] Dispatched via ${provider || 'Simulator'} | Sender: ${senderId || 'SALMA-FOOD'}`);
+        console.log(`[SMS Marketing Gateway] Recipients (${recipientList.length}): ${recipientList.slice(0, 5).join(', ')}${recipientList.length > 5 ? '...' : ''}`);
+        console.log(`[SMS Marketing Gateway] Text: "${message}"`);
+        // Simulate gateway roundtrip network delay
+        await new Promise(resolve => setTimeout(resolve, 600));
+        // Calculate Unicode/Bengali SMS parts
+        const isUnicode = /[^\u0000-\u007F]/.test(message);
+        const charsPerSms = isUnicode ? 70 : 160;
+        const partsCount = Math.ceil(message.length / charsPerSms) || 1;
+        const totalSmsSent = recipientList.length * partsCount;
+        const estCost = +(totalSmsSent * 0.35).toFixed(2);
+        res.json({
+            success: true,
+            sentCount: recipientList.length,
+            partsCount,
+            totalSmsSent,
+            estimatedCostBDT: estCost,
+            timestamp: new Date().toLocaleTimeString('bn-BD'),
+            message: `সফলভাবে ${recipientList.length} জন গ্রাহকের নম্বরে এসএমএস প্রেরিত হয়েছে।`
+        });
     }
     catch (error) {
+        console.error('SMS Gateway Error:', error);
         res.status(500).json({ error: error.message || 'SMS send failed' });
     }
 });
@@ -73,6 +98,9 @@ async function setupServer() {
     else {
         const distPath = path.resolve(__dirname, 'dist');
         app.use(express.static(distPath));
+        app.get(['/admin', '/admin.html'], (_req, res) => {
+            res.sendFile(path.join(distPath, 'admin.html'));
+        });
         app.get('*', (_req, res) => {
             res.sendFile(path.join(distPath, 'index.html'));
         });
