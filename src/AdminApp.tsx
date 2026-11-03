@@ -24,6 +24,22 @@ import DueLedgerManager from './components/DueLedgerManager';
 
 const ADMIN_PIN_DEFAULT = '1234';
 
+// One-time clear of previous demo data so owner starts completely fresh from scratch
+if (typeof window !== 'undefined' && localStorage.getItem('salma_fresh_db_v1') !== 'true') {
+  try {
+    localStorage.setItem('salma_menu_items', JSON.stringify([]));
+    localStorage.setItem('salma_orders', JSON.stringify([]));
+    localStorage.setItem('salma_ledger', JSON.stringify([]));
+    localStorage.setItem('salma_customers', JSON.stringify({}));
+    localStorage.setItem('salma_due_ledger', JSON.stringify([]));
+    localStorage.setItem('salma_sms_logs', JSON.stringify([]));
+    localStorage.removeItem('salma_logged_customer');
+    localStorage.setItem('salma_fresh_db_v1', 'true');
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 export default function AdminApp() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem('salma_admin_auth') === 'true';
@@ -45,7 +61,7 @@ export default function AdminApp() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
         console.error(e);
       }
@@ -76,11 +92,7 @@ export default function AdminApp() {
         console.error(e);
       }
     }
-    return [
-      { id: 'l1', voucherNo: 'VCH-1001', type: 'income', category: 'খাবার বিক্রয় (Food Sales)', amount: 3200, date: todayStr, paymentMethod: 'Cash', note: 'সকালের বিক্রয় রসিদ' },
-      { id: 'l2', voucherNo: 'VCH-1002', type: 'expense', category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: 1200, date: todayStr, paymentMethod: 'Cash', note: 'খাসির মাংস ও চাল ক্রয়' },
-      { id: 'l3', voucherNo: 'VCH-1003', type: 'expense', category: 'গ্যাস ও বিদ্যুৎ বিল (Utilities)', amount: 300, date: todayStr, paymentMethod: 'bKash', note: 'সিলিন্ডার গ্যাস রিফিল' }
-    ];
+    return [];
   });
 
   const [customers, setCustomers] = useState<Record<string, CustomerProfile>>(() => {
@@ -88,49 +100,12 @@ export default function AdminApp() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Object.keys(parsed).length > 0) return parsed;
+        if (parsed && typeof parsed === 'object') return parsed;
       } catch (e) {
         console.error(e);
       }
     }
-    return {
-      '01712345678': {
-        phone: '01712345678',
-        name: 'রহিম উদ্দিন',
-        address: 'ধানমন্ডি ৩২, ঢাকা',
-        loyaltyPoints: 150,
-        registeredAt: '2026-10-15',
-        totalOrders: 4,
-        totalSpent: 1280
-      },
-      '01811223344': {
-        phone: '01811223344',
-        name: 'তানিয়া আক্তার',
-        address: 'সোবহানবাগ মসজিদ রোড, ঢাকা',
-        loyaltyPoints: 80,
-        registeredAt: '2026-10-22',
-        totalOrders: 2,
-        totalSpent: 560
-      },
-      '01933445566': {
-        phone: '01933445566',
-        name: 'শাকিল আহমেদ',
-        address: 'শুক্রাবাদ বাজার মোড়, ঢাকা',
-        loyaltyPoints: 210,
-        registeredAt: '2026-10-25',
-        totalOrders: 6,
-        totalSpent: 2450
-      },
-      '01655667788': {
-        phone: '01655667788',
-        name: 'সুমাইয়া খান',
-        address: 'কলাবাগান ডলফিন গলি, ঢাকা',
-        loyaltyPoints: 40,
-        registeredAt: '2026-10-28',
-        totalOrders: 1,
-        totalSpent: 320
-      }
-    };
+    return {};
   });
 
   const [activeOffer, setActiveOffer] = useState<string>(() => {
@@ -313,12 +288,57 @@ export default function AdminApp() {
     }
   };
 
-  const handleResetMenu = () => {
-    if (confirm('মেনুটি প্রাথমিক ডিফল্ট তালিকায় ফিরিয়ে নিতে চান?')) {
-      setMenuItems(INITIAL_MENU_DATA);
-      alert('মেনু সফলভাবে প্রাথমিক তালিকায় রিস্টোর হয়েছে।');
+  const handleClearAllData = () => {
+    if (confirm('আপনি কি সমস্ত ডাটা (মেনু, অর্ডার, লেজার, বাকি খাতা ও কাস্টমার তালিকা) সম্পূর্ণ পরিষ্কার করে নতুন করে শুরু করতে চান?')) {
+      setMenuItems([]);
+      setOrders([]);
+      setLedger([]);
+      setCustomers({});
+      localStorage.setItem('salma_menu_items', JSON.stringify([]));
+      localStorage.setItem('salma_orders', JSON.stringify([]));
+      localStorage.setItem('salma_ledger', JSON.stringify([]));
+      localStorage.setItem('salma_customers', JSON.stringify({}));
+      localStorage.setItem('salma_due_ledger', JSON.stringify([]));
+      localStorage.setItem('salma_sms_logs', JSON.stringify([]));
+      localStorage.removeItem('salma_logged_customer');
+      if (soundOn) playAddToCartSound();
+      alert('সকল ডাটা সফলভাবে মুছে ফেলা হয়েছে! এখন আপনি নতুন ফ্রেশ ডাটা এন্ট্রি করতে পারেন।');
     }
   };
+
+  // Customer Add Modal State
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [newCustPhone, setNewCustPhone] = useState('');
+  const [newCustName, setNewCustName] = useState('');
+  const [newCustAddress, setNewCustAddress] = useState('');
+
+  const handleAddCustomer = (e: React.FormEvent) => {
+    e.preventDefault();
+    const phone = newCustPhone.trim();
+    const name = newCustName.trim();
+    const address = newCustAddress.trim();
+    if (!phone || !name) {
+      alert('অনুগ্রহ করে গ্রাহকের নাম ও মোবাইল নম্বর লিখুন।');
+      return;
+    }
+    const newProfile: CustomerProfile = {
+      phone,
+      name,
+      address: address || 'ঢাকা',
+      loyaltyPoints: 0,
+      registeredAt: todayStr,
+      totalOrders: 0,
+      totalSpent: 0
+    };
+    setCustomers(prev => ({ ...prev, [phone]: newProfile }));
+    setCustomerModalOpen(false);
+    setNewCustPhone('');
+    setNewCustName('');
+    setNewCustAddress('');
+    if (soundOn) playAddToCartSound();
+    alert(`গ্রাহক '${name}' সফলভাবে ডাটাবেজে যুক্ত হয়েছেন!`);
+  };
+
 
   // -------------------------------------------------------------
   // POS LEDGER & ACCOUNTING (দৈনিক আয় ও ব্যয়ের হিসাব)
@@ -924,12 +944,12 @@ export default function AdminApp() {
 
               <div className="flex items-center gap-2">
                 <button 
-                  onClick={handleResetMenu}
-                  className="border border-gray-300 hover:bg-gray-100 text-gray-700 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1 transition cursor-pointer"
-                  title="ডিফল্ট মেনু রিস্টোর"
+                  onClick={handleClearAllData}
+                  className="border border-red-200 hover:bg-red-50 text-red-700 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1 transition cursor-pointer"
+                  title="সকল ডেমো ডাটা মুছুন"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>রিস্টোর</span>
+                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                  <span>ডাটা মুছুন</span>
                 </button>
                 <button 
                   onClick={handleOpenAddFood}
@@ -976,49 +996,70 @@ export default function AdminApp() {
             </div>
 
             {/* Menu Items Mobile Cards */}
-            <div className="grid grid-cols-1 gap-3">
-              {filteredMenu.map(item => (
-                <div key={item.id} className="bg-white rounded-2xl border border-gray-200 p-3 shadow-xs flex gap-3 items-center hover:shadow-md transition">
-                  <div className="relative w-24 h-24 rounded-xl overflow-hidden shrink-0 bg-gray-100">
-                    <img src={item.image} alt={item.nameBn} className="w-full h-full object-cover" />
-                    <span className="absolute top-1 left-1 bg-black/70 text-white text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
-                      {item.category}
-                    </span>
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start gap-1">
-                      <h3 className="font-bold text-gray-900 text-sm truncate">{item.nameBn}</h3>
-                      <span className="text-sm font-black text-red-600 shrink-0">৳{item.price}</span>
-                    </div>
-                    <p className="text-[11px] text-gray-500 truncate">{item.nameEn}</p>
-                    <p className="text-[11px] text-gray-600 line-clamp-1 mt-0.5">{item.descriptionBn}</p>
-
-                    <div className="pt-2 mt-1.5 border-t border-gray-100 flex items-center justify-between">
-                      <span className="text-[10px] text-gray-400">
-                        ⭐ {item.rating} ({item.reviewsCount})
+            {filteredMenu.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-dashed border-gray-300 p-8 text-center space-y-3">
+                <div className="w-14 h-14 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+                  <Utensils className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm">মেনুতে কোনো খাবার নেই</h3>
+                  <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
+                    সকল ডেমো ডাটা মুছে ফেলা হয়েছে। আপনার আসল খাবার ও মূল্য যোগ করতে নিচের বাটনে চাপ দিন।
+                  </p>
+                </div>
+                <button 
+                  onClick={handleOpenAddFood}
+                  className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>+ নতুন খাবার যোগ করুন</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3">
+                {filteredMenu.map(item => (
+                  <div key={item.id} className="bg-white rounded-2xl border border-gray-200 p-3 shadow-xs flex gap-3 items-center hover:shadow-md transition">
+                    <div className="relative w-24 h-24 rounded-xl overflow-hidden shrink-0 bg-gray-100">
+                      <img src={item.image} alt={item.nameBn} className="w-full h-full object-cover" />
+                      <span className="absolute top-1 left-1 bg-black/70 text-white text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
+                        {item.category}
                       </span>
-                      <div className="flex items-center gap-1.5">
-                        <button 
-                          onClick={() => handleOpenEditFood(item)}
-                          className="bg-amber-50 hover:bg-amber-100 text-amber-800 px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 border border-amber-200 cursor-pointer"
-                        >
-                          <Edit3 className="w-3 h-3" />
-                          <span>এডিট</span>
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteFood(item.id, item.nameBn)}
-                          className="bg-red-50 hover:bg-red-100 text-red-700 p-1.5 rounded-lg text-xs font-bold transition border border-red-200 cursor-pointer"
-                          title="মুছে ফেলুন (বিয়োজন)"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-start gap-1">
+                        <h3 className="font-bold text-gray-900 text-sm truncate">{item.nameBn}</h3>
+                        <span className="text-sm font-black text-red-600 shrink-0">৳{item.price}</span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 truncate">{item.nameEn}</p>
+                      <p className="text-[11px] text-gray-600 line-clamp-1 mt-0.5">{item.descriptionBn}</p>
+
+                      <div className="pt-2 mt-1.5 border-t border-gray-100 flex items-center justify-between">
+                        <span className="text-[10px] text-gray-400">
+                          ⭐ {item.rating} ({item.reviewsCount})
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button 
+                            onClick={() => handleOpenEditFood(item)}
+                            className="bg-amber-50 hover:bg-amber-100 text-amber-800 px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 border border-amber-200 cursor-pointer"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                            <span>এডিট</span>
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteFood(item.id, item.nameBn)}
+                            className="bg-red-50 hover:bg-red-100 text-red-700 p-1.5 rounded-lg text-xs font-bold transition border border-red-200 cursor-pointer"
+                            title="মুছে ফেলুন (বিয়োজন)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
 
           </div>
         )}
@@ -1062,44 +1103,52 @@ export default function AdminApp() {
             </div>
 
             {/* Mobile Ledger Cards List */}
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-xs divide-y divide-gray-100 overflow-hidden">
-              {ledger.map(entry => (
-                <div key={entry.id} className="p-3.5 flex items-center justify-between gap-2 hover:bg-gray-50 transition">
-                  <div className="space-y-0.5 min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`inline-flex items-center gap-0.5 px-2 py-0.2 rounded-full text-[10px] font-bold ${
-                        entry.type === 'income' 
-                          ? 'bg-emerald-100 text-emerald-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {entry.type === 'income' ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                        <span>{entry.type === 'income' ? 'আয়' : 'ব্যয়'}</span>
-                      </span>
-                      <span className="font-mono text-[10px] font-bold text-gray-500">{entry.voucherNo}</span>
-                      <span className="bg-gray-100 text-gray-700 px-1.5 py-0.2 rounded font-mono text-[10px]">{entry.paymentMethod}</span>
+            {ledger.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-dashed border-gray-300 p-8 text-center text-gray-400 space-y-2">
+                <BarChart2 className="w-10 h-10 mx-auto text-gray-300" />
+                <p className="text-sm font-bold text-gray-700">খতিয়ানে কোনো হিসাব এন্ট্রি নেই</p>
+                <p className="text-xs text-gray-400">ড্যাশবোর্ডের দৈনিক আয় বা ব্যয় কার্ড থেকে নতুন হিসাব এন্ট্রি করুন।</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-xs divide-y divide-gray-100 overflow-hidden">
+                {ledger.map(entry => (
+                  <div key={entry.id} className="p-3.5 flex items-center justify-between gap-2 hover:bg-gray-50 transition">
+                    <div className="space-y-0.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`inline-flex items-center gap-0.5 px-2 py-0.2 rounded-full text-[10px] font-bold ${
+                          entry.type === 'income' 
+                            ? 'bg-emerald-100 text-emerald-800' 
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {entry.type === 'income' ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                          <span>{entry.type === 'income' ? 'আয়' : 'ব্যয়'}</span>
+                        </span>
+                        <span className="font-mono text-[10px] font-bold text-gray-500">{entry.voucherNo}</span>
+                        <span className="bg-gray-100 text-gray-700 px-1.5 py-0.2 rounded font-mono text-[10px]">{entry.paymentMethod}</span>
+                      </div>
+                      <p className="text-xs font-bold text-gray-900 truncate">{entry.category}</p>
+                      {entry.note && <p className="text-[10px] text-gray-500 line-clamp-1">{entry.note}</p>}
+                      <p className="text-[10px] text-gray-400 font-mono">{entry.date}</p>
                     </div>
-                    <p className="text-xs font-bold text-gray-900 truncate">{entry.category}</p>
-                    {entry.note && <p className="text-[10px] text-gray-500 line-clamp-1">{entry.note}</p>}
-                    <p className="text-[10px] text-gray-400 font-mono">{entry.date}</p>
-                  </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`font-black text-sm ${
-                      entry.type === 'income' ? 'text-emerald-700' : 'text-red-600'
-                    }`}>
-                      {entry.type === 'income' ? '+' : '-'}৳{entry.amount}
-                    </span>
-                    <button 
-                      onClick={() => handleDeleteLedger(entry.id)}
-                      className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition cursor-pointer"
-                      title="মুছে ফেলুন"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`font-black text-sm ${
+                        entry.type === 'income' ? 'text-emerald-700' : 'text-red-600'
+                      }`}>
+                        {entry.type === 'income' ? '+' : '-'}৳{entry.amount}
+                      </span>
+                      <button 
+                        onClick={() => handleDeleteLedger(entry.id)}
+                        className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition cursor-pointer"
+                        title="মুছে ফেলুন"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
 
           </div>
         )}
@@ -1350,40 +1399,67 @@ export default function AdminApp() {
                 </h2>
                 <p className="text-xs text-gray-500">পাসওয়ার্ড ছাড়া শুধুমাত্র মোবাইল নম্বর দিয়ে যুক্ত সকল গ্রাহক প্রোফাইল</p>
               </div>
+
+              <button 
+                onClick={() => setCustomerModalOpen(true)}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ নতুন গ্রাহক যোগ</span>
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3">
-              {Object.values(customers).map(cust => (
-                <div key={cust.phone} className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs space-y-2.5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-amber-500 text-white flex items-center justify-center font-black text-base shadow-sm">
-                      {cust.name.charAt(0)}
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-gray-900 text-sm">{cust.name}</h4>
-                      <p className="text-xs text-gray-500 font-mono">📱 {cust.phone}</p>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-gray-600">📍 {cust.address}</p>
-
-                  <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200 flex justify-between items-center text-xs">
-                    <div>
-                      <span className="text-gray-500 text-[10px] block">লয়্যালটি পয়েন্ট</span>
-                      <span className="font-black text-amber-700">🎁 {cust.loyaltyPoints} Pts</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 text-[10px] block">মোট অর্ডার</span>
-                      <span className="font-black text-gray-800">{cust.totalOrders} টি</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 text-[10px] block">মোট খরচ</span>
-                      <span className="font-black text-emerald-700">৳ {cust.totalSpent}</span>
-                    </div>
-                  </div>
+            {Object.keys(customers).length === 0 ? (
+              <div className="bg-white rounded-3xl border border-dashed border-gray-300 p-8 text-center text-gray-400 space-y-3">
+                <Users className="w-12 h-12 mx-auto opacity-30 text-blue-600" />
+                <div>
+                  <h3 className="font-bold text-gray-800 text-sm">কোনো গ্রাহকের তথ্য নেই</h3>
+                  <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
+                    সকল ডেমো কাস্টমার ডাটা মুছে ফেলা হয়েছে। সরাসরি নতুন নিয়মিত কাস্টমার যুক্ত করতে নিচের বাটনে চাপ দিন।
+                  </p>
                 </div>
-              ))}
-            </div>
+                <button 
+                  onClick={() => setCustomerModalOpen(true)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>+ নতুন গ্রাহক যোগ করুন</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3">
+                {Object.values(customers).map(cust => (
+                  <div key={cust.phone} className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs space-y-2.5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-amber-500 text-white flex items-center justify-center font-black text-base shadow-sm">
+                        {cust.name.charAt(0)}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900 text-sm">{cust.name}</h4>
+                        <p className="text-xs text-gray-500 font-mono">📱 {cust.phone}</p>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-gray-600">📍 {cust.address}</p>
+
+                    <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200 flex justify-between items-center text-xs">
+                      <div>
+                        <span className="text-gray-500 text-[10px] block">লয়্যালটি পয়েন্ট</span>
+                        <span className="font-black text-amber-700">🎁 {cust.loyaltyPoints} Pts</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 text-[10px] block">মোট অর্ডার</span>
+                        <span className="font-black text-gray-800">{cust.totalOrders} টি</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 text-[10px] block">মোট খরচ</span>
+                        <span className="font-black text-emerald-700">৳ {cust.totalSpent}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
           </div>
         )}
@@ -1629,6 +1705,78 @@ export default function AdminApp() {
                 <span>প্রিন্ট করুন</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: ADD CUSTOMER MODAL                                      */}
+      {/* ============================================================== */}
+      {customerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-4 border border-gray-200">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-blue-600" />
+                <span>+ নতুন গ্রাহক প্রোফাইল যোগ করুন</span>
+              </h3>
+              <button onClick={() => setCustomerModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddCustomer} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">গ্রাহকের নাম *</label>
+                <input 
+                  type="text"
+                  placeholder="যেমন: মো: আরিফুল ইসলাম"
+                  value={newCustName}
+                  onChange={(e) => setNewCustName(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl p-2.5 text-xs font-bold"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর * (ইউনিক)</label>
+                <input 
+                  type="tel"
+                  placeholder="017xxxxxxxx"
+                  value={newCustPhone}
+                  onChange={(e) => setNewCustPhone(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl p-2.5 text-xs font-mono font-bold"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">ঠিকানা / এলাকা</label>
+                <input 
+                  type="text"
+                  placeholder="যেমন: ধানমন্ডি ৩২, ঢাকা"
+                  value={newCustAddress}
+                  onChange={(e) => setNewCustAddress(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl p-2.5 text-xs"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t">
+                <button 
+                  type="button"
+                  onClick={() => setCustomerModalOpen(false)}
+                  className="flex-1 border border-gray-300 py-2.5 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-100"
+                >
+                  বাতিল
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-xs font-bold shadow transition active:scale-95"
+                >
+                  সংরক্ষণ করুন
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

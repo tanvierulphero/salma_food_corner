@@ -99,89 +99,24 @@ interface Review {
   date: string;
 }
 
-const INITIAL_MENU: FoodItem[] = [
-  {
-    id: '1',
-    nameBn: 'স্পেশাল খাসির কাচ্চি বিরিয়ানি',
-    nameEn: 'Special Mutton Kacchi Biryani',
-    category: 'biryani',
-    price: 320,
-    originalPrice: 360,
-    image: 'https://images.unsplash.com/photo-1633964913295-ceb43826e7c9?auto=format&fit=crop&w=600&q=80',
-    rating: 4.9,
-    reviewsCount: 142,
-    descriptionBn: 'সুগন্ধি বাসমতি চাল, খাসির সুস্বাদু মাংস ও খাঁটি ঘিয়ে রান্না করা ঐতিহ্যবাহী কাচ্চি।',
-    descriptionEn: 'Traditional kacchi cooked with aromatic basmati rice, tender mutton, and pure ghee.',
-    spicyLevel: 2
-  },
-  {
-    id: '2',
-    nameBn: 'মুরগির তেহারি স্পেশাল',
-    nameEn: 'Special Chicken Tehari',
-    category: 'biryani',
-    price: 180,
-    originalPrice: 200,
-    image: 'https://images.unsplash.com/photo-1633964913295-ceb43826e7c9?auto=format&fit=crop&w=600&q=80',
-    rating: 4.7,
-    reviewsCount: 98,
-    descriptionBn: 'ছোট টুকরো মুরগির মাংস ও সর্ষের তেলে ফোঁড়ন দেওয়া সুস্বাদু তেহারি।',
-    descriptionEn: 'Mouthwatering tehari cooked with chicken pieces and aromatic mustard oil.',
-    spicyLevel: 2
-  },
-  {
-    id: '3',
-    nameBn: 'ক্রিস্পি চিকেন ফ্রাই (২ পিস)',
-    nameEn: 'Crispy Chicken Fry (2 Pcs)',
-    category: 'fastfood',
-    price: 220,
-    image: 'https://images.unsplash.com/photo-1626645738196-c2a7c87a8f58?auto=format&fit=crop&w=600&q=80',
-    rating: 4.8,
-    reviewsCount: 215,
-    descriptionBn: 'বাইরে মুচমুচে ও ভেতরে জুসি স্পেশাল ম্যারিনেটেড চিকেন ফ্রাই।',
-    descriptionEn: 'Crispy outside and juicy inside, specially marinated chicken fry.',
-    spicyLevel: 1
-  },
-  {
-    id: '4',
-    nameBn: 'বিফ ভুনা খিচুড়ি',
-    nameEn: 'Beef Bhuna Khichuri',
-    category: 'popular',
-    price: 280,
-    originalPrice: 310,
-    image: 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80',
-    rating: 4.9,
-    reviewsCount: 180,
-    descriptionBn: 'পোলাও চাল ও মুগ ডালের ভুনা খিচুড়ির সাথে স্পেশাল গরুর মাংস ভুনা।',
-    descriptionEn: 'Rich bhuna khichuri served with slow-cooked spicy beef bhuna.',
-    spicyLevel: 3
-  },
-  {
-    id: '5',
-    nameBn: 'সালমা স্পেশাল চিকেন বার্গার',
-    nameEn: 'Salma Special Chicken Burger',
-    category: 'fastfood',
-    price: 250,
-    image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=600&q=80',
-    rating: 4.6,
-    reviewsCount: 88,
-    descriptionBn: 'ডাবল চিকেন প্যাটি, স্পেশাল চিজ এবং সিগরেট সসে ভরপুর বার্গার।',
-    descriptionEn: 'Double chicken patty burger loaded with melted cheese and signature sauce.',
-    spicyLevel: 1
-  },
-  {
-    id: '6',
-    nameBn: 'শাহী জিলাপি ও বোরহানি কম্বো',
-    nameEn: 'Shahi Jilapi & Borhani Combo',
-    category: 'dessert',
-    price: 150,
-    image: 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80',
-    rating: 4.9,
-    reviewsCount: 310,
-    descriptionBn: 'গরম গরম ক্রিস্পি শাহী জিলাপি এবং রিফ্রেশিং ঠাণ্ডা বোরহানি।',
-    descriptionEn: 'Crispy hot shahi jilapi paired with refreshing cool borhani.',
-    isVeg: true
+// One-time clear of previous demo data so user starts fresh from scratch
+if (typeof window !== 'undefined' && localStorage.getItem('salma_fresh_db_v1') !== 'true') {
+  try {
+    localStorage.setItem('salma_menu_items', JSON.stringify([]));
+    localStorage.setItem('salma_orders', JSON.stringify([]));
+    localStorage.setItem('salma_ledger', JSON.stringify([]));
+    localStorage.setItem('salma_customers', JSON.stringify({}));
+    localStorage.setItem('salma_due_ledger', JSON.stringify([]));
+    localStorage.setItem('salma_sms_logs', JSON.stringify([]));
+    localStorage.removeItem('salma_logged_customer');
+    localStorage.setItem('salma_fresh_db_v1', 'true');
+  } catch (e) {
+    console.error(e);
   }
-];
+}
+
+const INITIAL_MENU: FoodItem[] = [];
+
 
 // Shop Location & 1 KM Free Delivery Zone Configuration
 export const SHOP_LOCATION = {
@@ -326,26 +261,7 @@ export default function App() {
         console.error(e);
       }
     }
-    return {
-      '01712345678': {
-        phone: '01712345678',
-        name: 'রহিম উদ্দিন',
-        address: 'ধানমন্ডি ৩২, ঢাকা',
-        loyaltyPoints: 150,
-        registeredAt: '2026-10-15',
-        totalOrders: 3,
-        totalSpent: 960
-      },
-      '01811223344': {
-        phone: '01811223344',
-        name: 'তানিয়া আক্তার',
-        address: 'গুলশান ২, ঢাকা',
-        loyaltyPoints: 80,
-        registeredAt: '2026-10-22',
-        totalOrders: 1,
-        totalSpent: 440
-      }
-    };
+    return {};
   });
 
   // Currently Logged-in Customer (Passwordless)
@@ -377,7 +293,7 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
         console.error(e);
       }
@@ -535,35 +451,12 @@ export default function App() {
         console.error(e);
       }
     }
-    return [
-      {
-        id: 'SF-1042',
-        customerName: 'রহিম উদ্দিন',
-        phone: '01712345678',
-        address: 'ধানমন্ডি ৩২, ঢাকা',
-        items: [{ ...INITIAL_MENU[0], quantity: 1 }],
-        totalAmount: 320,
-        discount: 0,
-        advancePaid: 160,
-        dueAmount: 160,
-        paymentMethod: 'bKash',
-        advancePaymentMethod: 'bKash',
-        transactionId: 'BK-948271',
-        paymentStatus: '50% Advance Paid (Due on Delivery)',
-        status: 'Out for Delivery',
-        createdAt: '10:30 AM',
-        date: todayStr,
-        loyaltyPointsEarned: 32,
-        deliveryDistanceKm: 0.3,
-        isFreeDeliveryWithin1km: true,
-        distanceVerificationMethod: 'Area'
-      }
-    ];
+    return [];
   });
 
   // 1 KM Free Delivery Zone States
-  const [customerDistanceKm, setCustomerDistanceKm] = useState<number | null>(0.3); // Default to 0.3 km (Dhanmondi 32)
-  const [distanceVerifiedType, setDistanceVerifiedType] = useState<'gps' | 'area' | 'address' | 'manual' | null>('area');
+  const [customerDistanceKm, setCustomerDistanceKm] = useState<number | null>(null);
+  const [distanceVerifiedType, setDistanceVerifiedType] = useState<'gps' | 'area' | 'address' | 'manual' | null>(null);
   const [isLocatingGps, setIsLocatingGps] = useState<boolean>(false);
   const [gpsMessage, setGpsMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [showShopLocationModal, setShowShopLocationModal] = useState<boolean>(false);
@@ -579,11 +472,7 @@ export default function App() {
         console.error(e);
       }
     }
-    return [
-      { id: 'l1', voucherNo: 'VCH-1001', type: 'income', category: 'খাবার বিক্রয় (Food Sales)', amount: 3200, date: todayStr, paymentMethod: 'Cash', note: 'সকালের বিক্রয় রসিদ' },
-      { id: 'l2', voucherNo: 'VCH-1002', type: 'expense', category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: 1200, date: todayStr, paymentMethod: 'Cash', note: 'খাসির মাংস ও চাল ক্রয়' },
-      { id: 'l3', voucherNo: 'VCH-1003', type: 'expense', category: 'গ্যাস ও বিদ্যুৎ বিল (Utilities)', amount: 300, date: todayStr, paymentMethod: 'bKash', note: 'সিলিন্ডার গ্যাস রিফিল' }
-    ];
+    return [];
   });
 
   // Quick POS Card Inputs
@@ -591,10 +480,7 @@ export default function App() {
   const [quickExpenseInput, setQuickExpenseInput] = useState({ category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: '', paymentMethod: 'Cash' as const, note: '' });
 
   // Reviews
-  const [reviews, setReviews] = useState<Review[]>([
-    { id: 'r1', customerName: 'নাজমুল ইসলাম', rating: 5, comment: 'কাচ্চি বিরিয়ানির স্বাদ অতুলনীয়! খুবই দ্রুত ডেলিভারি পেয়েছি।', date: 'আজ, সকাল ১০:৩০' },
-    { id: 'r2', customerName: 'তানিয়া আক্তার', rating: 5, comment: 'চিকেন ফ্রাই এবং বোরহানি দারুণ ছিল। হাইলি রেকমেন্ডেড!', date: 'গতকাল' }
-  ]);
+  const [reviews, setReviews] = useState<Review[]>([]);
 
   const [activeOffer, setActiveOffer] = useState<string>('🎉 সুখবর! দোকানের ১ কি.মি. পরিধিতে ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)! যেকোনো খাবারে ১০% ছাড়ে কোড: SALMA10');
   const [showOfferBanner, setShowOfferBanner] = useState<boolean>(true);
@@ -1574,93 +1460,114 @@ export default function App() {
                 </div>
 
                 {/* Mobile App Food List Cards (Image on Top, Name & Info Below) */}
-                <div className="grid grid-cols-1 gap-4">
-                  {filteredMenu.map(item => {
-                    const inCartItem = cart.find(c => c.id === item.id);
-                    const qty = getCardQuantity(item.id);
-                    return (
-                      <div 
-                        key={item.id} 
-                        className={`bg-white rounded-2xl p-3.5 shadow-xs hover:shadow-md transition border flex flex-col gap-3 ${
-                          inCartItem ? 'border-emerald-400 bg-emerald-50/10' : 'border-amber-100'
-                        }`}
-                      >
-                        {/* Top Food Image */}
-                        <div className="relative w-full h-44 rounded-xl overflow-hidden bg-amber-50">
-                          <img 
-                            src={item.image} 
-                            alt={item.nameBn} 
-                            className="w-full h-full object-cover" 
-                          />
-                          <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-xs text-white px-2 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-xs">
-                            <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-                            <span>{item.rating}</span>
+                {filteredMenu.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-dashed border-amber-300 p-8 text-center space-y-3 shadow-xs">
+                    <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+                      <Utensils className="w-7 h-7" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-gray-900 text-base">মেনুতে কোনো খাবার নেই</h3>
+                      <p className="text-xs text-gray-500 max-w-xs mx-auto mt-1">
+                        সকল ডেমো ডাটা পরিষ্কার করা হয়েছে। এডমিন প্যানেল থেকে আপনার দোকানের নতুন খাবারের তালিকা এন্ট্রি করুন।
+                      </p>
+                    </div>
+                    <a
+                      href="/admin.html"
+                      className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition"
+                    >
+                      <ChefHat className="w-4 h-4" />
+                      <span>এডমিন প্যানেলে খাবার যোগ করুন</span>
+                    </a>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4">
+                    {filteredMenu.map(item => {
+                      const inCartItem = cart.find(c => c.id === item.id);
+                      const qty = getCardQuantity(item.id);
+                      return (
+                        <div 
+                          key={item.id} 
+                          className={`bg-white rounded-2xl p-3.5 shadow-xs hover:shadow-md transition border flex flex-col gap-3 ${
+                            inCartItem ? 'border-emerald-400 bg-emerald-50/10' : 'border-amber-100'
+                          }`}
+                        >
+                          {/* Top Food Image */}
+                          <div className="relative w-full h-44 rounded-xl overflow-hidden bg-amber-50">
+                            <img 
+                              src={item.image} 
+                              alt={item.nameBn} 
+                              className="w-full h-full object-cover" 
+                            />
+                            <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-xs text-white px-2 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-xs">
+                              <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
+                              <span>{item.rating}</span>
+                            </div>
+                            {inCartItem && (
+                              <span className="absolute top-2.5 right-2.5 bg-emerald-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-lg shadow-xs">
+                                কার্টে {inCartItem.quantity}টি
+                              </span>
+                            )}
+                            {item.originalPrice && item.originalPrice > item.price && (
+                              <span className="absolute bottom-2.5 left-2.5 bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md shadow-xs">
+                                ৳{item.originalPrice - item.price} ছাড়
+                              </span>
+                            )}
                           </div>
-                          {inCartItem && (
-                            <span className="absolute top-2.5 right-2.5 bg-emerald-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-lg shadow-xs">
-                              কার্টে {inCartItem.quantity}টি
-                            </span>
-                          )}
-                          {item.originalPrice && item.originalPrice > item.price && (
-                            <span className="absolute bottom-2.5 left-2.5 bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md shadow-xs">
-                              ৳{item.originalPrice - item.price} ছাড়
-                            </span>
-                          )}
-                        </div>
 
-                        {/* Bottom Food Name, Description & Action Controls */}
-                        <div className="flex flex-col justify-between gap-2">
-                          <div>
-                            <h3 className="font-bold text-base text-gray-900 leading-snug">{item.nameBn}</h3>
-                            <p className="text-xs text-gray-500 line-clamp-2 mt-1 leading-relaxed">
-                              {item.descriptionBn}
-                            </p>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-2 pt-2.5 mt-1 border-t border-gray-100">
-                            <div className="flex items-baseline gap-1.5">
-                              <span className="text-base font-black text-red-600">৳{item.price}</span>
-                              {item.originalPrice && (
-                                <span className="text-xs text-gray-400 line-through">৳{item.originalPrice}</span>
-                              )}
+                          {/* Bottom Food Name, Description & Action Controls */}
+                          <div className="flex flex-col justify-between gap-2">
+                            <div>
+                              <h3 className="font-bold text-base text-gray-900 leading-snug">{item.nameBn}</h3>
+                              <p className="text-xs text-gray-500 line-clamp-2 mt-1 leading-relaxed">
+                                {item.descriptionBn}
+                              </p>
                             </div>
 
-                            <div className="flex items-center gap-2">
-                              {/* Direct - 1 + Quantity Stepper Button */}
-                              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 text-gray-900 rounded-full px-2.5 py-1 shadow-2xs">
-                                <button 
-                                  type="button"
-                                  onClick={() => handleCardStepper(item, -1)}
-                                  className="p-0.5 hover:bg-amber-200/60 active:scale-90 rounded-full text-red-600 cursor-pointer"
-                                >
-                                  <Minus className="w-3.5 h-3.5" />
-                                </button>
-                                <span className="text-xs font-black min-w-[18px] text-center select-none">{qty}</span>
-                                <button 
-                                  type="button"
-                                  onClick={() => handleCardStepper(item, 1)}
-                                  className="p-0.5 hover:bg-amber-200/60 active:scale-90 rounded-full text-emerald-700 cursor-pointer"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                </button>
+                            <div className="flex items-center justify-between gap-2 pt-2.5 mt-1 border-t border-gray-100">
+                              <div className="flex items-baseline gap-1.5">
+                                <span className="text-base font-black text-red-600">৳{item.price}</span>
+                                {item.originalPrice && (
+                                  <span className="text-xs text-gray-400 line-through">৳{item.originalPrice}</span>
+                                )}
                               </div>
 
-                              {/* Direct + কার্টে যোগ Button */}
-                              <button
-                                type="button"
-                                onClick={() => addToCart(item, qty)}
-                                className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>কার্টে যোগ</span>
-                              </button>
+                              <div className="flex items-center gap-2">
+                                {/* Direct - 1 + Quantity Stepper Button */}
+                                <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 text-gray-900 rounded-full px-2.5 py-1 shadow-2xs">
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleCardStepper(item, -1)}
+                                    className="p-0.5 hover:bg-amber-200/60 active:scale-90 rounded-full text-red-600 cursor-pointer"
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <span className="text-xs font-black min-w-[18px] text-center select-none">{qty}</span>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleCardStepper(item, 1)}
+                                    className="p-0.5 hover:bg-amber-200/60 active:scale-90 rounded-full text-emerald-700 cursor-pointer"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+
+                                {/* Direct + কার্টে যোগ Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => addToCart(item, qty)}
+                                  className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>কার্টে যোগ</span>
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 

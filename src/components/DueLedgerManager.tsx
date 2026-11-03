@@ -17,73 +17,8 @@ interface DueLedgerManagerProps {
   soundOn: boolean;
 }
 
-const DEFAULT_DUE_DATA: DueEntry[] = [
-  {
-    id: 'due-1',
-    voucherNo: 'DUE-201',
-    customerName: 'কবির হোসেন',
-    customerPhone: '01912987654',
-    totalAmount: 640,
-    paidAmount: 0,
-    dueAmount: 640,
-    date: new Date().toISOString().split('T')[0],
-    dueDate: new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0],
-    itemsDescription: 'মুরগির তেহারি স্পেশাল ২ প্লেট ও চিকেন ফ্রাই',
-    status: 'unpaid',
-    payments: [],
-    note: 'আগামী শুক্রবার জুমার পর বাকি টাকা পরিশোধ করবেন।'
-  },
-  {
-    id: 'due-2',
-    voucherNo: 'DUE-202',
-    customerName: 'রহিম উদ্দিন',
-    customerPhone: '01712345678',
-    totalAmount: 850,
-    paidAmount: 500,
-    dueAmount: 350,
-    date: new Date(Date.now() - 2 * 86400000).toISOString().split('T')[0],
-    dueDate: new Date(Date.now() + 1 * 86400000).toISOString().split('T')[0],
-    itemsDescription: 'স্পেশাল কাচ্চি বিরিয়ানি ২ প্যাকেট ও বোরহানি',
-    status: 'partial',
-    payments: [
-      {
-        id: 'pay-1',
-        date: new Date(Date.now() - 1 * 86400000).toISOString().split('T')[0],
-        time: '02:30 PM',
-        amount: 500,
-        paymentMethod: 'bKash',
-        receivedBy: 'ক্যাশিয়ার',
-        note: 'বিকাশ নম্বর থেকে ৫০০ টাকা জমা'
-      }
-    ],
-    note: 'নিয়মিত কাস্টমার। বাকি ৩৫০ টাকা আগামীকাল দেবেন।'
-  },
-  {
-    id: 'due-3',
-    voucherNo: 'DUE-203',
-    customerName: 'শাকিল আহমেদ',
-    customerPhone: '01933445566',
-    totalAmount: 1100,
-    paidAmount: 1100,
-    dueAmount: 0,
-    date: new Date(Date.now() - 5 * 86400000).toISOString().split('T')[0],
-    dueDate: new Date(Date.now() - 1 * 86400000).toISOString().split('T')[0],
-    itemsDescription: 'বিফ ভুনা খিচুড়ি ৩ প্লেট ও জিলাপি কম্বো',
-    status: 'paid',
-    payments: [
-      {
-        id: 'pay-2',
-        date: new Date(Date.now() - 2 * 86400000).toISOString().split('T')[0],
-        time: '08:15 PM',
-        amount: 1100,
-        paymentMethod: 'Cash',
-        receivedBy: 'ম্যানেজার',
-        note: 'সম্পূর্ণ বকেয়া নগদ টাকায় পরিশোধিত'
-      }
-    ],
-    note: 'হিসাব সম্পন্ন।'
-  }
-];
+const DEFAULT_DUE_DATA: DueEntry[] = [];
+
 
 export default function DueLedgerManager({
   ledger,

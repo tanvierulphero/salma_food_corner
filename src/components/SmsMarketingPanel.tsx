@@ -93,31 +93,8 @@ export default function SmsMarketingPanel({
         console.error(e);
       }
     }
-    const today = new Date().toISOString().split('T')[0];
-    return [
-      {
-        id: 'camp-101',
-        date: today,
-        time: '11:15 AM',
-        recipientCount: 14,
-        targetAudience: '১ কি.মি. ফ্রি ডেলিভারি জোন',
-        message: 'প্রিয় গ্রাহক, ১ কি.মি. পরিধিতে ডেলিভারি সম্পূর্ণ ফ্রি! আজই অর্ডার করুন সালমা ফুড কর্নারে।',
-        method: 'Mobile SIM',
-        status: 'Delivered',
-        costEstimate: 4.90
-      },
-      {
-        id: 'camp-102',
-        date: today,
-        time: '02:40 PM',
-        recipientCount: 25,
-        targetAudience: 'সব গ্রাহক (All Customers)',
-        message: 'সম্মানিত গ্রাহক, আজকের স্পেশাল কাচ্চি বিরিয়ানিতে ২০% মেগা ছাড় চলছে!',
-        method: 'SMS Gateway',
-        status: 'Sent',
-        costEstimate: 8.75
-      }
-    ];
+    return [];
+
   });
 
   // Banner text
