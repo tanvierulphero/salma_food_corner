@@ -9,7 +9,8 @@ import {
   Smartphone, Plus, Edit3, Trash2, CheckCircle2, AlertCircle, RefreshCw, 
   Search, Lock, Unlock, LogOut, ArrowUpRight, ArrowDownRight, DollarSign, 
   Printer, Volume2, VolumeX, Eye, ArrowLeft, ShieldCheck, Tag, Sparkles,
-  ShoppingBag, Calendar, Clock, MapPin, Hash, Check, X, ShieldAlert
+  ShoppingBag, Calendar, Clock, MapPin, Hash, Check, X, ShieldAlert,
+  BookOpen
 } from 'lucide-react';
 import { 
   FoodItem, Order, LedgerEntry, CustomerProfile, INITIAL_MENU_DATA 
@@ -19,6 +20,7 @@ import {
 } from './utils/audioFeedback';
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
+import DueLedgerManager from './components/DueLedgerManager';
 
 const ADMIN_PIN_DEFAULT = '1234';
 
@@ -31,7 +33,7 @@ export default function AdminApp() {
   const [soundOn, setSoundOn] = useState<boolean>(() => isSoundEnabled());
 
   // Active Navigation Tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'ledger' | 'reports' | 'orders' | 'customers' | 'marketing' | 'location'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'ledger' | 'due' | 'reports' | 'orders' | 'customers' | 'marketing' | 'location'>('dashboard');
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -595,6 +597,7 @@ export default function AdminApp() {
             { id: 'dashboard', label: 'ড্যাশবোর্ড', icon: TrendingUp },
             { id: 'menu', label: 'খাবার মেনু', icon: Utensils, badge: menuItems.length },
             { id: 'ledger', label: 'POS লেজার', icon: BarChart2 },
+            { id: 'due', label: 'বাকি খাতা', icon: BookOpen },
             { id: 'reports', label: 'রিপোর্টস', icon: FileText },
             { id: 'orders', label: 'লাইভ অর্ডার', icon: Truck, badge: orders.filter(o => o.status !== 'Delivered').length },
             { id: 'customers', label: 'গ্রাহক', icon: Users, badge: Object.keys(customers).length },
@@ -675,6 +678,29 @@ export default function AdminApp() {
                 <p className="text-[10px] text-blue-600 font-semibold mt-0.5">
                   পেন্ডিং: {orders.filter(o => o.status !== 'Delivered').length} টি
                 </p>
+              </div>
+            </div>
+
+            {/* Quick Due Ledger Alert Card in Dashboard */}
+            <div 
+              onClick={() => setActiveTab('due')}
+              className="bg-gradient-to-r from-rose-50 via-red-50 to-amber-50 border border-rose-200 p-3.5 rounded-2xl flex items-center justify-between cursor-pointer hover:shadow-xs transition"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center font-bold shadow-xs">
+                  <BookOpen className="w-4 h-4 text-amber-200" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-gray-900 flex items-center gap-1.5">
+                    <span>বাকি খাতা (Due Ledger)</span>
+                    <span className="bg-red-100 text-red-800 text-[9px] font-bold px-1.5 py-0.2 rounded-full">সক্রিয়</span>
+                  </h4>
+                  <p className="text-[10px] text-gray-600">খদ্দেরের বাকি ট্র্যাকিং, দেনা-পাওনা ও বকেয়া আদায় পরিচালনা করুন</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 text-xs font-bold text-red-700 bg-white px-2.5 py-1.5 rounded-xl border border-rose-200 shadow-2xs">
+                <span>খুলুন</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
               </div>
             </div>
 
@@ -855,6 +881,13 @@ export default function AdminApp() {
                   <span>অর্ডার তালিকা ({orders.length})</span>
                 </button>
                 <button 
+                  onClick={() => setActiveTab('due')}
+                  className="bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>বাকি খাতা (Due)</span>
+                </button>
+                <button 
                   onClick={() => setActiveTab('reports')}
                   className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
                 >
@@ -1015,6 +1048,17 @@ export default function AdminApp() {
                   <span>৳{totalExpense}</span>
                 </div>
               </div>
+
+              <div className="flex items-center justify-between pt-1 border-t border-gray-100">
+                <span className="text-[11px] text-gray-500 font-medium">কাস্টমার বাকি ও আদায় হিসাব:</span>
+                <button
+                  onClick={() => setActiveTab('due')}
+                  className="text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>বাকি খাতা (Due Ledger)</span>
+                </button>
+              </div>
             </div>
 
             {/* Mobile Ledger Cards List */}
@@ -1058,6 +1102,20 @@ export default function AdminApp() {
             </div>
 
           </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB: DUE LEDGER (বাকি খাতা ও দেনা-পাওনা খতিয়ান)                 */}
+        {/* ============================================================== */}
+        {activeTab === 'due' && (
+          <DueLedgerManager
+            ledger={ledger}
+            setLedger={setLedger}
+            orders={orders}
+            setOrders={setOrders}
+            customers={customers}
+            soundOn={soundOn}
+          />
         )}
 
         {/* ============================================================== */}

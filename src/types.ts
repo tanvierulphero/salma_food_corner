@@ -62,6 +62,33 @@ export interface CustomerProfile {
   totalSpent: number;
 }
 
+export interface DuePaymentHistory {
+  id: string;
+  date: string;
+  time: string;
+  amount: number;
+  paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank';
+  receivedBy?: string;
+  note?: string;
+}
+
+export interface DueEntry {
+  id: string;
+  voucherNo: string;
+  customerName: string;
+  customerPhone: string;
+  orderId?: string; // Optional: linked to online order
+  totalAmount: number; // মোট বাকির পরিমাণ
+  paidAmount: number;  // এ পর্যন্ত আদায়কৃত
+  dueAmount: number;   // অবশিষ্ট বাকি
+  date: string;        // YYYY-MM-DD
+  dueDate?: string;    // সম্ভাব্য পরিশোধের তারিখ
+  itemsDescription: string; // বাকির বিবরণ বা খাবারের তালিকা
+  status: 'unpaid' | 'partial' | 'paid';
+  payments?: DuePaymentHistory[];
+  note?: string;
+}
+
 export interface SmsCampaignLog {
   id: string;
   date: string;
