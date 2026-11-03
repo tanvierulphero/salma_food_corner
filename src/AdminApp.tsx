@@ -193,28 +193,59 @@ export default function AdminApp() {
     descriptionBn: '',
     descriptionEn: '',
     spicyLevel: 1,
-    isVeg: false
+    isVeg: false,
+    isBundle: false,
+    bundleItem1: '',
+    bundleItem2: '',
+    bundleItem3: '',
+    bundleSavings: ''
   });
 
-  const handleOpenAddFood = () => {
+  const handleAutoGenerateBundleInfo = () => {
+    const items = [foodForm.bundleItem1.trim(), foodForm.bundleItem2.trim(), foodForm.bundleItem3.trim()].filter(Boolean);
+    if (items.length < 2) {
+      alert('কমপক্ষে ২টি খাবারের নাম লিখুন (যেমন: কাচ্চি বিরিয়ানি ও বোরহানি)');
+      return;
+    }
+    const combinedName = items.join(' + ') + ' কম্বো';
+    const combinedDesc = `স্পেশাল বান্ডেল অফার! এই প্যাকেজে পাচ্ছেন: ${items.join(' এবং ')}।`;
+    setFoodForm(prev => ({
+      ...prev,
+      nameBn: combinedName,
+      nameEn: prev.nameEn || (items.join(' + ') + ' Combo'),
+      category: 'combo',
+      descriptionBn: combinedDesc,
+      isBundle: true
+    }));
+  };
+
+  const handleOpenAddFood = (asBundle = false) => {
     setEditingFoodId(null);
     setFoodForm({
       nameBn: '',
       nameEn: '',
-      category: 'popular',
+      category: asBundle ? 'combo' : 'popular',
       price: '',
       originalPrice: '',
-      image: 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80',
+      image: asBundle 
+        ? 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80' 
+        : 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80',
       descriptionBn: '',
       descriptionEn: '',
       spicyLevel: 1,
-      isVeg: false
+      isVeg: false,
+      isBundle: asBundle,
+      bundleItem1: '',
+      bundleItem2: '',
+      bundleItem3: '',
+      bundleSavings: ''
     });
     setFoodModalOpen(true);
   };
 
   const handleOpenEditFood = (item: FoodItem) => {
     setEditingFoodId(item.id);
+    const bItems = item.bundleItems || [];
     setFoodForm({
       nameBn: item.nameBn,
       nameEn: item.nameEn,
@@ -225,7 +256,12 @@ export default function AdminApp() {
       descriptionBn: item.descriptionBn,
       descriptionEn: item.descriptionEn,
       spicyLevel: item.spicyLevel || 1,
-      isVeg: item.isVeg || false
+      isVeg: item.isVeg || false,
+      isBundle: item.isBundle || item.category === 'combo' || bItems.length > 0,
+      bundleItem1: bItems[0] || '',
+      bundleItem2: bItems[1] || '',
+      bundleItem3: bItems[2] || '',
+      bundleSavings: item.bundleSavings ? item.bundleSavings.toString() : ''
     });
     setFoodModalOpen(true);
   };
@@ -237,6 +273,14 @@ export default function AdminApp() {
       return;
     }
 
+    const bList = [foodForm.bundleItem1.trim(), foodForm.bundleItem2.trim(), foodForm.bundleItem3.trim()].filter(Boolean);
+    const isBundleFinal = foodForm.isBundle || foodForm.category === 'combo' || bList.length > 0;
+    const computedSavings = foodForm.bundleSavings 
+      ? Number(foodForm.bundleSavings) 
+      : (foodForm.originalPrice && Number(foodForm.originalPrice) > Number(foodForm.price)
+          ? Number(foodForm.originalPrice) - Number(foodForm.price)
+          : undefined);
+
     if (editingFoodId) {
       // Edit existing
       setMenuItems(prev => prev.map(item => {
@@ -245,14 +289,17 @@ export default function AdminApp() {
             ...item,
             nameBn: foodForm.nameBn.trim(),
             nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
-            category: foodForm.category,
+            category: isBundleFinal && foodForm.category !== 'combo' ? 'combo' : foodForm.category,
             price: Number(foodForm.price),
             originalPrice: foodForm.originalPrice ? Number(foodForm.originalPrice) : undefined,
             image: foodForm.image.trim(),
             descriptionBn: foodForm.descriptionBn.trim(),
             descriptionEn: foodForm.descriptionEn.trim(),
             spicyLevel: foodForm.spicyLevel,
-            isVeg: foodForm.isVeg
+            isVeg: foodForm.isVeg,
+            isBundle: isBundleFinal,
+            bundleItems: bList.length > 0 ? bList : undefined,
+            bundleSavings: computedSavings
           };
         }
         return item;
@@ -264,7 +311,7 @@ export default function AdminApp() {
         id: 'food-' + Date.now(),
         nameBn: foodForm.nameBn.trim(),
         nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
-        category: foodForm.category,
+        category: isBundleFinal ? 'combo' : foodForm.category,
         price: Number(foodForm.price),
         originalPrice: foodForm.originalPrice ? Number(foodForm.originalPrice) : undefined,
         image: foodForm.image.trim() || 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80',
@@ -273,7 +320,10 @@ export default function AdminApp() {
         descriptionBn: foodForm.descriptionBn.trim() || 'সালমা ফুড কর্ণারের স্পেশাল রেসিপিতে তৈরি।',
         descriptionEn: foodForm.descriptionEn.trim() || 'Special recipe from Salma Food Corner.',
         spicyLevel: foodForm.spicyLevel,
-        isVeg: foodForm.isVeg
+        isVeg: foodForm.isVeg,
+        isBundle: isBundleFinal,
+        bundleItems: bList.length > 0 ? bList : undefined,
+        bundleSavings: computedSavings
       };
       setMenuItems(prev => [newItem, ...prev]);
       alert(`নতুন খাবার '${newItem.nameBn}' সফলভাবে মেনুতে যোগ করা হয়েছে!`);
@@ -872,7 +922,7 @@ export default function AdminApp() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <button 
-                  onClick={handleOpenAddFood}
+                  onClick={() => handleOpenAddFood(false)}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -927,13 +977,20 @@ export default function AdminApp() {
                 <p className="text-xs text-gray-500">মেনুতে নতুন খাবার সংযোজন করুন, দাম পরিবর্তন ও এডিট বা বিয়োজন করুন</p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button 
-                  onClick={handleOpenAddFood}
-                  className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow transition cursor-pointer"
+                  onClick={() => handleOpenAddFood(false)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 shadow transition cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>+ নতুন খাবার যোগ করুন</span>
+                  <span>+ সাধারণ খাবার</span>
+                </button>
+                <button 
+                  onClick={() => handleOpenAddFood(true)}
+                  className="bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-700 hover:to-amber-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-amber-200" />
+                  <span>🎁 + কম্বো বান্ডেল তৈরি</span>
                 </button>
               </div>
             </div>
@@ -953,6 +1010,7 @@ export default function AdminApp() {
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
                 {[
                   { id: 'all', label: 'সব' },
+                  { id: 'combo', label: '🎁 কম্বো ও বান্ডেল' },
                   { id: 'popular', label: 'জনপ্রিয়' },
                   { id: 'biryani', label: 'বিরিয়ানি' },
                   { id: 'fastfood', label: 'ফাস্ট ফুড' },
@@ -981,60 +1039,104 @@ export default function AdminApp() {
                 <div>
                   <h3 className="font-bold text-gray-900 text-sm">মেনুতে কোনো খাবার নেই</h3>
                   <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
-                    সকল ডেমো ডাটা মুছে ফেলা হয়েছে। আপনার আসল খাবার ও মূল্য যোগ করতে নিচের বাটনে চাপ দিন।
+                    সকল ডেমো ডাটা মুছে ফেলা হয়েছে। আপনার আসল খাবার বা কম্বো বান্ডেল যোগ করতে নিচের বাটনে চাপ দিন।
                   </p>
                 </div>
-                <button 
-                  onClick={handleOpenAddFood}
-                  className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>+ নতুন খাবার যোগ করুন</span>
-                </button>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <button 
+                    onClick={() => handleOpenAddFood(false)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ খাবার যোগ</span>
+                  </button>
+                  <button 
+                    onClick={() => handleOpenAddFood(true)}
+                    className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <span>🎁 + কম্বো বান্ডেল তৈরি</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3">
-                {filteredMenu.map(item => (
-                  <div key={item.id} className="bg-white rounded-2xl border border-gray-200 p-3 shadow-xs flex gap-3 items-center hover:shadow-md transition">
-                    <div className="relative w-24 h-24 rounded-xl overflow-hidden shrink-0 bg-gray-100">
-                      <img src={item.image} alt={item.nameBn} className="w-full h-full object-cover" />
-                      <span className="absolute top-1 left-1 bg-black/70 text-white text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
-                        {item.category}
-                      </span>
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start gap-1">
-                        <h3 className="font-bold text-gray-900 text-sm truncate">{item.nameBn}</h3>
-                        <span className="text-sm font-black text-red-600 shrink-0">৳{item.price}</span>
-                      </div>
-                      <p className="text-[11px] text-gray-500 truncate">{item.nameEn}</p>
-                      <p className="text-[11px] text-gray-600 line-clamp-1 mt-0.5">{item.descriptionBn}</p>
-
-                      <div className="pt-2 mt-1.5 border-t border-gray-100 flex items-center justify-between">
-                        <span className="text-[10px] text-gray-400">
-                          ⭐ {item.rating} ({item.reviewsCount})
+                {filteredMenu.map(item => {
+                  const isCombo = item.isBundle || item.category === 'combo';
+                  return (
+                    <div key={item.id} className="bg-white rounded-2xl border border-gray-200 p-3 shadow-xs flex gap-3 items-center hover:shadow-md transition">
+                      <div className="relative w-24 h-24 rounded-xl overflow-hidden shrink-0 bg-gray-100">
+                        <img src={item.image} alt={item.nameBn} className="w-full h-full object-cover" />
+                        <span className={`absolute top-1 left-1 text-white text-[9px] font-bold px-1.5 py-0.2 rounded uppercase ${
+                          isCombo ? 'bg-amber-600' : 'bg-black/70'
+                        }`}>
+                          {isCombo ? '🎁 কম্বো' : item.category}
                         </span>
-                        <div className="flex items-center gap-1.5">
-                          <button 
-                            onClick={() => handleOpenEditFood(item)}
-                            className="bg-amber-50 hover:bg-amber-100 text-amber-800 px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 border border-amber-200 cursor-pointer"
-                          >
-                            <Edit3 className="w-3 h-3" />
-                            <span>এডিট</span>
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteFood(item.id, item.nameBn)}
-                            className="bg-red-50 hover:bg-red-100 text-red-700 p-1.5 rounded-lg text-xs font-bold transition border border-red-200 cursor-pointer"
-                            title="মুছে ফেলুন (বিয়োজন)"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start gap-1">
+                          <h3 className="font-bold text-gray-900 text-sm truncate flex items-center gap-1">
+                            <span>{item.nameBn}</span>
+                            {isCombo && (
+                              <span className="bg-amber-100 text-amber-900 text-[9px] font-bold px-1.5 py-0.2 rounded shrink-0">
+                                বান্ডেল
+                              </span>
+                            )}
+                          </h3>
+                          <div className="text-right shrink-0">
+                            <span className="text-sm font-black text-red-600">৳{item.price}</span>
+                            {item.originalPrice && (
+                              <span className="text-[10px] text-gray-400 line-through block">৳{item.originalPrice}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Bundle item pills if present */}
+                        {item.bundleItems && item.bundleItems.length > 0 ? (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {item.bundleItems.map((bi, idx) => (
+                              <span key={idx} className="bg-amber-50 text-amber-950 border border-amber-200 text-[9px] font-semibold px-1.5 py-0.2 rounded">
+                                ✓ {bi}
+                              </span>
+                            ))}
+                            {item.bundleSavings && (
+                              <span className="bg-emerald-600 text-white text-[9px] font-bold px-1.5 py-0.2 rounded">
+                                ৳{item.bundleSavings} ছাড়
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-gray-500 truncate">{item.nameEn}</p>
+                        )}
+
+                        <p className="text-[11px] text-gray-600 line-clamp-1 mt-0.5">{item.descriptionBn}</p>
+
+                        <div className="pt-2 mt-1.5 border-t border-gray-100 flex items-center justify-between">
+                          <span className="text-[10px] text-gray-400">
+                            ⭐ {item.rating} ({item.reviewsCount})
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button 
+                              onClick={() => handleOpenEditFood(item)}
+                              className="bg-amber-50 hover:bg-amber-100 text-amber-800 px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 border border-amber-200 cursor-pointer"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                              <span>এডিট</span>
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteFood(item.id, item.nameBn)}
+                              className="bg-red-50 hover:bg-red-100 text-red-700 p-1.5 rounded-lg text-xs font-bold transition border border-red-200 cursor-pointer"
+                              title="মুছে ফেলুন (বিয়োজন)"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -1542,10 +1644,18 @@ export default function AdminApp() {
                   <label className="block font-bold text-gray-700 mb-1">ক্যাটাগরি</label>
                   <select
                     value={foodForm.category}
-                    onChange={(e) => setFoodForm({ ...foodForm, category: e.target.value as any })}
+                    onChange={(e) => {
+                      const val = e.target.value as any;
+                      setFoodForm({ 
+                        ...foodForm, 
+                        category: val,
+                        isBundle: val === 'combo' ? true : foodForm.isBundle
+                      });
+                    }}
                     className="w-full border border-gray-300 rounded-xl p-2.5 text-xs bg-white font-bold"
                   >
                     <option value="popular">জনপ্রিয় (Popular)</option>
+                    <option value="combo">🎁 কম্বো ও বান্ডেল (Combo & Bundles)</option>
                     <option value="biryani">বিরিয়ানি ও পোলাও (Biryani)</option>
                     <option value="fastfood">ফাস্ট ফুড (Fast Food)</option>
                     <option value="curry">মাংস ও কারি (Curry)</option>
@@ -1566,15 +1676,119 @@ export default function AdminApp() {
                 </div>
               </div>
 
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">ছবির URL</label>
-                <input 
-                  type="url"
-                  placeholder="https://..."
-                  value={foodForm.image}
-                  onChange={(e) => setFoodForm({ ...foodForm, image: e.target.value })}
-                  className="w-full border border-gray-300 rounded-xl p-2.5 text-xs"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">আসল রেগুলার মূল্য (৳, ঐচ্ছিক)</label>
+                  <input 
+                    type="number"
+                    placeholder="যেমন: 300"
+                    value={foodForm.originalPrice}
+                    onChange={(e) => setFoodForm({ ...foodForm, originalPrice: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2.5 text-xs text-gray-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">ছবির URL</label>
+                  <input 
+                    type="url"
+                    placeholder="https://..."
+                    value={foodForm.image}
+                    onChange={(e) => setFoodForm({ ...foodForm, image: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2.5 text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* BUNDLE / COMBO OFFER BUILDER */}
+              <div className="bg-gradient-to-r from-amber-50 via-orange-50 to-amber-100/60 border border-amber-300 rounded-2xl p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 font-black text-amber-950 cursor-pointer text-xs">
+                    <input 
+                      type="checkbox"
+                      checked={foodForm.isBundle || foodForm.category === 'combo'}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setFoodForm(prev => ({
+                          ...prev,
+                          isBundle: checked,
+                          category: checked ? 'combo' : (prev.category === 'combo' ? 'popular' : prev.category)
+                        }));
+                      }}
+                      className="w-4 h-4 text-red-600 rounded cursor-pointer"
+                    />
+                    <span>🎁 এটি কি একটি কম্বো / বান্ডেল অফার? (২ বা ততোধিক খাবার)</span>
+                  </label>
+                  {(foodForm.isBundle || foodForm.category === 'combo') && (
+                    <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-2xs">
+                      বান্ডেল মোড সক্রিয়
+                    </span>
+                  )}
+                </div>
+
+                {(foodForm.isBundle || foodForm.category === 'combo') && (
+                  <div className="space-y-2.5 pt-1 border-t border-amber-200">
+                    <p className="text-[11px] text-amber-900 leading-tight">
+                      যে খাবারগুলো একসাথে দিয়ে বান্ডেল করছেন সেগুলো নিচে লিখুন:
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block font-bold text-gray-700 text-[11px] mb-0.5">খাবার ১ (প্রথম আইটেম) *</label>
+                        <input 
+                          type="text"
+                          placeholder="যেমন: স্পেশাল কাচ্চি বিরিয়ানি (১ প্লেট)"
+                          value={foodForm.bundleItem1}
+                          onChange={(e) => setFoodForm({ ...foodForm, bundleItem1: e.target.value })}
+                          className="w-full border border-amber-300 bg-white rounded-xl p-2 text-xs font-semibold focus:outline-none focus:border-red-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-gray-700 text-[11px] mb-0.5">খাবার ২ (দ্বিতীয় আইটেম) *</label>
+                        <input 
+                          type="text"
+                          placeholder="যেমন: শাহী বোরহানি (২৫০ মি.লি.)"
+                          value={foodForm.bundleItem2}
+                          onChange={(e) => setFoodForm({ ...foodForm, bundleItem2: e.target.value })}
+                          className="w-full border border-amber-300 bg-white rounded-xl p-2 text-xs font-semibold focus:outline-none focus:border-red-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-gray-700 text-[11px] mb-0.5">খাবার ৩ (ঐচ্ছিক তৃতীয় আইটেম)</label>
+                      <input 
+                        type="text"
+                        placeholder="যেমন: ১টি জালি কাবাব বা ফিরনি"
+                        value={foodForm.bundleItem3}
+                        onChange={(e) => setFoodForm({ ...foodForm, bundleItem3: e.target.value })}
+                        className="w-full border border-amber-300 bg-white rounded-xl p-2 text-xs focus:outline-none focus:border-red-500"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 bg-white/70 p-2 rounded-xl border border-amber-200">
+                      <button
+                        type="button"
+                        onClick={handleAutoGenerateBundleInfo}
+                        className="bg-amber-500 hover:bg-amber-600 text-amber-950 font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-950" />
+                        <span>⚡ নাম ও বিবরণ অটো তৈরি করুন</span>
+                      </button>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-gray-700">ছাড়/সাশ্রয় (৳):</span>
+                        <input 
+                          type="number"
+                          placeholder="যেমন: 50"
+                          value={foodForm.bundleSavings}
+                          onChange={(e) => setFoodForm({ ...foodForm, bundleSavings: e.target.value })}
+                          className="w-20 border border-amber-300 bg-white rounded-xl p-1.5 text-xs font-black text-emerald-700 text-center"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>

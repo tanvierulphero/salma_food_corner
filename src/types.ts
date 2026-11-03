@@ -2,7 +2,7 @@ export interface FoodItem {
   id: string;
   nameBn: string;
   nameEn: string;
-  category: 'popular' | 'biryani' | 'fastfood' | 'curry' | 'dessert';
+  category: 'popular' | 'biryani' | 'fastfood' | 'curry' | 'dessert' | 'combo';
   price: number;
   originalPrice?: number;
   image: string;
@@ -12,6 +12,9 @@ export interface FoodItem {
   descriptionEn: string;
   spicyLevel?: number;
   isVeg?: boolean;
+  isBundle?: boolean;
+  bundleItems?: string[];
+  bundleSavings?: number;
 }
 
 export interface CartItem extends FoodItem {

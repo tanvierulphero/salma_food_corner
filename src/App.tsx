@@ -31,7 +31,7 @@ interface FoodItem {
   id: string;
   nameBn: string;
   nameEn: string;
-  category: 'popular' | 'biryani' | 'fastfood' | 'curry' | 'dessert';
+  category: 'popular' | 'biryani' | 'fastfood' | 'curry' | 'dessert' | 'combo';
   price: number;
   originalPrice?: number;
   image: string;
@@ -41,6 +41,9 @@ interface FoodItem {
   descriptionEn: string;
   spicyLevel?: number;
   isVeg?: boolean;
+  isBundle?: boolean;
+  bundleItems?: string[];
+  bundleSavings?: number;
 }
 
 interface CartItem extends FoodItem {
@@ -310,7 +313,7 @@ export default function App() {
   const [foodForm, setFoodForm] = useState({
     nameBn: '',
     nameEn: '',
-    category: 'biryani' as 'popular' | 'biryani' | 'fastfood' | 'curry' | 'dessert',
+    category: 'biryani' as FoodItem['category'],
     price: '',
     originalPrice: '',
     image: '',
@@ -1397,6 +1400,7 @@ export default function App() {
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
                   {[
                     { id: 'all', label: 'সব খাবার' },
+                    { id: 'combo', label: '🎁 কম্বো ও বান্ডেল' },
                     { id: 'popular', label: '🔥 জনপ্রিয়' },
                     { id: 'biryani', label: '🍛 বিরিয়ানি' },
                     { id: 'fastfood', label: '🍔 ফাস্ট ফুড' },
@@ -1458,6 +1462,12 @@ export default function App() {
                                 কার্টে {inCartItem.quantity}টি
                               </span>
                             )}
+                            {/* Bundle / Combo Badge */}
+                            {(item.isBundle || item.category === 'combo') && (
+                              <span className="absolute top-2.5 right-2.5 bg-gradient-to-r from-red-600 to-amber-600 text-white text-[10px] font-black px-2 py-0.5 rounded-lg shadow-xs flex items-center gap-1">
+                                <span>🎁 কম্বো বান্ডেল</span>
+                              </span>
+                            )}
                             {item.originalPrice && item.originalPrice > item.price && (
                               <span className="absolute bottom-2.5 left-2.5 bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md shadow-xs">
                                 ৳{item.originalPrice - item.price} ছাড়
@@ -1468,7 +1478,37 @@ export default function App() {
                           {/* Bottom Food Name, Description & Action Controls */}
                           <div className="flex flex-col justify-between gap-2">
                             <div>
-                              <h3 className="font-bold text-base text-gray-900 leading-snug">{item.nameBn}</h3>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <h3 className="font-bold text-base text-gray-900 leading-snug">{item.nameBn}</h3>
+                                {(item.isBundle || item.category === 'combo') && (
+                                  <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.2 rounded-md">
+                                    কম্বো অফার
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {/* Bundle Contents Box */}
+                              {item.bundleItems && item.bundleItems.length > 0 && (
+                                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/90 rounded-xl p-2 my-1.5 space-y-1">
+                                  <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
+                                    <span>📦 প্যাকেজে রয়েছে ({item.bundleItems.length}টি আইটেম):</span>
+                                    {item.bundleSavings && (
+                                      <span className="bg-emerald-600 text-white text-[9px] px-1.5 py-0.2 rounded font-black">
+                                        ৳{item.bundleSavings} সাশ্রয়
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                    {item.bundleItems.map((bItem, bIdx) => (
+                                      <span key={bIdx} className="bg-white/90 border border-amber-300 text-gray-800 text-[10px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1">
+                                        <span className="text-emerald-600 font-black">✓</span>
+                                        <span>{bItem}</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
                               <p className="text-xs text-gray-500 line-clamp-2 mt-1 leading-relaxed">
                                 {item.descriptionBn}
                               </p>
