@@ -2,19 +2,32 @@ import React, { useState, useEffect } from 'react';
 import { 
   MapPin, Navigation, Compass, Crosshair, CheckCircle2, AlertCircle, 
   ExternalLink, Sparkles, RefreshCw, Save, Sliders, Info, ShieldCheck, 
-  Map, Phone, Building, ArrowUpRight, Check, Search, Eye
+  Map, Phone, Building, ArrowUpRight, Check, Search, Eye,
+  Edit3, Trash2, Plus, X, RotateCcw
 } from 'lucide-react';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION } from '../types';
 import { playAddToCartSound, playOrderSuccessSound } from '../utils/audioFeedback';
+
+export interface PresetHub {
+  id: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  landmark: string;
+  zoneName: string;
+  nearbyAreas: string[];
+}
 
 interface ShopLocationManagerProps {
   soundOn?: boolean;
   onLocationUpdate?: (newConfig: ShopLocationConfig) => void;
 }
 
-// Popular Food Hubs Presets in Dhaka
-const DHAKA_FOOD_HUBS = [
+// Default Popular Food Hubs Presets in Dhaka
+export const DEFAULT_PRESET_HUBS: PresetHub[] = [
   {
+    id: 'hub-dhanmondi-32',
     name: 'ধানমন্ডি ৩২ (বর্তমান ডিফল্ট)',
     address: 'বাড়ি #১২, ধানমন্ডি ৩২ (রাসেল স্কয়ার মোড়), ঢাকা-১২০৯',
     lat: 23.7512,
@@ -24,6 +37,7 @@ const DHAKA_FOOD_HUBS = [
     nearbyAreas: ['ধানমন্ডি ৩২', 'রাসেল স্কয়ার', 'সোবহানবাগ', 'শুক্রাবাদ', 'কলাবাগান', 'পান্থপথ পশ্চিম', 'ধানমন্ডি লেক']
   },
   {
+    id: 'hub-gulshan-2',
     name: 'গুলশান ২ সার্কেল',
     address: 'রোড #৪৫, প্লট #১২, গুলশান ২ সার্কেল, ঢাকা-১২১২',
     lat: 23.7925,
@@ -33,6 +47,7 @@ const DHAKA_FOOD_HUBS = [
     nearbyAreas: ['গুলশান ২', 'গুলশান ১', 'বনানী', 'বারিধারা', 'শাহজাদপুর']
   },
   {
+    id: 'hub-mirpur-10',
     name: 'মিরপুর ১০ গোলচত্বর',
     address: 'মিরপুর ১০ গোলচত্বর মোড়, মেইন রোড, ঢাকা-১২১৬',
     lat: 23.8070,
@@ -42,6 +57,7 @@ const DHAKA_FOOD_HUBS = [
     nearbyAreas: ['মিরপুর ১০', 'মিরপুর ১১', 'মিরপুর ২', 'কাজীপাড়া', 'শেওড়াপাড়া', 'সেনপাড়া']
   },
   {
+    id: 'hub-uttara-3',
     name: 'উত্তরা সেক্টর ৩ (রবীন্দ্র সরণি)',
     address: 'রোড #৭, সেক্টর ৩, রবীন্দ্র সরণি, উত্তরা, ঢাকা-১২৩০',
     lat: 23.8703,
@@ -51,6 +67,7 @@ const DHAKA_FOOD_HUBS = [
     nearbyAreas: ['উত্তরা ৩', 'উত্তরা ১', 'উত্তরা ৪', 'জসিমউদ্দীন মোড়', 'আজমপুর']
   },
   {
+    id: 'hub-bailey-road',
     name: 'বেইলি রোড ফুড স্ট্রিট',
     address: 'নাট্যমঞ্চ সংলগ্ন, বেইলি রোড, শান্তিনগর, ঢাকা-১০০০',
     lat: 23.7410,
@@ -60,6 +77,7 @@ const DHAKA_FOOD_HUBS = [
     nearbyAreas: ['বেইলি রোড', 'শান্তিনগর', 'কাকরাইল', 'মগবাজার', 'সিদ্ধেশ্বরী']
   },
   {
+    id: 'hub-puran-dhaka',
     name: 'পুরান ঢাকা (চকবাজার ও নাজিরাবাজার)',
     address: 'চক সার্কুলার রোড, চকবাজার মোড়, ঢাকা-১২১১',
     lat: 23.7180,
@@ -69,6 +87,7 @@ const DHAKA_FOOD_HUBS = [
     nearbyAreas: ['চকবাজার', 'নাজিরাবাজার', 'লালবাগ', 'আরমানিটোলা', 'মৌলভীবাজার']
   },
   {
+    id: 'hub-mohammadpur',
     name: 'মোহাম্মদপুর টাউন হল ও রিং রোড',
     address: 'গজনবী রোড, টাউন হল মার্কেট মোড়, মোহাম্মদপুর, ঢাকা-১২০৭',
     lat: 23.7580,
@@ -192,8 +211,164 @@ export default function ShopLocationManager({
     );
   };
 
+  // Presets state persisted in localStorage
+  const [presetHubs, setPresetHubs] = useState<PresetHub[]>(() => {
+    const saved = localStorage.getItem('salma_location_presets');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return DEFAULT_PRESET_HUBS;
+  });
+
+  const savePresetHubs = (newHubs: PresetHub[]) => {
+    setPresetHubs(newHubs);
+    localStorage.setItem('salma_location_presets', JSON.stringify(newHubs));
+  };
+
+  // Preset modal state
+  const [isPresetModalOpen, setIsPresetModalOpen] = useState(false);
+  const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
+  const [presetForm, setPresetForm] = useState<{
+    name: string;
+    address: string;
+    lat: number;
+    lng: number;
+    landmark: string;
+    zoneName: string;
+    nearbyAreasText: string;
+  }>({
+    name: '',
+    address: '',
+    lat: 23.7512,
+    lng: 90.3770,
+    landmark: '',
+    zoneName: '',
+    nearbyAreasText: ''
+  });
+  const [presetModalGpsLoading, setPresetModalGpsLoading] = useState(false);
+
+  const handleOpenAddPreset = () => {
+    setEditingPresetId(null);
+    setPresetForm({
+      name: '',
+      address: '',
+      lat: config.lat,
+      lng: config.lng,
+      landmark: '',
+      zoneName: '',
+      nearbyAreasText: ''
+    });
+    setIsPresetModalOpen(true);
+  };
+
+  const handleOpenEditPreset = (hub: PresetHub, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingPresetId(hub.id);
+    setPresetForm({
+      name: hub.name,
+      address: hub.address,
+      lat: hub.lat,
+      lng: hub.lng,
+      landmark: hub.landmark,
+      zoneName: hub.zoneName,
+      nearbyAreasText: (hub.nearbyAreas || []).join(', ')
+    });
+    setIsPresetModalOpen(true);
+  };
+
+  const handleDeletePreset = (hubId: string, hubName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (window.confirm(`আপনি কি "${hubName}" প্রি-সেট এলাকাটি মুছে ফেলতে চান?`)) {
+      const filtered = presetHubs.filter(h => h.id !== hubId);
+      savePresetHubs(filtered);
+      if (soundOn) playAddToCartSound();
+    }
+  };
+
+  const handleResetDefaultPresets = () => {
+    if (window.confirm('আপনি কি পূর্বনির্ধারিত ৭টি ঢাকা ফুড হাব রিস্টোর করতে চান?')) {
+      savePresetHubs(DEFAULT_PRESET_HUBS);
+      if (soundOn) playAddToCartSound();
+    }
+  };
+
+  const handleSavePresetForm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!presetForm.name.trim()) {
+      alert('অনুগ্রহ করে এলাকার নাম দিন');
+      return;
+    }
+    const areas = presetForm.nearbyAreasText
+      .split(/[,;\n]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    if (editingPresetId) {
+      const updated = presetHubs.map(h => {
+        if (h.id === editingPresetId) {
+          return {
+            ...h,
+            name: presetForm.name.trim(),
+            address: presetForm.address.trim(),
+            lat: Number(presetForm.lat),
+            lng: Number(presetForm.lng),
+            landmark: presetForm.landmark.trim(),
+            zoneName: presetForm.zoneName.trim() || presetForm.name.trim(),
+            nearbyAreas: areas.length > 0 ? areas : [presetForm.name.trim()]
+          };
+        }
+        return h;
+      });
+      savePresetHubs(updated);
+    } else {
+      const newHub: PresetHub = {
+        id: 'hub-' + Date.now(),
+        name: presetForm.name.trim(),
+        address: presetForm.address.trim(),
+        lat: Number(presetForm.lat),
+        lng: Number(presetForm.lng),
+        landmark: presetForm.landmark.trim(),
+        zoneName: presetForm.zoneName.trim() || presetForm.name.trim(),
+        nearbyAreas: areas.length > 0 ? areas : [presetForm.name.trim()]
+      };
+      savePresetHubs([...presetHubs, newHub]);
+    }
+
+    setIsPresetModalOpen(false);
+    if (soundOn) playOrderSuccessSound();
+  };
+
+  const handlePresetGpsDetect = () => {
+    if (!navigator.geolocation) {
+      alert('আপনার ডিভাইসে GPS সমর্থন নেই');
+      return;
+    }
+    setPresetModalGpsLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setPresetModalGpsLoading(false);
+        setPresetForm(prev => ({
+          ...prev,
+          lat: parseFloat(pos.coords.latitude.toFixed(6)),
+          lng: parseFloat(pos.coords.longitude.toFixed(6))
+        }));
+        if (soundOn) playAddToCartSound();
+      },
+      (err) => {
+        setPresetModalGpsLoading(false);
+        alert('GPS লোকেশন পাওয়া যায়নি: ' + err.message);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   // Preset Selection
-  const handleSelectPreset = (hub: typeof DHAKA_FOOD_HUBS[0]) => {
+  const handleSelectPreset = (hub: PresetHub) => {
     setConfig(prev => ({
       ...prev,
       name: prev.name,
@@ -317,35 +492,116 @@ export default function ShopLocationManager({
             )}
           </div>
 
-          {/* Preset Popular Food Hubs in Dhaka */}
+          {/* Preset Popular Food Hubs in Dhaka (Editable) */}
           <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-xs space-y-3">
-            <div className="flex justify-between items-center border-b pb-2.5">
-              <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                <span>জনপ্রিয় ঢাকা ফুড হাব প্রি-সেট (১ ক্লিকে সেট করুন)</span>
-              </h3>
-              <span className="text-[10px] text-gray-500">৭টি প্রধান এলাকা</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5">
+              <div>
+                <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <span>জনপ্রিয় ঢাকা ফুড হাব প্রি-সেট (১ ক্লিকে সেট করুন)</span>
+                </h3>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  যে কোনো এলাকায় ট্যাপ করে সেট করুন, অথবা পেনসিল ✏️ আইকনে চাপ দিয়ে এডিট বা নতুন এলাকা যোগ করুন।
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleOpenAddPreset}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs transition active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>নতুন এলাকা যোগ</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetDefaultPresets}
+                  title="ডিফল্ট ৭টি ফুড হাব রিস্টোর করুন"
+                  className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                  {presetHubs.length}টি এলাকা
+                </span>
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              {DHAKA_FOOD_HUBS.map(hub => {
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              {presetHubs.map(hub => {
                 const isCurrent = Math.abs(config.lat - hub.lat) < 0.001 && Math.abs(config.lng - hub.lng) < 0.001;
                 return (
-                  <button
-                    key={hub.name}
-                    type="button"
-                    onClick={() => handleSelectPreset(hub)}
-                    className={`p-2.5 rounded-2xl text-left border transition cursor-pointer flex flex-col justify-between ${
+                  <div
+                    key={hub.id}
+                    className={`p-3 rounded-2xl border transition relative flex flex-col justify-between ${
                       isCurrent 
                         ? 'border-emerald-500 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-400/40 font-bold' 
-                        : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                        : 'border-gray-200 hover:border-gray-300 bg-gray-50/60 hover:bg-white text-gray-700'
                     }`}
                   >
-                    <span className="font-bold line-clamp-1">{hub.name}</span>
-                    <span className="text-[10px] text-gray-400 font-mono mt-1">
-                      {hub.lat.toFixed(4)}, {hub.lng.toFixed(4)}
-                    </span>
-                  </button>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold line-clamp-1 text-gray-900 text-xs">{hub.name}</span>
+                          {isCurrent && (
+                            <span className="bg-emerald-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold shrink-0">
+                              বর্তমান ডিফল্ট
+                            </span>
+                          )}
+                        </div>
+                        {hub.address && (
+                          <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5">{hub.address}</p>
+                        )}
+                        <span className="text-[10px] text-gray-400 font-mono block mt-1">
+                          {hub.lat.toFixed(4)}, {hub.lng.toFixed(4)}
+                        </span>
+                      </div>
+
+                      {/* Edit and Delete Buttons */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenEditPreset(hub, e)}
+                          title="এই এলাকাটি এডিট করুন"
+                          className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-100/70 rounded-lg transition cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeletePreset(hub.id, hub.name, e)}
+                          title="মুছে ফেলুন"
+                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-100/70 rounded-lg transition cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5 pt-2 border-t border-gray-200/70 flex items-center justify-between">
+                      <span className="text-[10px] text-gray-500 font-medium truncate max-w-[140px]">
+                        {hub.landmark ? `📍 ${hub.landmark}` : (hub.zoneName ? `জোন: ${hub.zoneName}` : 'ঢাকা')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectPreset(hub)}
+                        className={`text-[11px] font-bold px-2.5 py-1 rounded-xl transition active:scale-95 cursor-pointer flex items-center gap-1 ${
+                          isCurrent
+                            ? 'bg-emerald-600 text-white shadow-2xs'
+                            : 'bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs'
+                        }`}
+                      >
+                        {isCurrent ? (
+                          <>
+                            <Check className="w-3 h-3" />
+                            <span>সক্রিয় আছে</span>
+                          </>
+                        ) : (
+                          <span>১-ক্লিকে সেট</span>
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -687,6 +943,138 @@ export default function ShopLocationManager({
         </div>
 
       </div>
+
+      {/* Add / Edit Preset Modal */}
+      {isPresetModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+              <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-500" />
+                <span>{editingPresetId ? 'প্রি-সেট এলাকা এডিট করুন' : 'নতুন প্রি-সেট এলাকা যোগ করুন'}</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsPresetModalOpen(false)}
+                className="text-gray-400 hover:text-gray-700 p-1.5 rounded-full hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePresetForm} className="space-y-3.5 pt-4 text-xs">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">এলাকার নাম / টাইটেল *</label>
+                <input
+                  type="text"
+                  required
+                  value={presetForm.name}
+                  onChange={e => setPresetForm({ ...presetForm, name: e.target.value })}
+                  placeholder="যেমন: ধানমন্ডি ৩২, গুলশান ২, মিরপুর ১০"
+                  className="w-full border border-gray-300 rounded-xl p-2.5 font-bold focus:border-emerald-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">সম্পূর্ণ ঠিকানা</label>
+                <input
+                  type="text"
+                  value={presetForm.address}
+                  onChange={e => setPresetForm({ ...presetForm, address: e.target.value })}
+                  placeholder="বাড়ি, রাস্তা, থানা, ঢাকা"
+                  className="w-full border border-gray-300 rounded-xl p-2.5 focus:border-emerald-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">অক্ষাংশ (Latitude) *</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={presetForm.lat}
+                    onChange={e => setPresetForm({ ...presetForm, lat: parseFloat(e.target.value) || 0 })}
+                    className="w-full border border-gray-300 rounded-xl p-2.5 font-mono focus:border-emerald-500 focus:outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">দ্রাঘিমাংশ (Longitude) *</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={presetForm.lng}
+                    onChange={e => setPresetForm({ ...presetForm, lng: parseFloat(e.target.value) || 0 })}
+                    className="w-full border border-gray-300 rounded-xl p-2.5 font-mono focus:border-emerald-500 focus:outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handlePresetGpsDetect}
+                disabled={presetModalGpsLoading}
+                className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 transition cursor-pointer text-xs"
+              >
+                <Crosshair className={`w-4 h-4 text-emerald-600 ${presetModalGpsLoading ? 'animate-spin' : ''}`} />
+                <span>{presetModalGpsLoading ? 'GPS রিড হচ্ছে...' : '📍 বর্তমান মোবাইল GPS থেকে স্থানাঙ্ক নিন'}</span>
+              </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">ল্যান্ডমার্ক / পরিচিত স্থান</label>
+                  <input
+                    type="text"
+                    value={presetForm.landmark}
+                    onChange={e => setPresetForm({ ...presetForm, landmark: e.target.value })}
+                    placeholder="যেমন: রাসেল স্কয়ার মোড়"
+                    className="w-full border border-gray-300 rounded-xl p-2.5 focus:border-emerald-500 focus:outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">জোন নাম</label>
+                  <input
+                    type="text"
+                    value={presetForm.zoneName}
+                    onChange={e => setPresetForm({ ...presetForm, zoneName: e.target.value })}
+                    placeholder="যেমন: ধানমন্ডি"
+                    className="w-full border border-gray-300 rounded-xl p-2.5 focus:border-emerald-500 focus:outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">১ কি.মি. ফ্রি ডেলিভারি এলাকা সমূহ (কমা দিয়ে লিখুন)</label>
+                <textarea
+                  rows={2}
+                  value={presetForm.nearbyAreasText}
+                  onChange={e => setPresetForm({ ...presetForm, nearbyAreasText: e.target.value })}
+                  placeholder="যেমন: ধানমন্ডি ৩২, রাসেল স্কয়ার, শুক্রাবাদ, সোবহানবাগ"
+                  className="w-full border border-gray-300 rounded-xl p-2.5 focus:border-emerald-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPresetModalOpen(false)}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl transition cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl shadow transition cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>সংরক্ষণ করুন</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );
