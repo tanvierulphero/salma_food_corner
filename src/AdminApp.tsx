@@ -475,12 +475,6 @@ export default function AdminApp() {
   if (!isAuthenticated) {
     return (
       <div className="max-w-[430px] w-full mx-auto min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-emerald-950 flex flex-col justify-between p-5 shadow-[0_0_60px_rgba(0,0,0,0.6)] border-x border-white/10">
-        {/* Top Mobile Status Bar */}
-        <div className="flex justify-between items-center text-[11px] text-white/80 font-bold px-1">
-          <span>9:41</span>
-          <span className="text-[10px] bg-white/10 px-2.5 py-0.5 rounded-full text-amber-300">📱 Salma POS Mobile</span>
-          <span>5G • 100%</span>
-        </div>
 
         <div className="bg-white rounded-3xl p-6 w-full shadow-2xl text-center space-y-5 border border-amber-200 my-auto">
           <div className="w-16 h-16 bg-gradient-to-tr from-red-600 via-amber-500 to-emerald-600 rounded-2xl flex items-center justify-center mx-auto text-white shadow-lg">
@@ -549,15 +543,6 @@ export default function AdminApp() {
       
       {/* Top Native Mobile Status Bar + App Header */}
       <header className="sticky top-0 z-40 bg-gradient-to-r from-red-800 via-red-700 to-emerald-900 text-white shadow-md">
-        {/* Simulated Mobile Status Bar */}
-        <div className="px-4 pt-1.5 pb-1 flex items-center justify-between text-[10px] text-amber-200/90 font-semibold border-b border-white/10">
-          <span className="font-mono font-bold">9:41</span>
-          <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>SALMA ADMIN MOBILE OS</span>
-          </span>
-          <span className="font-mono">5G • 100%</span>
-        </div>
 
         <div className="px-3.5 py-2.5 flex items-center justify-between">
           <div className="flex items-center gap-2">

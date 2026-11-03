@@ -1035,16 +1035,6 @@ export default function App() {
   return (
     <div className="max-w-[430px] w-full mx-auto min-h-screen bg-[#fffdf9] flex flex-col font-sans text-gray-800 pb-28 shadow-[0_0_60px_rgba(0,0,0,0.55)] relative border-x border-amber-200/70 overflow-x-hidden">
       
-      {/* Top Native Mobile Status Bar */}
-      <div className="bg-red-950 text-amber-100/90 px-4 py-1 text-[10px] font-semibold flex items-center justify-between border-b border-white/10">
-        <span className="font-mono font-bold">9:41</span>
-        <span className="flex items-center gap-1 text-amber-300 font-bold">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-          <span>সালমা ফুড মোবাইল অ্যাপ</span>
-        </span>
-        <span className="font-mono">5G • 100%</span>
-      </div>
-
       {/* Visual Toast Notification: 'Preparing' -> 'Out for Delivery' */}
       <AnimatePresence>
         {deliveryToast && (
@@ -1461,23 +1451,16 @@ export default function App() {
 
                 {/* Mobile App Food List Cards (Image on Top, Name & Info Below) */}
                 {filteredMenu.length === 0 ? (
-                  <div className="bg-white rounded-2xl border border-dashed border-amber-300 p-8 text-center space-y-3 shadow-xs">
+                  <div className="bg-white rounded-2xl border border-dashed border-amber-300 p-8 text-center space-y-2.5 shadow-xs">
                     <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                       <Utensils className="w-7 h-7" />
                     </div>
                     <div>
                       <h3 className="font-bold text-gray-900 text-base">মেনুতে কোনো খাবার নেই</h3>
                       <p className="text-xs text-gray-500 max-w-xs mx-auto mt-1">
-                        সকল ডেমো ডাটা পরিষ্কার করা হয়েছে। এডমিন প্যানেল থেকে আপনার দোকানের নতুন খাবারের তালিকা এন্ট্রি করুন।
+                        বর্তমানে কোনো খাবার তালিকাভুক্ত নেই। শীঘ্রই সুস্বাদু খাবারের নতুন তালিকা যুক্ত করা হবে।
                       </p>
                     </div>
-                    <a
-                      href="/admin.html"
-                      className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition"
-                    >
-                      <ChefHat className="w-4 h-4" />
-                      <span>এডমিন প্যানেলে খাবার যোগ করুন</span>
-                    </a>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-4">
