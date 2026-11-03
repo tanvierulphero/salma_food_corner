@@ -1344,38 +1344,6 @@ export default function App() {
         {appMode === 'public' && (
           <div className="space-y-4">
             
-            {/* Customer Status Bar Banner */}
-            {currentCustomer ? (
-              <div className="bg-gradient-to-r from-emerald-700 via-teal-700 to-amber-600 text-white rounded-2xl p-3.5 shadow-sm flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center font-black text-sm shrink-0">
-                    {currentCustomer.name.charAt(0)}
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-bold text-xs truncate">স্বাগতম, {currentCustomer.name}!</h3>
-                    <p className="text-[10px] text-amber-100 truncate">
-                      📱 {currentCustomer.phone} • 🎁 {currentCustomer.loyaltyPoints} Pts
-                    </p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setPublicTab('profile')}
-                  className="bg-white text-emerald-900 px-2.5 py-1.5 rounded-xl text-[10px] font-black shadow-2xs shrink-0 cursor-pointer"
-                >
-                  প্রোফাইল
-                </button>
-              </div>
-            ) : (
-              <div className="bg-gradient-to-r from-amber-500 to-red-600 text-white rounded-2xl p-3 shadow-xs flex justify-between items-center gap-2 text-xs">
-                <span className="text-[11px] font-medium leading-tight">💡 পাসওয়ার্ড ছাড়াই শুধু মোবাইল নম্বর দিয়ে অর্ডার করুন!</span>
-                <button 
-                  onClick={() => setCustomerModalOpen(true)}
-                  className="bg-white text-red-600 font-black px-2.5 py-1 rounded-full text-[10px] shadow-2xs shrink-0 cursor-pointer"
-                >
-                  লগইন
-                </button>
-              </div>
-            )}
 
             {/* TAB 1: MENU & ORDER */}
             {publicTab === 'menu' && (

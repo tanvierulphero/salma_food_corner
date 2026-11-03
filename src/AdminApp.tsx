@@ -929,14 +929,6 @@ export default function AdminApp() {
 
               <div className="flex items-center gap-2">
                 <button 
-                  onClick={handleClearAllData}
-                  className="border border-red-200 hover:bg-red-50 text-red-700 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1 transition cursor-pointer"
-                  title="সকল ডেমো ডাটা মুছুন"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                  <span>ডাটা মুছুন</span>
-                </button>
-                <button 
                   onClick={handleOpenAddFood}
                   className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow transition cursor-pointer"
                 >
