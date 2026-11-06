@@ -1,0 +1,27 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # /admin এ গেলে সরাসরি admin.html ওপেন হবে
+  RewriteRule ^admin/?$ admin.html [L]
+
+  # আসল ফাইল বা ফোল্ডার থাকলে সরাসরি সার্ভ করবে
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_FILENAME} !-l
+
+  # বাকি সব রাউট index.html এ পাঠাবে (React SPA Routing)
+  RewriteRule . /index.html [L]
+</IfModule>
+
+# Browser Caching & Speed Optimization for cPanel
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/html "access plus 0 seconds"
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+</IfModule>
