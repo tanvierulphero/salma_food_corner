@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS `menu_items` (
   `category` varchar(50) NOT NULL DEFAULT 'popular',
   `price` decimal(10,2) NOT NULL DEFAULT 0.00,
   `original_price` decimal(10,2) DEFAULT NULL,
-  `image` text,
+  `image` longtext,
   `rating` decimal(3,1) DEFAULT 5.0,
   `reviews_count` int(11) DEFAULT 1,
   `description_bn` text,

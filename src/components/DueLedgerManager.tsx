@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { DueEntry, LedgerEntry, Order, CustomerProfile } from '../types';
 import { playAddToCartSound, playOrderSuccessSound } from '../utils/audioFeedback';
+import { saveToCpanelDb } from '../utils/sqlSync';
 
 interface DueLedgerManagerProps {
   ledger: LedgerEntry[];
@@ -55,11 +56,12 @@ export default function DueLedgerManager({
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingDueId, setEditingDueId] = useState<string | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [selectedDue, setSelectedDue] = useState<DueEntry | null>(null);
 
-  // Form State: Add New Due
+  // Form State: Add / Edit Due
   const [formData, setFormData] = useState({
     customerName: '',
     customerPhone: '',
@@ -107,7 +109,23 @@ export default function DueLedgerManager({
     return true;
   });
 
-  // Handler: Add New Due
+  // Handler: Open Edit Due Modal
+  const handleOpenEditDue = (due: DueEntry) => {
+    setEditingDueId(due.id);
+    setFormData({
+      customerName: due.customerName,
+      customerPhone: due.customerPhone,
+      totalAmount: due.totalAmount.toString(),
+      initialPaid: due.paidAmount.toString(),
+      itemsDescription: due.itemsDescription,
+      dueDate: due.dueDate || '',
+      note: due.note || '',
+      paymentMethod: 'Cash'
+    });
+    setIsAddModalOpen(true);
+  };
+
+  // Handler: Add or Update Due
   const handleAddNewDue = (e: React.FormEvent) => {
     e.preventDefault();
     const total = parseFloat(formData.totalAmount);
@@ -120,8 +138,37 @@ export default function DueLedgerManager({
       alert('জমা টাকা মোট টাকার চেয়ে বেশি হতে পারে না');
       return;
     }
-    const dueAmount = total - initialPaid;
+    const dueAmount = Math.max(0, total - initialPaid);
     const status: DueEntry['status'] = dueAmount === 0 ? 'paid' : (initialPaid > 0 ? 'partial' : 'unpaid');
+
+    if (editingDueId) {
+      setDueList(prev => {
+        const updated = prev.map(item => {
+          if (item.id === editingDueId) {
+            return {
+              ...item,
+              customerName: formData.customerName.trim() || 'সাধারণ খদ্দের',
+              customerPhone: formData.customerPhone.trim() || 'N/A',
+              totalAmount: total,
+              paidAmount: initialPaid,
+              dueAmount,
+              dueDate: formData.dueDate || undefined,
+              itemsDescription: formData.itemsDescription.trim() || 'খাবারের বিল',
+              status,
+              note: formData.note.trim()
+            };
+          }
+          return item;
+        });
+        saveToCpanelDb('salma_due_ledger', updated);
+        return updated;
+      });
+      if (soundOn) playAddToCartSound();
+      setIsAddModalOpen(false);
+      setEditingDueId(null);
+      alert('বাকি হিসাবের তথ্য সফলভাবে আপডেট করা হয়েছে!');
+      return;
+    }
 
     const newVoucher = `DUE-${Math.floor(100 + Math.random() * 900)}`;
     const newEntry: DueEntry = {
@@ -149,7 +196,11 @@ export default function DueLedgerManager({
       note: formData.note.trim()
     };
 
-    setDueList(prev => [newEntry, ...prev]);
+    setDueList(prev => {
+      const updated = [newEntry, ...prev];
+      saveToCpanelDb('salma_due_ledger', updated);
+      return updated;
+    });
 
     // If initial paid was given, optionally record in POS Ledger as income
     if (initialPaid > 0) {
@@ -163,11 +214,16 @@ export default function DueLedgerManager({
         paymentMethod: formData.paymentMethod,
         note: `${formData.customerName} এর প্রাথমিক জমা (${newVoucher})`
       };
-      setLedger(prev => [posEntry, ...prev]);
+      setLedger(prev => {
+        const updatedLedger = [posEntry, ...prev];
+        saveToCpanelDb('salma_ledger', updatedLedger);
+        return updatedLedger;
+      });
     }
 
     if (soundOn) playAddToCartSound();
     setIsAddModalOpen(false);
+    setEditingDueId(null);
     setFormData({
       customerName: '',
       customerPhone: '',
@@ -222,18 +278,22 @@ export default function DueLedgerManager({
       note: paymentData.note.trim() || 'বাকি আদায়'
     };
 
-    setDueList(prev => prev.map(item => {
-      if (item.id === selectedDue.id) {
-        return {
-          ...item,
-          paidAmount: newPaidAmount,
-          dueAmount: Math.max(0, newDueAmount),
-          status: newStatus,
-          payments: [...(item.payments || []), newPaymentRecord]
-        };
-      }
-      return item;
-    }));
+    setDueList(prev => {
+      const updated = prev.map(item => {
+        if (item.id === selectedDue.id) {
+          return {
+            ...item,
+            paidAmount: newPaidAmount,
+            dueAmount: Math.max(0, newDueAmount),
+            status: newStatus,
+            payments: [...(item.payments || []), newPaymentRecord]
+          };
+        }
+        return item;
+      });
+      saveToCpanelDb('salma_due_ledger', updated);
+      return updated;
+    });
 
     // Add to POS ledger if checked
     if (paymentData.addToPosLedger) {
@@ -247,7 +307,11 @@ export default function DueLedgerManager({
         paymentMethod: paymentData.paymentMethod,
         note: `${selectedDue.customerName} থেকে বাকি আদায় (${selectedDue.voucherNo})`
       };
-      setLedger(prev => [posEntry, ...prev]);
+      setLedger(prev => {
+        const updatedLedger = [posEntry, ...prev];
+        saveToCpanelDb('salma_ledger', updatedLedger);
+        return updatedLedger;
+      });
     }
 
     if (soundOn) playOrderSuccessSound();
@@ -258,7 +322,35 @@ export default function DueLedgerManager({
   // Handler: Delete Due Entry
   const handleDeleteDue = (id: string, voucherNo: string) => {
     if (confirm(`আপনি কি সত্যিই বাকি রেকর্ড ${voucherNo} মুছে ফেলতে চান?`)) {
-      setDueList(prev => prev.filter(d => d.id !== id));
+      setDueList(prev => {
+        const updated = prev.filter(d => d.id !== id);
+        saveToCpanelDb('salma_due_ledger', updated);
+        return updated;
+      });
+    }
+  };
+
+  // Handler: Delete Individual Payment Installment inside a Due Record
+  const handleDeletePaymentInstallment = (dueId: string, paymentId: string, payAmount: number) => {
+    if (confirm(`আপনি কি এই ৳${payAmount} জমার এন্ট্রিটি মুছে ফেলতে চান?`)) {
+      setDueList(prev => {
+        const updated = prev.map(d => {
+          if (d.id !== dueId) return d;
+          const nextPayments = (d.payments || []).filter(p => p.id !== paymentId);
+          const nextPaid = Math.max(0, d.paidAmount - payAmount);
+          const nextDue = Math.max(0, d.totalAmount - nextPaid);
+          const nextStatus: DueEntry['status'] = nextDue === 0 ? 'paid' : (nextPaid > 0 ? 'partial' : 'unpaid');
+          return {
+            ...d,
+            paidAmount: nextPaid,
+            dueAmount: nextDue,
+            status: nextStatus,
+            payments: nextPayments
+          };
+        });
+        saveToCpanelDb('salma_due_ledger', updated);
+        return updated;
+      });
     }
   };
 
@@ -298,7 +390,7 @@ export default function DueLedgerManager({
 
   // Quick WhatsApp / SMS Reminder Builder
   const getReminderText = (due: DueEntry) => {
-    return `আসসালামু আলাইকুম ${due.customerName} সাহেব, সালমা ফুড কর্ণার (ধানমন্ডি ৩২) থেকে বিনীতভাবে জানানো যাচ্ছে যে আপনার ${due.itemsDescription}-এর বকেয়া বাকি ৳${due.dueAmount} টাকা পরিশোধের জন্য অনুরোধ করা হচ্ছে। ধন্যবাদ!`;
+    return `আসসালামু আলাইকুম ${due.customerName} সাহেব, সালমা ফুড কর্ণার (চান্দনা চৌরাস্তা, গাজীপুর) থেকে বিনীতভাবে জানানো যাচ্ছে যে আপনার ${due.itemsDescription}-এর বকেয়া বাকি ৳${due.dueAmount} টাকা পরিশোধের জন্য অনুরোধ করা হচ্ছে। ধন্যবাদ!`;
   };
 
   const handleSendSmsReminder = (due: DueEntry) => {
@@ -328,7 +420,20 @@ export default function DueLedgerManager({
             </div>
           </div>
           <button
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={() => {
+              setEditingDueId(null);
+              setFormData({
+                customerName: '',
+                customerPhone: '',
+                totalAmount: '',
+                initialPaid: '',
+                itemsDescription: '',
+                dueDate: '',
+                note: '',
+                paymentMethod: 'Cash'
+              });
+              setIsAddModalOpen(true);
+            }}
             className="bg-amber-400 hover:bg-amber-300 text-red-950 font-black text-xs px-3.5 py-2 rounded-2xl shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -609,12 +714,22 @@ export default function DueLedgerManager({
                         </p>
                         <div className="divide-y divide-emerald-100">
                           {due.payments.map(p => (
-                            <div key={p.id} className="py-1 flex items-center justify-between text-emerald-900">
+                            <div key={p.id} className="py-1 flex items-center justify-between text-emerald-900 gap-2">
                               <div>
                                 <span className="font-semibold">৳{p.amount}</span> ({p.paymentMethod})
                                 <span className="text-[10px] text-gray-500 ml-1.5">{p.date} {p.time}</span>
                               </div>
-                              {p.note && <span className="text-[10px] text-gray-500 truncate max-w-[120px]">{p.note}</span>}
+                              <div className="flex items-center gap-1.5">
+                                {p.note && <span className="text-[10px] text-gray-500 truncate max-w-[110px]">{p.note}</span>}
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePaymentInstallment(due.id, p.id, p.amount)}
+                                  className="text-red-500 hover:text-red-700 p-0.5 rounded hover:bg-red-50 cursor-pointer"
+                                  title="এই জমাটি মুছে ফেলুন"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -654,7 +769,7 @@ export default function DueLedgerManager({
                         )}
                       </div>
 
-                      {/* Right: Payment Collection & Delete */}
+                      {/* Right: Edit, Payment Collection & Delete */}
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => {
@@ -665,6 +780,15 @@ export default function DueLedgerManager({
                           title="রসিদ স্লিপ দেখুন ও প্রিন্ট"
                         >
                           <Printer className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          onClick={() => handleOpenEditDue(due)}
+                          className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                          title="বাকি হিসাব এডিট করুন"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>এডিট</span>
                         </button>
 
                         {!isPaid && (
@@ -679,10 +803,11 @@ export default function DueLedgerManager({
 
                         <button
                           onClick={() => handleDeleteDue(due.id, due.voucherNo)}
-                          className="p-1.5 rounded-xl text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
+                          className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
                           title="মুছে ফেলুন"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3 h-3" />
+                          <span>ডিলেট</span>
                         </button>
                       </div>
                     </div>
@@ -706,12 +831,17 @@ export default function DueLedgerManager({
                   <BookOpen className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-black text-sm text-gray-900">নতুন বাকি এন্ট্রি করুন</h3>
-                  <p className="text-[10px] text-gray-500">গ্রাহকের বাকির তথ্য ও হিসাব যুক্ত করুন</p>
+                  <h3 className="font-black text-sm text-gray-900">
+                    {editingDueId ? '✏️ বাকি হিসাবের তথ্য এডিট করুন' : 'নতুন বাকি এন্ট্রি করুন'}
+                  </h3>
+                  <p className="text-[10px] text-gray-500">গ্রাহকের বাকির তথ্য ও হিসাব যুক্ত বা পরিবর্তন করুন</p>
                 </div>
               </div>
               <button
-                onClick={() => setIsAddModalOpen(false)}
+                onClick={() => {
+                  setIsAddModalOpen(false);
+                  setEditingDueId(null);
+                }}
                 className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -989,8 +1119,8 @@ export default function DueLedgerManager({
             {/* Printable Slip Content */}
             <div className="border border-dashed border-gray-300 p-4 rounded-2xl font-mono text-xs space-y-3 bg-amber-50/20">
               <div className="text-center space-y-0.5 border-b pb-2">
-                <h4 className="font-black text-sm text-gray-900 font-sans">সালমা ফুড কর্ণার</h4>
-                <p className="text-[10px] text-gray-500">ধানমন্ডি ৩২, ঢাকা-১২০৯ | ০১৭১২-৩৪৫৬৭৮</p>
+                <h4 className="font-black text-sm text-gray-900 font-sans">সালমা ফুড কর্ণার, গাজীপুর</h4>
+                <p className="text-[10px] text-gray-500">চান্দনা চৌরাস্তা, গাজীপুর সদর-১৭০০ | ০১৭১২-৩৪৫৬৭৮</p>
                 <p className="text-[10px] font-bold text-red-700 pt-0.5">বাকি মেমো ও খতিয়ান স্লিপ</p>
               </div>
 

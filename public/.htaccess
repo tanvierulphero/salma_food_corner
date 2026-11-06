@@ -2,8 +2,9 @@
   RewriteEngine On
   RewriteBase /
 
-  # api.php সরাসরি রান করবে (কখনোই index.html এ যাবে না)
+  # api.php এবং uploads/ ফোল্ডারের ছবি সরাসরি সার্ভ করবে (কখনোই index.html এ যাবে না)
   RewriteRule ^api\.php$ - [L]
+  RewriteRule ^uploads/ - [L]
 
   # /admin এ গেলে সরাসরি admin.html ওপেন হবে
   RewriteRule ^admin/?$ admin.html [L]

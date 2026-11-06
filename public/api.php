@@ -35,6 +35,30 @@ if (file_exists($configFileLocal)) {
 
 // সার্ভারের ফাইল-বেসড ব্যাকআপ ডাটাবেস (public_html এবং parent ফোল্ডারে)
 $serverDbFile = __DIR__ . '/salma_server_db.json';
+$uploadsDirLocal = __DIR__ . '/uploads';
+$uploadsDirBackup = dirname(__DIR__) . '/salma_uploads';
+
+if (!is_dir($uploadsDirLocal)) {
+    @mkdir($uploadsDirLocal, 0755, true);
+}
+if (!is_dir($uploadsDirBackup)) {
+    @mkdir($uploadsDirBackup, 0755, true);
+}
+
+// যদি Git/FTP ডিপ্লয়ের কারণে public_html/uploads থেকে কোনো ছবি মুছে যায়, ব্যাকআপ ফোল্ডার থেকে স্বয়ংক্রিয়ভাবে রিস্টোর করবে
+if (is_dir($uploadsDirBackup) && is_dir($uploadsDirLocal)) {
+    $backupFiles = @scandir($uploadsDirBackup);
+    if (is_array($backupFiles)) {
+        foreach ($backupFiles as $bf) {
+            if ($bf === '.' || $bf === '..') continue;
+            $src = $uploadsDirBackup . '/' . $bf;
+            $dst = $uploadsDirLocal . '/' . $bf;
+            if (is_file($src) && !file_exists($dst)) {
+                @copy($src, $dst);
+            }
+        }
+    }
+}
 
 function readServerDbFile($file) {
     if (!file_exists($file)) return [];
@@ -81,7 +105,7 @@ function initMysqlTables($conn) {
       `category` varchar(50) NOT NULL DEFAULT 'popular',
       `price` decimal(10,2) NOT NULL DEFAULT 0.00,
       `original_price` decimal(10,2) DEFAULT NULL,
-      `image` text,
+      `image` longtext,
       `rating` decimal(3,1) DEFAULT 5.0,
       `reviews_count` int(11) DEFAULT 1,
       `description_bn` text,
@@ -94,6 +118,9 @@ function initMysqlTables($conn) {
       `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (`id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    // নিশ্চিত করা যে পূর্বের টেবিলেও image কলামটি LONGTEXT থাকে
+    @$conn->query("ALTER TABLE `menu_items` MODIFY `image` LONGTEXT;");
 
     $conn->query("CREATE TABLE IF NOT EXISTS `orders` (
       `id` varchar(64) NOT NULL,
@@ -293,7 +320,78 @@ if ($mysqlConnected) {
 $action = isset($_GET['action']) ? $_GET['action'] : 'load';
 
 // ============================================================================
-// ০. এডমিন প্যানেল থেকে সরাসরি MySQL Database কনফিগার করা (action=setup_db)
+// ০.ক এডমিন প্যানেল থেকে খাবারের ছবি সরাসরি cPanel সার্ভারে আপলোড ও সেভ করা (action=upload_image)
+// ============================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_image') {
+    $binaryData = null;
+    $ext = 'jpg';
+
+    // ১) যদি multipart/form-data ($_FILES['image']) হিসেবে আসে
+    if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+        $tmpName = $_FILES['image']['tmp_name'];
+        $origName = $_FILES['image']['name'] ?? 'food.jpg';
+        $detectedExt = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+        if (in_array($detectedExt, ['jpg', 'jpeg', 'png', 'webp', 'gif'])) {
+            $ext = $detectedExt === 'jpeg' ? 'jpg' : $detectedExt;
+        }
+        $binaryData = @file_get_contents($tmpName);
+    } else {
+        // ২) যদি JSON Base64 (imageBase64) হিসেবে আসে
+        $raw = file_get_contents('php://input');
+        $payload = json_decode($raw, true);
+        if (is_array($payload) && !empty($payload['imageBase64'])) {
+            $b64 = $payload['imageBase64'];
+            if (preg_match('/^data:image\/(\w+);base64,/', $b64, $matches)) {
+                $detectedExt = strtolower($matches[1]);
+                if (in_array($detectedExt, ['jpg', 'jpeg', 'png', 'webp', 'gif'])) {
+                    $ext = $detectedExt === 'jpeg' ? 'jpg' : $detectedExt;
+                }
+                $b64 = substr($b64, strpos($b64, ',') + 1);
+            }
+            $binaryData = base64_decode($b64);
+        }
+    }
+
+    if (!$binaryData) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'ছবির ডাটা পাওয়া যায়নি।']);
+        if ($conn) $conn->close();
+        exit;
+    }
+
+    $fileName = 'food_' . time() . '_' . mt_rand(1000, 9999) . '.' . $ext;
+    $localFilePath = $uploadsDirLocal . '/' . $fileName;
+    $backupFilePath = $uploadsDirBackup . '/' . $fileName;
+
+    $savedLocal = @file_put_contents($localFilePath, $binaryData, LOCK_EX);
+    @file_put_contents($backupFilePath, $binaryData, LOCK_EX);
+
+    if ($savedLocal !== false && file_exists($localFilePath)) {
+        @chmod($localFilePath, 0644);
+        $relativeUrl = 'uploads/' . $fileName;
+        echo json_encode([
+            'status' => 'ok',
+            'savedOnDisk' => true,
+            'imageUrl' => $relativeUrl,
+            'message' => 'ছবিটি সফলভাবে cPanel সার্ভারের uploads/ ফোল্ডারে সেভ হয়েছে!'
+        ], JSON_UNESCAPED_UNICODE);
+    } else {
+        // যদি ফোল্ডার পারমিশন না থাকে, তবে সরাসরি ডাটাবেসে সেভ রাখার জন্য Base64 URL রিটার্ন করবে
+        $mime = $ext === 'png' ? 'image/png' : ($ext === 'webp' ? 'image/webp' : 'image/jpeg');
+        $dataUri = 'data:' . $mime . ';base64,' . base64_encode($binaryData);
+        echo json_encode([
+            'status' => 'ok',
+            'savedOnDisk' => false,
+            'imageUrl' => $dataUri,
+            'message' => 'ছবিটি সফলভাবে ডাটাবেসে সংরক্ষিত হয়েছে!'
+        ], JSON_UNESCAPED_UNICODE);
+    }
+    if ($conn) $conn->close();
+    exit;
+}
+
+// ============================================================================
+// ০.খ এডমিন প্যানেল থেকে সরাসরি MySQL Database কনফিগার করা (action=setup_db)
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'setup_db') {
     $raw = file_get_contents('php://input');

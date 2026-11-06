@@ -10,7 +10,7 @@ import {
   Search, Lock, Unlock, LogOut, ArrowUpRight, ArrowDownRight, DollarSign, 
   Printer, Volume2, VolumeX, Eye, ArrowLeft, ShieldCheck, Tag, Sparkles,
   ShoppingBag, Calendar, Clock, MapPin, Hash, Check, X, ShieldAlert,
-  BookOpen
+  BookOpen, Upload, Camera, Image as ImageIcon
 } from 'lucide-react';
 import { 
   FoodItem, Order, LedgerEntry, CustomerProfile, INITIAL_MENU_DATA 
@@ -26,7 +26,9 @@ import {
   subscribeMysqlStatus,
   setupMysqlDatabase,
   syncAllToMysqlNow,
-  saveToCpanelDb
+  saveToCpanelDb,
+  uploadFoodImageToCpanel,
+  normalizeBdPhone
 } from './utils/sqlSync';
 
 const ADMIN_PIN_DEFAULT = '1234';
@@ -100,7 +102,7 @@ export default function AdminApp() {
   });
 
   const [activeOffer, setActiveOffer] = useState<string>(() => {
-    return localStorage.getItem('salma_active_offer') || '🎉 সুখবর! দোকানের ১ কি.মি. পরিধিতে ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)!';
+    return localStorage.getItem('salma_active_offer') || '🎉 সুখবর! গাজীপুরে আমাদের দোকানের ১ কি.মি. পরিধিতে ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)!';
   });
 
   // Listen to Storage events so changes in index.html sync in real time to admin.html
@@ -212,6 +214,7 @@ export default function AdminApp() {
 
   const handleOpenAddFood = (asBundle = false) => {
     setEditingFoodId(null);
+    setUploadImgMsg(null);
     setFoodForm({
       nameBn: '',
       nameEn: '',
@@ -236,6 +239,7 @@ export default function AdminApp() {
 
   const handleOpenEditFood = (item: FoodItem) => {
     setEditingFoodId(item.id);
+    setUploadImgMsg(null);
     const bItems = item.bundleItems || [];
     setFoodForm({
       nameBn: item.nameBn,
@@ -255,6 +259,48 @@ export default function AdminApp() {
       bundleSavings: item.bundleSavings ? item.bundleSavings.toString() : ''
     });
     setFoodModalOpen(true);
+  };
+
+  // cPanel Food Image Upload State & Handlers
+  const [isUploadingFoodImg, setIsUploadingFoodImg] = useState(false);
+  const [uploadImgMsg, setUploadImgMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [uploadingCardId, setUploadingCardId] = useState<string | null>(null);
+
+  const handleFoodModalImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingFoodImg(true);
+    setUploadImgMsg(null);
+    const res = await uploadFoodImageToCpanel(file);
+    setIsUploadingFoodImg(false);
+    if (res.ok && res.imageUrl) {
+      setFoodForm(prev => ({ ...prev, image: res.imageUrl }));
+      setUploadImgMsg({ type: 'ok', text: res.message });
+      if (soundOn) playAddToCartSound();
+    } else {
+      setUploadImgMsg({ type: 'err', text: res.message || 'ছবি আপলোড ব্যর্থ হয়েছে।' });
+    }
+    e.target.value = '';
+  };
+
+  const handleQuickCardImageUpload = async (foodId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingCardId(foodId);
+    const res = await uploadFoodImageToCpanel(file);
+    setUploadingCardId(null);
+    if (res.ok && res.imageUrl) {
+      setMenuItems(prev => {
+        const updated = prev.map(item => item.id === foodId ? { ...item, image: res.imageUrl } : item);
+        saveToCpanelDb('salma_menu_items', updated);
+        return updated;
+      });
+      if (soundOn) playAddToCartSound();
+      alert('খাবারের নতুন ছবি সফলভাবে cPanel সার্ভারে ও ডাটাবেসে সেভ হয়েছে!');
+    } else {
+      alert(res.message || 'ছবি আপলোড করতে সমস্যা হয়েছে।');
+    }
+    e.target.value = '';
   };
 
   // cPanel MySQL (phpMyAdmin) Database Connection State
@@ -403,31 +449,88 @@ export default function AdminApp() {
     }
   };
 
-  // Customer Add Modal State
+  // Customer Add / Edit Modal State
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [editingCustOriginalPhone, setEditingCustOriginalPhone] = useState<string | null>(null);
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustName, setNewCustName] = useState('');
   const [newCustAddress, setNewCustAddress] = useState('');
+  const [newCustPoints, setNewCustPoints] = useState('0');
+  const [newCustOrders, setNewCustOrders] = useState('0');
+  const [newCustSpent, setNewCustSpent] = useState('0');
+
+  const handleOpenAddCustomer = () => {
+    setEditingCustOriginalPhone(null);
+    setNewCustPhone('');
+    setNewCustName('');
+    setNewCustAddress('');
+    setNewCustPoints('0');
+    setNewCustOrders('0');
+    setNewCustSpent('0');
+    setCustomerModalOpen(true);
+  };
+
+  const handleOpenEditCustomer = (cust: CustomerProfile) => {
+    setEditingCustOriginalPhone(cust.phone);
+    setNewCustPhone(cust.phone);
+    setNewCustName(cust.name);
+    setNewCustAddress(cust.address);
+    setNewCustPoints(String(cust.loyaltyPoints || 0));
+    setNewCustOrders(String(cust.totalOrders || 0));
+    setNewCustSpent(String(cust.totalSpent || 0));
+    setCustomerModalOpen(true);
+  };
 
   const handleAddCustomer = (e: React.FormEvent) => {
     e.preventDefault();
-    const phone = newCustPhone.trim();
+    const cleanPhone = normalizeBdPhone(newCustPhone.trim()) || newCustPhone.trim();
     const name = newCustName.trim();
     const address = newCustAddress.trim();
-    if (!phone || !name) {
+    if (!cleanPhone || !name) {
       alert('অনুগ্রহ করে গ্রাহকের নাম ও মোবাইল নম্বর লিখুন।');
       return;
     }
+
+    if (editingCustOriginalPhone) {
+      setCustomers(prev => {
+        const nextMap = { ...prev };
+        const oldRecord = nextMap[editingCustOriginalPhone];
+        if (editingCustOriginalPhone !== cleanPhone) {
+          delete nextMap[editingCustOriginalPhone];
+        }
+        nextMap[cleanPhone] = {
+          phone: cleanPhone,
+          name,
+          address: address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+          loyaltyPoints: Math.max(0, Number(newCustPoints) || 0),
+          registeredAt: oldRecord?.registeredAt || todayStr,
+          totalOrders: Math.max(0, Number(newCustOrders) || 0),
+          totalSpent: Math.max(0, Number(newCustSpent) || 0)
+        };
+        saveToCpanelDb('salma_customers', nextMap);
+        return nextMap;
+      });
+      setCustomerModalOpen(false);
+      setEditingCustOriginalPhone(null);
+      if (soundOn) playAddToCartSound();
+      alert(`গ্রাহক '${name}' এর তথ্য সফলভাবে আপডেট হয়েছে!`);
+      return;
+    }
+
     const newProfile: CustomerProfile = {
-      phone,
+      phone: cleanPhone,
       name,
-      address: address || 'ঢাকা',
-      loyaltyPoints: 0,
+      address: address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+      loyaltyPoints: Math.max(0, Number(newCustPoints) || 0),
       registeredAt: todayStr,
-      totalOrders: 0,
-      totalSpent: 0
+      totalOrders: Math.max(0, Number(newCustOrders) || 0),
+      totalSpent: Math.max(0, Number(newCustSpent) || 0)
     };
-    setCustomers(prev => ({ ...prev, [phone]: newProfile }));
+    setCustomers(prev => {
+      const updated = { ...prev, [cleanPhone]: newProfile };
+      saveToCpanelDb('salma_customers', updated);
+      return updated;
+    });
     setCustomerModalOpen(false);
     setNewCustPhone('');
     setNewCustName('');
@@ -436,12 +539,84 @@ export default function AdminApp() {
     alert(`গ্রাহক '${name}' সফলভাবে ডাটাবেজে যুক্ত হয়েছেন!`);
   };
 
+  const handleDeleteCustomer = (phoneKey: string, custName: string) => {
+    if (confirm(`আপনি কি সত্যিই গ্রাহক '${custName} (${phoneKey})' এর প্রোফাইল ডাটাবেজ থেকে মুছে ফেলতে চান?`)) {
+      setCustomers(prev => {
+        const updated = { ...prev };
+        delete updated[phoneKey];
+        saveToCpanelDb('salma_customers', updated);
+        return updated;
+      });
+      if (soundOn) playAddToCartSound();
+    }
+  };
+
 
   // -------------------------------------------------------------
-  // POS LEDGER & ACCOUNTING (দৈনিক আয় ও ব্যয়ের হিসাব)
+  // POS LEDGER & ACCOUNTING (দৈনিক আয় ও ব্যয়ের হিসাব + এডিট ও ডিলেট)
   // -------------------------------------------------------------
   const [quickIncome, setQuickIncome] = useState({ category: 'খাবার বিক্রয় (Food Sales)', amount: '', paymentMethod: 'Cash' as const, note: '' });
   const [quickExpense, setQuickExpense] = useState({ category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: '', paymentMethod: 'Cash' as const, note: '' });
+
+  // Edit Ledger Modal State
+  const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
+  const [editingLedgerId, setEditingLedgerId] = useState<string | null>(null);
+  const [ledgerEditForm, setLedgerEditForm] = useState({
+    type: 'income' as 'income' | 'expense',
+    voucherNo: '',
+    category: '',
+    amount: '',
+    date: todayStr,
+    paymentMethod: 'Cash' as LedgerEntry['paymentMethod'],
+    note: ''
+  });
+
+  const handleOpenEditLedger = (entry: LedgerEntry) => {
+    setEditingLedgerId(entry.id);
+    setLedgerEditForm({
+      type: entry.type,
+      voucherNo: entry.voucherNo,
+      category: entry.category,
+      amount: String(entry.amount),
+      date: entry.date,
+      paymentMethod: entry.paymentMethod,
+      note: entry.note || ''
+    });
+    setLedgerModalOpen(true);
+  };
+
+  const handleSaveEditLedger = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLedgerId) return;
+    const amt = Number(ledgerEditForm.amount);
+    if (!amt || amt <= 0) {
+      alert('সঠিক টাকার পরিমাণ দিন।');
+      return;
+    }
+    setLedger(prev => {
+      const updated = prev.map(item => {
+        if (item.id === editingLedgerId) {
+          return {
+            ...item,
+            type: ledgerEditForm.type,
+            voucherNo: ledgerEditForm.voucherNo.trim() || item.voucherNo,
+            category: ledgerEditForm.category.trim() || item.category,
+            amount: amt,
+            date: ledgerEditForm.date || item.date,
+            paymentMethod: ledgerEditForm.paymentMethod,
+            note: ledgerEditForm.note.trim()
+          };
+        }
+        return item;
+      });
+      saveToCpanelDb('salma_ledger', updated);
+      return updated;
+    });
+    setLedgerModalOpen(false);
+    setEditingLedgerId(null);
+    if (soundOn) playAddToCartSound();
+    alert('হিসাব এন্ট্রিটি সফলভাবে এডিট ও সংরক্ষণ করা হয়েছে!');
+  };
 
   const handleAddIncome = (e: React.FormEvent) => {
     e.preventDefault();
@@ -456,7 +631,11 @@ export default function AdminApp() {
       paymentMethod: quickIncome.paymentMethod,
       note: quickIncome.note || 'দৈনিক নগদ আয়'
     };
-    setLedger(prev => [entry, ...prev]);
+    setLedger(prev => {
+      const updated = [entry, ...prev];
+      saveToCpanelDb('salma_ledger', updated);
+      return updated;
+    });
     setQuickIncome({ category: 'খাবার বিক্রয় (Food Sales)', amount: '', paymentMethod: 'Cash', note: '' });
     if (soundOn) playAddToCartSound();
     alert(`৳${entry.amount} আয় সফলভাবে এন্ট্রি হয়েছে!`);
@@ -475,7 +654,11 @@ export default function AdminApp() {
       paymentMethod: quickExpense.paymentMethod,
       note: quickExpense.note || 'দৈনিক খরচ'
     };
-    setLedger(prev => [entry, ...prev]);
+    setLedger(prev => {
+      const updated = [entry, ...prev];
+      saveToCpanelDb('salma_ledger', updated);
+      return updated;
+    });
     setQuickExpense({ category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: '', paymentMethod: 'Cash', note: '' });
     if (soundOn) playAddToCartSound();
     alert(`৳${entry.amount} ব্যয় সফলভাবে এন্ট্রি হয়েছে!`);
@@ -483,7 +666,11 @@ export default function AdminApp() {
 
   const handleDeleteLedger = (id: string) => {
     if (confirm('আপনি কি এই হিসাব এন্ট্রিটি মুছে ফেলতে চান?')) {
-      setLedger(prev => prev.filter(l => l.id !== id));
+      setLedger(prev => {
+        const updated = prev.filter(l => l.id !== id);
+        saveToCpanelDb('salma_ledger', updated);
+        return updated;
+      });
     }
   };
 
@@ -497,22 +684,102 @@ export default function AdminApp() {
   const netBalance = totalIncome - totalExpense;
 
   // -------------------------------------------------------------
-  // ORDERS MANAGEMENT
+  // ORDERS MANAGEMENT (স্ট্যাটাস, এডিট ও ডিলেট)
   // -------------------------------------------------------------
   const [orderFilter, setOrderFilter] = useState<'All' | 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered'>('All');
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
 
-  const handleUpdateOrderStatus = (orderId: string, newStatus: Order['status']) => {
-    setOrders(prev => prev.map(o => {
-      if (o.id === orderId) {
-        const updated = { ...o, status: newStatus };
-        if (o.status === 'Preparing' && newStatus === 'Out for Delivery') {
-          localStorage.setItem('salma_delivery_toast', JSON.stringify(updated));
+  // Order Edit Modal State
+  const [orderEditModalOpen, setOrderEditModalOpen] = useState(false);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [orderEditForm, setOrderEditForm] = useState({
+    customerName: '',
+    phone: '',
+    address: '',
+    totalAmount: '',
+    advancePaid: '',
+    dueAmount: '',
+    advancePaymentMethod: 'bKash' as 'bKash' | 'Nagad' | 'Card',
+    transactionId: '',
+    status: 'Placed' as Order['status']
+  });
+
+  const handleOpenEditOrder = (order: Order) => {
+    setEditingOrderId(order.id);
+    setOrderEditForm({
+      customerName: order.customerName,
+      phone: order.phone,
+      address: order.address,
+      totalAmount: String(order.totalAmount),
+      advancePaid: String(order.advancePaid),
+      dueAmount: String(order.dueAmount),
+      advancePaymentMethod: order.advancePaymentMethod || 'bKash',
+      transactionId: order.transactionId || '',
+      status: order.status
+    });
+    setOrderEditModalOpen(true);
+  };
+
+  const handleSaveEditOrder = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingOrderId) return;
+    const total = Math.max(0, Number(orderEditForm.totalAmount) || 0);
+    const adv = Math.max(0, Number(orderEditForm.advancePaid) || 0);
+    const due = Math.max(0, Number(orderEditForm.dueAmount));
+    setOrders(prev => {
+      const updatedList = prev.map(o => {
+        if (o.id === editingOrderId) {
+          return {
+            ...o,
+            customerName: orderEditForm.customerName.trim() || o.customerName,
+            phone: normalizeBdPhone(orderEditForm.phone.trim()) || orderEditForm.phone.trim() || o.phone,
+            address: orderEditForm.address.trim() || o.address,
+            totalAmount: total,
+            advancePaid: adv,
+            dueAmount: due,
+            advancePaymentMethod: orderEditForm.advancePaymentMethod,
+            transactionId: orderEditForm.transactionId.trim(),
+            paymentStatus: (due === 0 ? 'Fully Paid (100%)' : '50% Advance Paid (Due on Delivery)') as Order['paymentStatus'],
+            status: orderEditForm.status
+          };
         }
-        return updated;
-      }
-      return o;
-    }));
+        return o;
+      });
+      saveToCpanelDb('salma_orders', updatedList);
+      return updatedList;
+    });
+    setOrderEditModalOpen(false);
+    setEditingOrderId(null);
+    if (soundOn) playAddToCartSound();
+    alert(`অর্ডার #${editingOrderId} এর তথ্য সফলভাবে আপডেট করা হয়েছে!`);
+  };
+
+  const handleDeleteOrder = (orderId: string) => {
+    if (confirm(`আপনি কি সত্যিই অর্ডার #${orderId} ডাটাবেজ থেকে সম্পূর্ণ মুছে ফেলতে (ডিলেট) চান?`)) {
+      setOrders(prev => {
+        const updatedList = prev.filter(o => o.id !== orderId);
+        saveToCpanelDb('salma_orders', updatedList);
+        return updatedList;
+      });
+      if (soundOn) playAddToCartSound();
+    }
+  };
+
+  const handleUpdateOrderStatus = (orderId: string, newStatus: Order['status']) => {
+    setOrders(prev => {
+      const updatedList = prev.map(o => {
+        if (o.id === orderId) {
+          const updated = { ...o, status: newStatus };
+          if (o.status === 'Preparing' && newStatus === 'Out for Delivery') {
+            localStorage.setItem('salma_delivery_toast', JSON.stringify(updated));
+          }
+          return updated;
+        }
+        return o;
+      });
+      saveToCpanelDb('salma_orders', updatedList);
+      return updatedList;
+    });
     if (soundOn) playAddToCartSound();
   };
 
@@ -578,8 +845,8 @@ export default function AdminApp() {
             <ChefHat className="w-9 h-9" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-gray-900">সালমা ফুড কর্ণার</h1>
-            <p className="text-xs text-red-600 font-bold uppercase tracking-wider mt-0.5">এডমিন ও পিওএস মোবাইল অ্যাপ</p>
+            <h1 className="text-xl font-black text-gray-900">সালমা ফুড কর্ণার, গাজীপুর</h1>
+            <p className="text-xs text-red-600 font-bold uppercase tracking-wider mt-0.5">গাজীপুর এডমিন ও পিওএস অ্যাপ</p>
             <p className="text-xs text-gray-500 mt-1.5">এডমিন প্যানেলে প্রবেশ করতে ৪ ডিজিটের পিন নম্বর দিন</p>
           </div>
 
@@ -648,12 +915,12 @@ export default function AdminApp() {
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <h1 className="text-sm font-black leading-tight">সালমা ফুড এডমিন</h1>
+                <h1 className="text-sm font-black leading-tight">সালমা ফুড এডমিন (গাজীপুর)</h1>
                 <span className="bg-emerald-500/30 text-emerald-300 border border-emerald-400/30 text-[9px] font-bold px-1.5 py-0.5 rounded-md">
                   POS
                 </span>
               </div>
-              <p className="text-[10px] text-amber-200">মোবাইল রেস্টুরেন্ট ম্যানেজার</p>
+              <p className="text-[10px] text-amber-200">গাজীপুর রেস্টুরেন্ট ও ডেলিভারি ম্যানেজার</p>
             </div>
           </div>
 
@@ -1159,11 +1426,22 @@ export default function AdminApp() {
 
                         <p className="text-[11px] text-gray-600 line-clamp-1 mt-0.5">{item.descriptionBn}</p>
 
-                        <div className="pt-2 mt-1.5 border-t border-gray-100 flex items-center justify-between">
+                        <div className="pt-2 mt-1.5 border-t border-gray-100 flex items-center justify-between gap-1">
                           <span className="text-[10px] text-gray-400">
                             ⭐ {item.rating} ({item.reviewsCount})
                           </span>
                           <div className="flex items-center gap-1.5">
+                            <label className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 border border-emerald-200 cursor-pointer">
+                              <Camera className="w-3 h-3 text-emerald-700" />
+                              <span>{uploadingCardId === item.id ? 'আপলোড হচ্ছে...' : 'ছবি পরিবর্তন'}</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => handleQuickCardImageUpload(item.id, e)}
+                                className="hidden"
+                                disabled={uploadingCardId === item.id}
+                              />
+                            </label>
                             <button 
                               onClick={() => handleOpenEditFood(item)}
                               className="bg-amber-50 hover:bg-amber-100 text-amber-800 px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 border border-amber-200 cursor-pointer"
@@ -1257,15 +1535,23 @@ export default function AdminApp() {
                       <p className="text-[10px] text-gray-400 font-mono">{entry.date}</p>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <span className={`font-black text-sm ${
                         entry.type === 'income' ? 'text-emerald-700' : 'text-red-600'
                       }`}>
                         {entry.type === 'income' ? '+' : '-'}৳{entry.amount}
                       </span>
                       <button 
+                        onClick={() => handleOpenEditLedger(entry)}
+                        className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                        title="এডিট করুন"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>এডিট</span>
+                      </button>
+                      <button 
                         onClick={() => handleDeleteLedger(entry.id)}
-                        className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition cursor-pointer"
+                        className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 p-1.5 rounded-lg transition cursor-pointer"
                         title="মুছে ফেলুন"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -1373,14 +1659,30 @@ export default function AdminApp() {
               ) : (
                 <div className="space-y-2">
                   {reportEntries.map(entry => (
-                    <div key={entry.id} className="flex justify-between items-center text-xs py-2 border-b border-gray-100">
-                      <div>
-                        <span className="font-bold text-gray-800">{entry.category}</span>
-                        <span className="text-[10px] text-gray-400 block">{entry.date} • {entry.voucherNo}</span>
+                    <div key={entry.id} className="flex justify-between items-center text-xs py-2 border-b border-gray-100 gap-2">
+                      <div className="min-w-0 flex-1">
+                        <span className="font-bold text-gray-800 block truncate">{entry.category}</span>
+                        <span className="text-[10px] text-gray-400 block">{entry.date} • {entry.voucherNo} {entry.note ? `• ${entry.note}` : ''}</span>
                       </div>
-                      <span className={`font-black ${entry.type === 'income' ? 'text-emerald-700' : 'text-red-600'}`}>
-                        {entry.type === 'income' ? '+' : '-'} ৳ {entry.amount}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className={`font-black ${entry.type === 'income' ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {entry.type === 'income' ? '+' : '-'} ৳ {entry.amount}
+                        </span>
+                        <button
+                          onClick={() => handleOpenEditLedger(entry)}
+                          className="p-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 cursor-pointer"
+                          title="এডিট"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteLedger(entry.id)}
+                          className="p-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 cursor-pointer"
+                          title="ডিলেট"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1475,32 +1777,63 @@ export default function AdminApp() {
                       ))}
                     </div>
 
-                    {/* Status Changer & KOT Print */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-gray-600">স্ট্যাটাস পরিবর্তন:</span>
-                        {(['Placed', 'Preparing', 'Out for Delivery', 'Delivered'] as const).map(st => (
-                          <button
-                            key={st}
-                            onClick={() => handleUpdateOrderStatus(order.id, st)}
-                            className={`text-[11px] px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
-                              order.status === st 
-                                ? 'bg-emerald-600 text-white shadow-xs' 
-                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }`}
-                          >
-                            {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
-                          </button>
-                        ))}
+                    {/* Status Changer (Admin Only) & KOT Print */}
+                    <div className="bg-emerald-50/50 border border-emerald-200 rounded-2xl p-3 space-y-2">
+                      <div className="flex items-center justify-between flex-wrap gap-1">
+                        <span className="text-xs font-black text-gray-800 flex items-center gap-1">
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>স্ট্যাটাস পরিবর্তন (শুধুমাত্র এডমিন):</span>
+                        </span>
+                        <span className="text-[10px] text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full font-bold">
+                          🔒 ইউজার অ্যাপে গ্রাহক শুধু দেখতে পাবেন
+                        </span>
                       </div>
 
-                      <button 
-                        onClick={() => setSelectedReceiptOrder(order)}
-                        className="bg-gray-800 hover:bg-black text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs transition cursor-pointer"
-                      >
-                        <Printer className="w-3.5 h-3.5" />
-                        <span>KOT / রসিদ প্রিন্ট</span>
-                      </button>
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {(['Placed', 'Preparing', 'Out for Delivery', 'Delivered'] as const).map(st => (
+                            <button
+                              key={st}
+                              type="button"
+                              onClick={() => handleUpdateOrderStatus(order.id, st)}
+                              className={`text-[11px] px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                                order.status === st 
+                                  ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-300' 
+                                  : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-100'
+                              }`}
+                            >
+                              {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button 
+                            type="button"
+                            onClick={() => handleOpenEditOrder(order)}
+                            className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>এডিট</span>
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => handleDeleteOrder(order.id)}
+                            className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>ডিলেট</span>
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setSelectedReceiptOrder(order)}
+                            className="bg-gray-800 hover:bg-black text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs transition cursor-pointer"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span>KOT প্রিন্ট</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
                   </div>
@@ -1527,7 +1860,7 @@ export default function AdminApp() {
               </div>
 
               <button 
-                onClick={() => setCustomerModalOpen(true)}
+                onClick={handleOpenAddCustomer}
                 className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow transition cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
@@ -1545,7 +1878,7 @@ export default function AdminApp() {
                   </p>
                 </div>
                 <button 
-                  onClick={() => setCustomerModalOpen(true)}
+                  onClick={handleOpenAddCustomer}
                   className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5 shadow-sm transition cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
@@ -1556,13 +1889,34 @@ export default function AdminApp() {
               <div className="grid grid-cols-1 gap-3">
                 {Object.values(customers).map(cust => (
                   <div key={cust.phone} className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs space-y-2.5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-amber-500 text-white flex items-center justify-center font-black text-base shadow-sm">
-                        {cust.name.charAt(0)}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-amber-500 text-white flex items-center justify-center font-black text-base shadow-sm shrink-0">
+                          {cust.name.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-gray-900 text-sm truncate">{cust.name}</h4>
+                          <p className="text-xs text-gray-500 font-mono">📱 {cust.phone}</p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-gray-900 text-sm">{cust.name}</h4>
-                        <p className="text-xs text-gray-500 font-mono">📱 {cust.phone}</p>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditCustomer(cust)}
+                          className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>এডিট</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCustomer(cust.phone, cust.name)}
+                          className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>ডিলেট</span>
+                        </button>
                       </div>
                     </div>
 
@@ -1723,26 +2077,77 @@ export default function AdminApp() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-gray-700 mb-1">আসল রেগুলার মূল্য (৳, ঐচ্ছিক)</label>
-                  <input 
-                    type="number"
-                    placeholder="যেমন: 300"
-                    value={foodForm.originalPrice}
-                    onChange={(e) => setFoodForm({ ...foodForm, originalPrice: e.target.value })}
-                    className="w-full border border-gray-300 rounded-xl p-2.5 text-xs text-gray-600"
-                  />
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">আসল রেগুলার মূল্য (৳, ঐচ্ছিক)</label>
+                <input 
+                  type="number"
+                  placeholder="যেমন: 300"
+                  value={foodForm.originalPrice}
+                  onChange={(e) => setFoodForm({ ...foodForm, originalPrice: e.target.value })}
+                  className="w-full border border-gray-300 rounded-xl p-2.5 text-xs text-gray-600"
+                />
+              </div>
+
+              {/* CPANEL FOOD IMAGE UPLOAD & PREVIEW BOX */}
+              <div className="bg-emerald-50/70 border border-emerald-300 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="font-black text-emerald-950 text-xs flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-emerald-700" />
+                    <span>খাবারের ছবি আপলোড (সরাসরি cPanel সার্ভারে সেভ হবে)</span>
+                  </label>
+                  <span className="bg-emerald-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full">
+                    cPanel Storage
+                  </span>
                 </div>
 
+                <div className="flex items-center gap-3">
+                  {/* Live Image Preview */}
+                  <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-emerald-300 bg-white shrink-0 shadow-xs flex items-center justify-center">
+                    {foodForm.image ? (
+                      <img src={foodForm.image} alt="Food Preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <ImageIcon className="w-7 h-7 text-gray-300" />
+                    )}
+                  </div>
+
+                  {/* Upload Button & Info */}
+                  <div className="flex-1 space-y-1.5">
+                    <label className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer">
+                      <Upload className="w-4 h-4" />
+                      <span>{isUploadingFoodImg ? 'cPanel সার্ভারে আপলোড হচ্ছে...' : '📤 গ্যালারি / ফোন থেকে ছবি আপলোড করুন'}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFoodModalImageUpload}
+                        className="hidden"
+                        disabled={isUploadingFoodImg}
+                      />
+                    </label>
+                    <p className="text-[10px] text-gray-600 leading-tight">
+                      আপলোড করা ছবি অটোমেটিক অপ্টিমাইজ হয়ে আপনার cPanel-এর <code className="font-mono bg-white px-1 rounded">uploads/</code> ফোল্ডার ও MySQL ডাটাবেসে স্থায়ীভাবে সেভ থাকবে।
+                    </p>
+                  </div>
+                </div>
+
+                {uploadImgMsg && (
+                  <div className={`p-2 rounded-xl text-[11px] font-bold flex items-center gap-1.5 ${
+                    uploadImgMsg.type === 'ok'
+                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                      : 'bg-red-100 text-red-700 border border-red-300'
+                  }`}>
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>{uploadImgMsg.text}</span>
+                  </div>
+                )}
+
                 <div>
-                  <label className="block font-bold text-gray-700 mb-1">ছবির URL</label>
+                  <label className="block font-bold text-gray-600 text-[10px] mb-1">অথবা সরাসরি ছবির লিংক (URL) দিন:</label>
                   <input 
-                    type="url"
-                    placeholder="https://..."
+                    type="text"
+                    placeholder="uploads/food_...jpg বা https://..."
                     value={foodForm.image}
                     onChange={(e) => setFoodForm({ ...foodForm, image: e.target.value })}
-                    className="w-full border border-gray-300 rounded-xl p-2.5 text-xs"
+                    className="w-full border border-emerald-200 bg-white rounded-xl p-2 text-xs font-mono"
                   />
                 </div>
               </div>
@@ -1888,8 +2293,8 @@ export default function AdminApp() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-4 border border-gray-200">
             <div className="text-center space-y-1 border-b pb-3">
-              <h3 className="font-black text-gray-900 text-base">সালমা ফুড কর্ণার</h3>
-              <p className="text-[10px] text-gray-500">বাড়ি #১২, ধানমন্ডি ৩২, ঢাকা | 📱 01712-345678</p>
+              <h3 className="font-black text-gray-900 text-base">সালমা ফুড কর্ণার, গাজীপুর</h3>
+              <p className="text-[10px] text-gray-500">চান্দনা চৌরাস্তা (জয়দেবপুর রোড মোড়), গাজীপুর-১৭০০ | 📱 01712-345678</p>
               <p className="text-xs font-bold text-red-600 font-mono mt-1">অর্ডার #{selectedReceiptOrder.id}</p>
             </div>
 
@@ -1948,17 +2353,17 @@ export default function AdminApp() {
       )}
 
       {/* ============================================================== */}
-      {/* MODAL: ADD CUSTOMER MODAL                                      */}
+      {/* MODAL: ADD / EDIT CUSTOMER MODAL                               */}
       {/* ============================================================== */}
       {customerModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-4 border border-gray-200">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-4 border border-gray-200 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b pb-3">
               <h3 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
                 <Users className="w-4 h-4 text-blue-600" />
-                <span>+ নতুন গ্রাহক প্রোফাইল যোগ করুন</span>
+                <span>{editingCustOriginalPhone ? '✏️ গ্রাহক প্রোফাইল এডিট করুন' : '+ নতুন গ্রাহক প্রোফাইল যোগ করুন'}</span>
               </h3>
-              <button onClick={() => setCustomerModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={() => setCustomerModalOpen(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1977,7 +2382,7 @@ export default function AdminApp() {
               </div>
 
               <div>
-                <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর * (ইউনিক)</label>
+                <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর * (লগইন আইডি)</label>
                 <input 
                   type="tel"
                   placeholder="017xxxxxxxx"
@@ -1989,29 +2394,342 @@ export default function AdminApp() {
               </div>
 
               <div>
-                <label className="block font-bold text-gray-700 mb-1">ঠিকানা / এলাকা</label>
+                <label className="block font-bold text-gray-700 mb-1">ঠিকানা / এলাকা (গাজীপুর)</label>
                 <input 
                   type="text"
-                  placeholder="যেমন: ধানমন্ডি ৩২, ঢাকা"
+                  placeholder="যেমন: চান্দনা চৌরাস্তা, ভোগড়া বাইপাস, গাজীপুর"
                   value={newCustAddress}
                   onChange={(e) => setNewCustAddress(e.target.value)}
                   className="w-full border border-gray-300 rounded-xl p-2.5 text-xs"
                 />
               </div>
 
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold text-gray-700 text-[10px] mb-1">লয়্যালটি পয়েন্ট</label>
+                  <input 
+                    type="number"
+                    min="0"
+                    value={newCustPoints}
+                    onChange={(e) => setNewCustPoints(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-bold text-amber-700"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 text-[10px] mb-1">মোট অর্ডার</label>
+                  <input 
+                    type="number"
+                    min="0"
+                    value={newCustOrders}
+                    onChange={(e) => setNewCustOrders(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 text-[10px] mb-1">মোট খরচ (৳)</label>
+                  <input 
+                    type="number"
+                    min="0"
+                    value={newCustSpent}
+                    onChange={(e) => setNewCustSpent(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-bold text-emerald-700"
+                  />
+                </div>
+              </div>
+
               <div className="flex gap-2 pt-2 border-t">
                 <button 
                   type="button"
                   onClick={() => setCustomerModalOpen(false)}
-                  className="flex-1 border border-gray-300 py-2.5 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-100"
+                  className="flex-1 border border-gray-300 py-2.5 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
                 >
                   বাতিল
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-xs font-bold shadow transition active:scale-95"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-xs font-bold shadow transition active:scale-95 cursor-pointer"
                 >
-                  সংরক্ষণ করুন
+                  {editingCustOriginalPhone ? 'আপডেট সংরক্ষণ করুন' : 'সংরক্ষণ করুন'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: EDIT ORDER MODAL                                        */}
+      {/* ============================================================== */}
+      {orderEditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl p-5 max-w-md w-full shadow-2xl space-y-4 border border-gray-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="font-black text-gray-900 text-sm flex items-center gap-1.5">
+                <Edit3 className="w-4 h-4 text-amber-600" />
+                <span>✏️ অর্ডার #{editingOrderId} এডিট করুন</span>
+              </h3>
+              <button onClick={() => setOrderEditModalOpen(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditOrder} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">গ্রাহকের নাম *</label>
+                  <input
+                    type="text"
+                    required
+                    value={orderEditForm.customerName}
+                    onChange={(e) => setOrderEditForm({ ...orderEditForm, customerName: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর *</label>
+                  <input
+                    type="tel"
+                    required
+                    value={orderEditForm.phone}
+                    onChange={(e) => setOrderEditForm({ ...orderEditForm, phone: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">ডেলিভারি ঠিকানা *</label>
+                <textarea
+                  rows={2}
+                  required
+                  value={orderEditForm.address}
+                  onChange={(e) => setOrderEditForm({ ...orderEditForm, address: e.target.value })}
+                  className="w-full border border-gray-300 rounded-xl p-2 text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">মোট বিল (৳)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={orderEditForm.totalAmount}
+                    onChange={(e) => {
+                      const tot = Number(e.target.value) || 0;
+                      const adv = Number(orderEditForm.advancePaid) || 0;
+                      setOrderEditForm({
+                        ...orderEditForm,
+                        totalAmount: e.target.value,
+                        dueAmount: String(Math.max(0, tot - adv))
+                      });
+                    }}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-black text-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">অগ্রীম জমা (৳)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={orderEditForm.advancePaid}
+                    onChange={(e) => {
+                      const tot = Number(orderEditForm.totalAmount) || 0;
+                      const adv = Number(e.target.value) || 0;
+                      setOrderEditForm({
+                        ...orderEditForm,
+                        advancePaid: e.target.value,
+                        dueAmount: String(Math.max(0, tot - adv))
+                      });
+                    }}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-black text-emerald-700"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">বাকি বকেয়া (৳)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={orderEditForm.dueAmount}
+                    onChange={(e) => setOrderEditForm({ ...orderEditForm, dueAmount: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-black text-red-600"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">পেমেন্ট মেথড</label>
+                  <select
+                    value={orderEditForm.advancePaymentMethod}
+                    onChange={(e) => setOrderEditForm({ ...orderEditForm, advancePaymentMethod: e.target.value as any })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs bg-white font-bold"
+                  >
+                    <option value="bKash">বিকাশ (bKash)</option>
+                    <option value="Nagad">নগদ (Nagad)</option>
+                    <option value="Card">কার্ড / ক্যাশ (Card/Cash)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">ট্রানজেকশন আইডি</label>
+                  <input
+                    type="text"
+                    value={orderEditForm.transactionId}
+                    onChange={(e) => setOrderEditForm({ ...orderEditForm, transactionId: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">অর্ডার স্ট্যাটাস</label>
+                <select
+                  value={orderEditForm.status}
+                  onChange={(e) => setOrderEditForm({ ...orderEditForm, status: e.target.value as any })}
+                  className="w-full border border-gray-300 rounded-xl p-2 text-xs bg-white font-bold text-emerald-800"
+                >
+                  <option value="Placed">গৃহীত (Placed)</option>
+                  <option value="Preparing">রান্না হচ্ছে (Preparing)</option>
+                  <option value="Out for Delivery">ডেলিভারিতে (Out for Delivery)</option>
+                  <option value="Delivered">সম্পন্ন (Delivered)</option>
+                </select>
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setOrderEditModalOpen(false)}
+                  className="flex-1 border border-gray-300 py-2.5 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-bold shadow transition active:scale-95 cursor-pointer"
+                >
+                  অর্ডার আপডেট করুন
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: EDIT POS LEDGER ENTRY MODAL                             */}
+      {/* ============================================================== */}
+      {ledgerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-4 border border-gray-200">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="font-black text-gray-900 text-sm flex items-center gap-1.5">
+                <BarChart2 className="w-4 h-4 text-emerald-700" />
+                <span>✏️ হিসাব খতিয়ান এন্ট্রি এডিট করুন</span>
+              </h3>
+              <button onClick={() => setLedgerModalOpen(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditLedger} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">হিসাবের ধরন</label>
+                  <select
+                    value={ledgerEditForm.type}
+                    onChange={(e) => setLedgerEditForm({ ...ledgerEditForm, type: e.target.value as any })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs bg-white font-bold"
+                  >
+                    <option value="income">আয় (Income)</option>
+                    <option value="expense">ব্যয় (Expense)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">ভাউচার নম্বর</label>
+                  <input
+                    type="text"
+                    value={ledgerEditForm.voucherNo}
+                    onChange={(e) => setLedgerEditForm({ ...ledgerEditForm, voucherNo: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">ক্যাটাগরি / খাত *</label>
+                <input
+                  type="text"
+                  required
+                  value={ledgerEditForm.category}
+                  onChange={(e) => setLedgerEditForm({ ...ledgerEditForm, category: e.target.value })}
+                  className="w-full border border-gray-300 rounded-xl p-2 text-xs font-bold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">টাকার পরিমাণ (৳) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={ledgerEditForm.amount}
+                    onChange={(e) => setLedgerEditForm({ ...ledgerEditForm, amount: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs font-black text-emerald-700"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">পেমেন্ট মেথড</label>
+                  <select
+                    value={ledgerEditForm.paymentMethod}
+                    onChange={(e) => setLedgerEditForm({ ...ledgerEditForm, paymentMethod: e.target.value as any })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs bg-white font-bold"
+                  >
+                    <option value="Cash">ক্যাশ (Cash)</option>
+                    <option value="bKash">বিকাশ (bKash)</option>
+                    <option value="Nagad">নগদ (Nagad)</option>
+                    <option value="Bank">ব্যাংক (Bank)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">তারিখ</label>
+                  <input
+                    type="date"
+                    value={ledgerEditForm.date}
+                    onChange={(e) => setLedgerEditForm({ ...ledgerEditForm, date: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">নোট / বিবরণ</label>
+                  <input
+                    type="text"
+                    value={ledgerEditForm.note}
+                    onChange={(e) => setLedgerEditForm({ ...ledgerEditForm, note: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl p-2 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setLedgerModalOpen(false)}
+                  className="flex-1 border border-gray-300 py-2.5 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-bold shadow transition active:scale-95 cursor-pointer"
+                >
+                  আপডেট সংরক্ষণ করুন
                 </button>
               </div>
             </form>

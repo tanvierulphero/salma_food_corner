@@ -3,10 +3,11 @@ import {
   Smartphone, Send, Settings, CheckCircle2, AlertCircle, Copy, 
   ExternalLink, Users, Sparkles, Filter, RefreshCw, MessageSquare, 
   Clock, ShieldCheck, Check, Info, ChevronRight, Phone, ArrowUpRight,
-  Trash2, Sliders, Radio, CheckSquare, Square, Zap, Tag
+  Trash2, Edit3, Sliders, Radio, CheckSquare, Square, Zap, Tag
 } from 'lucide-react';
 import { CustomerProfile, SmsCampaignLog, SmsGatewayConfig } from '../types';
 import { playOrderSuccessSound, playAddToCartSound } from '../utils/audioFeedback';
+import { saveToCpanelDb } from '../utils/sqlSync';
 
 interface SmsMarketingPanelProps {
   customers: Record<string, CustomerProfile>;
@@ -118,7 +119,7 @@ export default function SmsMarketingPanel({
         {
           phone: '01712345678',
           name: 'রহিম উদ্দিন',
-          address: 'ধানমন্ডি ৩২, ঢাকা',
+          address: 'চান্দনা চৌরাস্তা, গাজীপুর',
           loyaltyPoints: 150,
           registeredAt: '2026-10-15',
           totalOrders: 4,
@@ -127,7 +128,7 @@ export default function SmsMarketingPanel({
         {
           phone: '01811223344',
           name: 'তানিয়া আক্তার',
-          address: 'সোবহানবাগ মসজিদ রোড, ঢাকা',
+          address: 'ভোগড়া বাইপাস রোড, গাজীপুর',
           loyaltyPoints: 80,
           registeredAt: '2026-10-22',
           totalOrders: 2,
@@ -136,7 +137,7 @@ export default function SmsMarketingPanel({
         {
           phone: '01933445566',
           name: 'শাকিল আহমেদ',
-          address: 'শুক্রাবাদ বাজার মোড়, ঢাকা',
+          address: 'শিববাড়ি মোড়, জয়দেবপুর, গাজীপুর',
           loyaltyPoints: 210,
           registeredAt: '2026-10-25',
           totalOrders: 6,
@@ -145,7 +146,7 @@ export default function SmsMarketingPanel({
         {
           phone: '01655667788',
           name: 'সুমাইয়া খান',
-          address: 'কলাবাগান ডলফিন গলি, ঢাকা',
+          address: 'বোর্ড বাজার, গাজীপুর',
           loyaltyPoints: 40,
           registeredAt: '2026-10-28',
           totalOrders: 1,
@@ -153,9 +154,9 @@ export default function SmsMarketingPanel({
         }
       ];
 
-  // 1 KM keywords check helper
+  // 1 KM keywords check helper (Gazipur areas)
   const isWithin1Km = (addr: string) => {
-    const keywords = ['ধানমন্ডি', '৩২', 'রাসেল স্কয়ার', 'সোবহানবাগ', 'শুক্রাবাদ', 'কলাবাগান', 'পান্থপথ'];
+    const keywords = ['চান্দনা', 'চৌরাস্তা', 'ভোগড়া', 'vogra', 'জয়দেবপুর', 'শিববাড়ি', 'বোর্ড বাজার', 'ডুয়েট', 'টঙ্গী', 'কোনাবাড়ী', 'গাজীপুর'];
     return keywords.some(k => (addr || '').toLowerCase().includes(k.toLowerCase()));
   };
 
@@ -842,11 +843,47 @@ export default function SmsMarketingPanel({
                   <div key={log.id} className="bg-gray-50 hover:bg-gray-100/80 p-3 rounded-2xl border border-gray-100 text-xs space-y-1.5 transition">
                     <div className="flex justify-between items-center">
                       <span className="font-bold text-gray-800">{log.targetAudience}</span>
-                      <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full ${
-                        log.method === 'Mobile SIM' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
-                      }`}>
-                        {log.method}
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full ${
+                          log.method === 'Mobile SIM' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {log.method}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const editedMsg = prompt('ক্যাম্পেইন মেসেজ এডিট করুন:', log.message);
+                            if (editedMsg !== null && editedMsg.trim()) {
+                              setCampaignLogs(prev => {
+                                const updated = prev.map(item => item.id === log.id ? { ...item, message: editedMsg.trim() } : item);
+                                saveToCpanelDb('salma_sms_logs', updated);
+                                return updated;
+                              });
+                              setSmsText(editedMsg.trim());
+                            }
+                          }}
+                          className="p-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 cursor-pointer"
+                          title="এডিট করুন"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm('আপনি কি এই এসএমএস ক্যাম্পেইন রেকর্ডটি মুছে ফেলতে চান?')) {
+                              setCampaignLogs(prev => {
+                                const updated = prev.filter(item => item.id !== log.id);
+                                saveToCpanelDb('salma_sms_logs', updated);
+                                return updated;
+                              });
+                            }
+                          }}
+                          className="p-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 cursor-pointer"
+                          title="ডিলেট করুন"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
 
                     <p className="text-[11px] text-gray-600 line-clamp-2 italic bg-white p-2 rounded-xl border border-gray-100">
@@ -869,11 +906,12 @@ export default function SmsMarketingPanel({
                 onClick={() => {
                   if (confirm('আপনি কি পূর্ববর্তী এসএমএস হিস্ট্রি ক্লিয়ার করতে চান?')) {
                     setCampaignLogs([]);
+                    saveToCpanelDb('salma_sms_logs', []);
                   }
                 }}
                 className="w-full text-center text-[10px] font-bold text-gray-400 hover:text-red-600 pt-1 transition cursor-pointer"
               >
-                হিস্ট্রি লগ ক্লিয়ার করুন
+                সব হিস্ট্রি লগ ক্লিয়ার করুন
               </button>
             )}
           </div>

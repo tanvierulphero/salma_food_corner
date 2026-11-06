@@ -24,77 +24,77 @@ interface ShopLocationManagerProps {
   onLocationUpdate?: (newConfig: ShopLocationConfig) => void;
 }
 
-// Default Popular Food Hubs Presets in Dhaka
+// Default Popular Food Hubs Presets in Gazipur
 export const DEFAULT_PRESET_HUBS: PresetHub[] = [
   {
-    id: 'hub-dhanmondi-32',
-    name: 'ধানমন্ডি ৩২ (বর্তমান ডিফল্ট)',
-    address: 'বাড়ি #১২, ধানমন্ডি ৩২ (রাসেল স্কয়ার মোড়), ঢাকা-১২০৯',
-    lat: 23.7512,
-    lng: 90.3770,
-    landmark: 'রাসেল স্কয়ার ও ৩২ নম্বর ব্রিজ মোড়',
-    zoneName: 'ধানমন্ডি',
-    nearbyAreas: ['ধানমন্ডি ৩২', 'রাসেল স্কয়ার', 'সোবহানবাগ', 'শুক্রাবাদ', 'কলাবাগান', 'পান্থপথ পশ্চিম', 'ধানমন্ডি লেক']
+    id: 'hub-gazipur-chowrasta',
+    name: 'চান্দনা চৌরাস্তা, গাজীপুর (বর্তমান ডিফল্ট)',
+    address: 'চান্দনা চৌরাস্তা মেইন রোড (জয়দেবপুর মোড়), গাজীপুর সদর, গাজীপুর-১৭০০',
+    lat: 23.9905,
+    lng: 90.3875,
+    landmark: 'চান্দনা চৌরাস্তা ও শাপলা ম্যানশন মোড়',
+    zoneName: 'গাজীপুর চৌরাস্তা',
+    nearbyAreas: ['চান্দনা চৌরাস্তা', 'ভোগড়া বাইপাস', 'বাসন সড়ক', 'আউটপাড়া', 'তেলিপাড়া', 'শাপলা ম্যানশন', 'চান্দনা']
   },
   {
-    id: 'hub-gulshan-2',
-    name: 'গুলশান ২ সার্কেল',
-    address: 'রোড #৪৫, প্লট #১২, গুলশান ২ সার্কেল, ঢাকা-১২১২',
-    lat: 23.7925,
-    lng: 90.4078,
-    landmark: 'গুলশান ২ চত্বর ও নাভানা টাওয়ার',
-    zoneName: 'গুলশান',
-    nearbyAreas: ['গুলশান ২', 'গুলশান ১', 'বনানী', 'বারিধারা', 'শাহজাদপুর']
+    id: 'hub-joydebpur-shibbari',
+    name: 'জয়দেবপুর ও শিববাড়ি মোড়, গাজীপুর',
+    address: 'শিববাড়ি মোড়, জয়দেবপুর বাজার রোড, গাজীপুর সদর, গাজীপুর-১৭০০',
+    lat: 24.0022,
+    lng: 90.4225,
+    landmark: 'শিববাড়ি মোড় ও রাজবাড়ি মাঠ সংলগ্ন',
+    zoneName: 'জয়দেবপুর',
+    nearbyAreas: ['শিববাড়ি মোড়', 'জয়দেবপুর বাজার', 'রাজবাড়ি মাঠ', 'বিলাশপুর', 'ছায়াবীথি', 'রথখোলা', 'জয়দেবপুর']
   },
   {
-    id: 'hub-mirpur-10',
-    name: 'মিরপুর ১০ গোলচত্বর',
-    address: 'মিরপুর ১০ গোলচত্বর মোড়, মেইন রোড, ঢাকা-১২১৬',
-    lat: 23.8070,
-    lng: 90.3687,
-    landmark: 'মেট্রোরেল স্টেশন ও ফায়ার সার্ভিস সংলগ্ন',
-    zoneName: 'মিরপুর',
-    nearbyAreas: ['মিরপুর ১০', 'মিরপুর ১১', 'মিরপুর ২', 'কাজীপাড়া', 'শেওড়াপাড়া', 'সেনপাড়া']
+    id: 'hub-duet-shimultoli',
+    name: 'ডুয়েট (DUET) ও শিমুলতলী, গাজীপুর',
+    address: 'ডুয়েট মেইন গেট সংলগ্ন, শিমুলতলী রোড, গাজীপুর সদর, গাজীপুর-১৭০০',
+    lat: 24.0175,
+    lng: 90.4182,
+    landmark: 'ডুয়েট গেট ও শিমুলতলী বাজার মোড়',
+    zoneName: 'ডুয়েট গাজীপুর',
+    nearbyAreas: ['ডুয়েট গেট', 'ডুয়েট', 'শিমুলতলী', 'ভুরুলিয়া', 'চতর বাজার', 'বিটিপাড়া']
   },
   {
-    id: 'hub-uttara-3',
-    name: 'উত্তরা সেক্টর ৩ (রবীন্দ্র সরণি)',
-    address: 'রোড #৭, সেক্টর ৩, রবীন্দ্র সরণি, উত্তরা, ঢাকা-১২৩০',
-    lat: 23.8703,
-    lng: 90.3872,
-    landmark: 'রবীন্দ্র সরণি ও ফ্রেন্ডস ক্লাব মাঠ',
-    zoneName: 'উত্তরা',
-    nearbyAreas: ['উত্তরা ৩', 'উত্তরা ১', 'উত্তরা ৪', 'জসিমউদ্দীন মোড়', 'আজমপুর']
+    id: 'hub-vogra-bypass',
+    name: 'ভোগড়া বাইপাস ও মালেকের বাড়ি, গাজীপুর',
+    address: 'ভোগড়া বাইপাস মোড়, ঢাকা-ময়মনসিংহ মহাসড়ক, গাজীপুর-১৭০৪',
+    lat: 23.9685,
+    lng: 90.3810,
+    landmark: 'ভোগড়া বাইপাস ও কলম্বিয়া গার্মেন্টস মোড়',
+    zoneName: 'ভোগড়া বাইপাস',
+    nearbyAreas: ['ভোগড়া বাইপাস', 'ভোগড়া', 'মালেকের বাড়ি', 'কলম্বিয়া মোড়', 'ছয়দানা', 'বাইপাস মোড়']
   },
   {
-    id: 'hub-bailey-road',
-    name: 'বেইলি রোড ফুড স্ট্রিট',
-    address: 'নাট্যমঞ্চ সংলগ্ন, বেইলি রোড, শান্তিনগর, ঢাকা-১০০০',
-    lat: 23.7410,
-    lng: 90.4060,
-    landmark: 'মহিলা সমিতি মঞ্চ ও সিদ্ধেশ্বরী মোড়',
-    zoneName: 'বেইলি রোড',
-    nearbyAreas: ['বেইলি রোড', 'শান্তিনগর', 'কাকরাইল', 'মগবাজার', 'সিদ্ধেশ্বরী']
+    id: 'hub-board-bazar',
+    name: 'বোর্ড বাজার ও জাতীয় বিশ্ববিদ্যালয়, গাজীপুর',
+    address: 'বোর্ড বাজার মেইন বাসস্ট্যান্ড, গাজীপুর সিটি কর্পোরেশন, গাজীপুর-১৭০৪',
+    lat: 23.9472,
+    lng: 90.3820,
+    landmark: 'জাতীয় বিশ্ববিদ্যালয় মেইন গেট ও বোর্ড বাজার মোড়',
+    zoneName: 'বোর্ড বাজার',
+    nearbyAreas: ['বোর্ড বাজার', 'জাতীয় বিশ্ববিদ্যালয়', 'বড়বাড়ি', 'সাইনবোর্ড', 'গাছা', 'খাইলকুর', 'হারিকেন']
   },
   {
-    id: 'hub-puran-dhaka',
-    name: 'পুরান ঢাকা (চকবাজার ও নাজিরাবাজার)',
-    address: 'চক সার্কুলার রোড, চকবাজার মোড়, ঢাকা-১২১১',
-    lat: 23.7180,
-    lng: 90.3980,
-    landmark: 'চকবাজার শাহী মসজিদ ও নাজিরাবাজার মোড়',
-    zoneName: 'পুরান ঢাকা',
-    nearbyAreas: ['চকবাজার', 'নাজিরাবাজার', 'লালবাগ', 'আরমানিটোলা', 'মৌলভীবাজার']
+    id: 'hub-tongi-college-gate',
+    name: 'টঙ্গী স্টেশন রোড ও কলেজ গেট, গাজীপুর',
+    address: 'টঙ্গী সরকারি কলেজ গেট ও স্টেশন রোড মোড়, টঙ্গী, গাজীপুর-১৭১০',
+    lat: 23.8975,
+    lng: 90.4025,
+    landmark: 'টঙ্গী কলেজ গেট ও চেরাগ আলী মার্কেট',
+    zoneName: 'টঙ্গী গাজীপুর',
+    nearbyAreas: ['টঙ্গী স্টেশন রোড', 'কলেজ গেট', 'চেরাগ আলী', 'হোসেন মার্কেট', 'মিলগেট', 'টঙ্গী বাজার', 'আউচপাড়া']
   },
   {
-    id: 'hub-mohammadpur',
-    name: 'মোহাম্মদপুর টাউন হল ও রিং রোড',
-    address: 'গজনবী রোড, টাউন হল মার্কেট মোড়, মোহাম্মদপুর, ঢাকা-১২০৭',
-    lat: 23.7580,
-    lng: 90.3620,
-    landmark: 'টাউন হল মার্কেট ও কৃষি মার্কেট সংলগ্ন',
-    zoneName: 'মোহাম্মদপুর',
-    nearbyAreas: ['মোহাম্মদপুর', 'টাউন হল', 'রিং রোড', 'নূরজাহান রোড', 'শিয়ার মসজিদ', 'আসাদগেট']
+    id: 'hub-konabari-kashimpur',
+    name: 'কোনাবাড়ী ও কাশিমপুর, গাজীপুর',
+    address: 'কোনাবাড়ী ফ্লাইওভার ও বাসস্ট্যান্ড মোড়, গাজীপুর সিটি, গাজীপুর-১৭০০',
+    lat: 24.0065,
+    lng: 90.3280,
+    landmark: 'কোনাবাড়ী ফ্লাইওভার ও পল্লী বিদ্যুৎ মোড়',
+    zoneName: 'কোনাবাড়ী',
+    nearbyAreas: ['কোনাবাড়ী', 'কাশিমপুর', 'জরুন', 'আমবাগ', 'পল্লী বিদ্যুৎ', 'সফিপুর', 'মৌচাক']
   }
 ];
 
@@ -115,12 +115,15 @@ export default function ShopLocationManager({
   soundOn = true,
   onLocationUpdate
 }: ShopLocationManagerProps) {
-  // Load saved shop location or default
+  // Load saved shop location or default (auto-migrate legacy Dhaka default to Gazipur)
   const [config, setConfig] = useState<ShopLocationConfig>(() => {
     const saved = localStorage.getItem('salma_shop_location');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !String(parsed.address || '').includes('ধানমন্ডি')) {
+          return parsed;
+        }
       } catch (e) {
         console.error(e);
       }
@@ -140,9 +143,9 @@ export default function ShopLocationManager({
   });
 
   // Distance Tester Simulator
-  const [testLat, setTestLat] = useState<string>('23.7540');
-  const [testLng, setTestLng] = useState<string>('90.3795');
-  const [testAddress, setTestAddress] = useState<string>('সোবহানবাগ মসজিদ রোড, ঢাকা');
+  const [testLat, setTestLat] = useState<string>('23.9920');
+  const [testLng, setTestLng] = useState<string>('90.3890');
+  const [testAddress, setTestAddress] = useState<string>('ভোগড়া বাইপাস রোড, চান্দনা চৌরাস্তা, গাজীপুর');
   const [testDistance, setTestDistance] = useState<number | null>(null);
 
   // Sync to localStorage
@@ -211,13 +214,19 @@ export default function ShopLocationManager({
     );
   };
 
-  // Presets state persisted in localStorage
+  // Presets state persisted in localStorage (auto-migrate legacy Dhaka presets to Gazipur)
   const [presetHubs, setPresetHubs] = useState<PresetHub[]>(() => {
     const saved = localStorage.getItem('salma_location_presets');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (
+          Array.isArray(parsed) &&
+          parsed.length > 0 &&
+          !parsed.some((p: any) => p.id === 'hub-dhanmondi-32')
+        ) {
+          return parsed;
+        }
       } catch (e) {
         console.error(e);
       }
@@ -244,8 +253,8 @@ export default function ShopLocationManager({
   }>({
     name: '',
     address: '',
-    lat: 23.7512,
-    lng: 90.3770,
+    lat: 23.9905,
+    lng: 90.3875,
     landmark: '',
     zoneName: '',
     nearbyAreasText: ''
@@ -291,7 +300,7 @@ export default function ShopLocationManager({
   };
 
   const handleResetDefaultPresets = () => {
-    if (window.confirm('আপনি কি পূর্বনির্ধারিত ৭টি ঢাকা ফুড হাব রিস্টোর করতে চান?')) {
+    if (window.confirm('আপনি কি পূর্বনির্ধারিত ৭টি গাজীপুর ফুড হাব রিস্টোর করতে চান?')) {
       savePresetHubs(DEFAULT_PRESET_HUBS);
       if (soundOn) playAddToCartSound();
     }
@@ -492,16 +501,16 @@ export default function ShopLocationManager({
             )}
           </div>
 
-          {/* Preset Popular Food Hubs in Dhaka (Editable) */}
+          {/* Preset Popular Food Hubs in Gazipur (Editable) */}
           <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-xs space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5">
               <div>
                 <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-amber-500" />
-                  <span>জনপ্রিয় ঢাকা ফুড হাব প্রি-সেট (১ ক্লিকে সেট করুন)</span>
+                  <span>জনপ্রিয় গাজীপুর ফুড হাব প্রি-সেট (১ ক্লিকে সেট করুন)</span>
                 </h3>
                 <p className="text-[11px] text-gray-500 mt-0.5">
-                  যে কোনো এলাকায় ট্যাপ করে সেট করুন, অথবা পেনসিল ✏️ আইকনে চাপ দিয়ে এডিট বা নতুন এলাকা যোগ করুন।
+                  গাজীপুরের যেকোনো এলাকায় ট্যাপ করে সেট করুন, অথবা পেনসিল ✏️ আইকনে চাপ দিয়ে এডিট বা নতুন এলাকা যোগ করুন।
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -516,7 +525,7 @@ export default function ShopLocationManager({
                 <button
                   type="button"
                   onClick={handleResetDefaultPresets}
-                  title="ডিফল্ট ৭টি ফুড হাব রিস্টোর করুন"
+                  title="ডিফল্ট ৭টি গাজীপুর ফুড হাব রিস্টোর করুন"
                   className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -580,7 +589,7 @@ export default function ShopLocationManager({
 
                     <div className="mt-2.5 pt-2 border-t border-gray-200/70 flex items-center justify-between">
                       <span className="text-[10px] text-gray-500 font-medium truncate max-w-[140px]">
-                        {hub.landmark ? `📍 ${hub.landmark}` : (hub.zoneName ? `জোন: ${hub.zoneName}` : 'ঢাকা')}
+                        {hub.landmark ? `📍 ${hub.landmark}` : (hub.zoneName ? `জোন: ${hub.zoneName}` : 'গাজীপুর')}
                       </span>
                       <button
                         type="button"
@@ -659,7 +668,7 @@ export default function ShopLocationManager({
                   type="text"
                   value={config.landmark || ''}
                   onChange={(e) => setConfig({ ...config, landmark: e.target.value })}
-                  placeholder="যেমন: রাসেল স্কয়ার ও লেক মোড়"
+                  placeholder="যেমন: চান্দনা চৌরাস্তা ও শিববাড়ি মোড়"
                   className="w-full border border-gray-300 rounded-xl p-2.5 text-xs"
                 />
               </div>
@@ -670,7 +679,7 @@ export default function ShopLocationManager({
                   type="text"
                   value={config.zoneName || ''}
                   onChange={(e) => setConfig({ ...config, zoneName: e.target.value })}
-                  placeholder="যেমন: ধানমন্ডি"
+                  placeholder="যেমন: গাজীপুর চৌরাস্তা"
                   className="w-full border border-gray-300 rounded-xl p-2.5 text-xs"
                 />
               </div>
@@ -763,13 +772,13 @@ export default function ShopLocationManager({
             {/* Keyword / Area Names string */}
             <div className="text-xs space-y-1">
               <label className="block font-bold text-gray-700">
-                ফ্রি ডেলিভারি এলাকার কী-ওয়ার্ড / মহল্লার নাম (কমা দিয়ে লিখুন):
+                ফ্রি ডেলিভারি এলাকার কী-ওয়ার্ড / গাজীপুরের মহল্লার নাম (কমা দিয়ে লিখুন):
               </label>
               <textarea 
                 rows={2}
                 value={areasInput}
                 onChange={(e) => setAreasInput(e.target.value)}
-                placeholder="যেমন: ধানমন্ডি ৩২, সোবহানবাগ, শুক্রাবাদ, কলাবাগান..."
+                placeholder="যেমন: চান্দনা চৌরাস্তা, ভোগড়া বাইপাস, জয়দেবপুর, শিববাড়ি, বোর্ড বাজার, ডুয়েট..."
                 className="w-full border border-gray-300 rounded-xl p-2.5 text-xs font-sans"
               />
               <p className="text-[10px] text-gray-400">
@@ -970,7 +979,7 @@ export default function ShopLocationManager({
                   required
                   value={presetForm.name}
                   onChange={e => setPresetForm({ ...presetForm, name: e.target.value })}
-                  placeholder="যেমন: ধানমন্ডি ৩২, গুলশান ২, মিরপুর ১০"
+                  placeholder="যেমন: চান্দনা চৌরাস্তা, জয়দেবপুর, বোর্ড বাজার"
                   className="w-full border border-gray-300 rounded-xl p-2.5 font-bold focus:border-emerald-500 focus:outline-hidden"
                 />
               </div>
@@ -981,7 +990,7 @@ export default function ShopLocationManager({
                   type="text"
                   value={presetForm.address}
                   onChange={e => setPresetForm({ ...presetForm, address: e.target.value })}
-                  placeholder="বাড়ি, রাস্তা, থানা, ঢাকা"
+                  placeholder="বাড়ি, রোড, এলাকা, গাজীপুর"
                   className="w-full border border-gray-300 rounded-xl p-2.5 focus:border-emerald-500 focus:outline-hidden"
                 />
               </div>
@@ -1028,7 +1037,7 @@ export default function ShopLocationManager({
                     type="text"
                     value={presetForm.landmark}
                     onChange={e => setPresetForm({ ...presetForm, landmark: e.target.value })}
-                    placeholder="যেমন: রাসেল স্কয়ার মোড়"
+                    placeholder="যেমন: চান্দনা চৌরাস্তা মোড়"
                     className="w-full border border-gray-300 rounded-xl p-2.5 focus:border-emerald-500 focus:outline-hidden"
                   />
                 </div>
@@ -1038,7 +1047,7 @@ export default function ShopLocationManager({
                     type="text"
                     value={presetForm.zoneName}
                     onChange={e => setPresetForm({ ...presetForm, zoneName: e.target.value })}
-                    placeholder="যেমন: ধানমন্ডি"
+                    placeholder="যেমন: গাজীপুর চৌরাস্তা"
                     className="w-full border border-gray-300 rounded-xl p-2.5 focus:border-emerald-500 focus:outline-hidden"
                   />
                 </div>
@@ -1050,7 +1059,7 @@ export default function ShopLocationManager({
                   rows={2}
                   value={presetForm.nearbyAreasText}
                   onChange={e => setPresetForm({ ...presetForm, nearbyAreasText: e.target.value })}
-                  placeholder="যেমন: ধানমন্ডি ৩২, রাসেল স্কয়ার, শুক্রাবাদ, সোবহানবাগ"
+                  placeholder="যেমন: চান্দনা চৌরাস্তা, ভোগড়া বাইপাস, জয়দেবপুর, শিববাড়ি"
                   className="w-full border border-gray-300 rounded-xl p-2.5 focus:border-emerald-500 focus:outline-hidden"
                 />
               </div>

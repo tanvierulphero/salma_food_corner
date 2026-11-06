@@ -12,7 +12,7 @@ import {
   Check, Lock, Smartphone, RefreshCw, Printer, User, ShieldAlert, LogOut, Eye,
   Calendar, FileText, ArrowUpRight, ArrowDownRight, PieChart, Users,
   Receipt, Edit3, Save, MapPin, Hash, CreditCard, Navigation, Compass, Crosshair, Info,
-  Volume2, VolumeX
+  Volume2, VolumeX, Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -25,6 +25,7 @@ import {
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION } from './types';
+import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer } from './utils/sqlSync';
 
 // Types
 interface FoodItem {
@@ -105,24 +106,24 @@ interface Review {
 const INITIAL_MENU: FoodItem[] = [];
 
 
-// Shop Location & 1 KM Free Delivery Zone Configuration
+// Shop Location & 1 KM Free Delivery Zone Configuration (Gazipur)
 export const SHOP_LOCATION = {
-  name: 'সালমা ফুড কর্ণার',
-  address: 'বাড়ি #১২, ধানমন্ডি ৩২ (রাসেল স্কয়ার মোড়), ঢাকা-১২০৯',
-  lat: 23.7512,
-  lng: 90.3770,
+  name: 'সালমা ফুড কর্ণার, গাজীপুর',
+  address: 'চান্দনা চৌরাস্তা (জয়দেবপুর রোড মোড়), গাজীপুর সদর, গাজীপুর-১৭০০',
+  lat: 23.9905,
+  lng: 90.3875,
   freeRadiusKm: 1.0,
   standardFee: 60
 };
 
 export const NEARBY_1KM_AREAS = [
-  { name: 'ধানমন্ডি ৩২', distanceKm: 0.2, landmark: '৩২ নম্বর ব্রিজ ও লেক মোড়' },
-  { name: 'রাসেল স্কয়ার', distanceKm: 0.3, landmark: 'মিরপুর রোড ক্রসিং' },
-  { name: 'সোবহানবাগ', distanceKm: 0.5, landmark: 'সোবহানবাগ মসজিদ ও কলোনি' },
-  { name: 'শুক্রাবাদ বাজার', distanceKm: 0.6, landmark: 'মেট্রো শপিং মল ও বাজার' },
-  { name: 'কলাবাগান বাসস্ট্যান্ড', distanceKm: 0.7, landmark: 'ডলফিন গলি মোড়' },
-  { name: 'ধানমন্ডি লেক পার্ক', distanceKm: 0.8, landmark: 'রবীন্দ্র সরোবর ও লেকভিউ' },
-  { name: 'পান্থপথ পশ্চিম', distanceKm: 0.9, landmark: 'স্কয়ার হাসপাতাল সংলগ্ন' }
+  { name: 'চান্দনা চৌরাস্তা', distanceKm: 0.2, landmark: 'চৌরাস্তা ফ্লাইওভার ও শাপলা ম্যানশন মোড়' },
+  { name: 'ভোগড়া বাইপাস', distanceKm: 0.5, landmark: 'ভোগড়া বাইপাস মোড় ও পেয়ারাবাগান' },
+  { name: 'শিববাড়ি মোড় (জয়দেবপুর)', distanceKm: 0.6, landmark: 'জয়দেবপুর রোড ও রাজবাড়ী মাঠ সংলগ্ন' },
+  { name: 'ডুয়েট গেট (DUET)', distanceKm: 0.7, landmark: 'শিমুলতলী রোড ও ডুয়েট ক্যাম্পাস' },
+  { name: 'বাসন সড়ক ও আউটপাড়া', distanceKm: 0.8, landmark: 'বাসন থানা রোড ও দিঘীর চালা' },
+  { name: 'বোর্ড বাজার', distanceKm: 0.9, landmark: 'জাতীয় বিশ্ববিদ্যালয় ও উন্মুক্ত বিশ্ববিদ্যালয় গেট' },
+  { name: 'টঙ্গী ও কোনাবাড়ী জোন', distanceKm: 1.0, landmark: 'কলেজ গেট ও কোনাবাড়ী ফ্লাইওভার সংলগ্ন' }
 ];
 
 // Haversine distance calculator in kilometers
@@ -140,10 +141,10 @@ export function calculateDistanceInKm(lat1: number, lon1: number, lat2: number, 
 }
 
 export const NEARBY_KEYWORDS = [
-  'ধানমন্ডি ৩২', 'ধানমন্ডি-৩২', 'dhanmondi 32', 'রাসেল স্কয়ার', 'russel square', 'russell square',
-  'সোবহানবাগ', 'sobhanbag', 'sobhanebag', 'শুক্রাবাদ', 'shukrabad', 'sukrabad',
-  'কলাবাগান', 'kalabagan', 'পান্থপথ', 'panthapath', '৩২ নম্বর', 'ধানমন্ডি লেক',
-  'লেক পার্ক', 'লেকভিউ', 'মেট্রো শপিং'
+  'চান্দনা', 'চৌরাস্তা', 'chandona', 'chowrasta', 'জয়দেবপুর', 'joydebpur', 'joydevpur',
+  'শিববাড়ি', 'shibbari', 'ভোগড়া', 'vogra', 'vogrs', 'বোর্ড বাজার', 'board bazar',
+  'ডুয়েট', 'duet', 'শিমুলতলী', 'shimultoli', 'বাসন', 'bason', 'আউটপাড়া', 'outpara',
+  'টঙ্গী', 'tongi', 'কোনাবাড়ী', 'konabari', 'গাজীপুর', 'gazipur', 'জাতীয় বিশ্ববিদ্যালয়'
 ];
 
 export const SAMPLE_FOOD_PRESETS = [
@@ -225,7 +226,7 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object') {
+        if (parsed && typeof parsed === 'object' && !String(parsed.address || '').includes('ধানমন্ডি')) {
           return { ...DEFAULT_SHOP_LOCATION, ...parsed };
         }
       } catch (e) {
@@ -308,6 +309,19 @@ export default function App() {
   });
   const [adminFoodSearch, setAdminFoodSearch] = useState<string>('');
   const [adminFoodCategory, setAdminFoodCategory] = useState<string>('all');
+  const [isUploadingAppFoodImg, setIsUploadingAppFoodImg] = useState<boolean>(false);
+
+  const handleAppFoodImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingAppFoodImg(true);
+    const res = await uploadFoodImageToCpanel(file);
+    setIsUploadingAppFoodImg(false);
+    if (res.ok && res.imageUrl) {
+      setFoodForm(prev => ({ ...prev, image: res.imageUrl }));
+    }
+    e.target.value = '';
+  };
 
   // Open modal for Adding new food item
   const handleOpenAddFoodModal = () => {
@@ -363,24 +377,28 @@ export default function App() {
 
     if (editingFoodId) {
       // Edit mode
-      setMenuItems(prev => prev.map(item => {
-        if (item.id === editingFoodId) {
-          return {
-            ...item,
-            nameBn: foodForm.nameBn.trim(),
-            nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
-            category: foodForm.category,
-            price: priceNum,
-            originalPrice: originalPriceNum,
-            image: foodForm.image.trim() || fallbackImg,
-            descriptionBn: foodForm.descriptionBn.trim(),
-            descriptionEn: foodForm.descriptionEn.trim(),
-            spicyLevel: foodForm.spicyLevel,
-            isVeg: foodForm.isVeg
-          };
-        }
-        return item;
-      }));
+      setMenuItems(prev => {
+        const updated = prev.map(item => {
+          if (item.id === editingFoodId) {
+            return {
+              ...item,
+              nameBn: foodForm.nameBn.trim(),
+              nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
+              category: foodForm.category,
+              price: priceNum,
+              originalPrice: originalPriceNum,
+              image: foodForm.image.trim() || fallbackImg,
+              descriptionBn: foodForm.descriptionBn.trim(),
+              descriptionEn: foodForm.descriptionEn.trim(),
+              spicyLevel: foodForm.spicyLevel,
+              isVeg: foodForm.isVeg
+            };
+          }
+          return item;
+        });
+        saveToCpanelDb('salma_menu_items', updated);
+        return updated;
+      });
       alert(`খাবার '${foodForm.nameBn}' সফলভাবে এডিট/আপডেট করা হয়েছে!`);
     } else {
       // Add mode
@@ -399,7 +417,11 @@ export default function App() {
         spicyLevel: foodForm.spicyLevel,
         isVeg: foodForm.isVeg
       };
-      setMenuItems(prev => [newItem, ...prev]);
+      setMenuItems(prev => {
+        const updated = [newItem, ...prev];
+        saveToCpanelDb('salma_menu_items', updated);
+        return updated;
+      });
       alert(`নতুন খাবার '${newItem.nameBn}' সফলভাবে মেনুতে সংযোজন করা হয়েছে!`);
     }
     setFoodModalOpen(false);
@@ -691,68 +713,107 @@ export default function App() {
   }, [ledger]);
 
   // -------------------------------------------------------------
-  // PASSWORDLESS CUSTOMER AUTHENTICATION HANDLERS
+  // PASSWORDLESS CUSTOMER AUTHENTICATION HANDLERS (MOBILE-ONLY FOR REGISTERED CUSTOMERS)
   // -------------------------------------------------------------
   const handleCheckPhone = (phoneNum: string) => {
-    const cleaned = phoneNum.trim();
-    if (customers[cleaned]) {
+    const normalized = normalizeBdPhone(phoneNum);
+    const existing = findCustomerByPhone(phoneNum, customers, orders);
+    if (existing) {
       setCustomerIsNew(false);
-      setCustomerNameInput(customers[cleaned].name);
-      setCustomerAddressInput(customers[cleaned].address);
-    } else {
+      setCustomerNameInput(existing.name);
+      setCustomerAddressInput(existing.address);
+    } else if (normalized.length >= 10) {
       setCustomerIsNew(true);
       setCustomerNameInput('');
       setCustomerAddressInput('');
+    } else {
+      setCustomerIsNew(false);
     }
   };
 
-  const handlePasswordlessLoginOrRegister = (e: React.FormEvent) => {
+  const handlePasswordlessLoginOrRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    const phone = customerPhoneInput.trim();
-    if (!phone || phone.length < 8) {
+    const normalizedPhone = normalizeBdPhone(customerPhoneInput);
+    if (!normalizedPhone || normalizedPhone.length < 10) {
       alert('সঠিক মোবাইল নম্বর প্রদান করুন (যেমন: 01712345678)');
       return;
     }
 
-    if (customers[phone]) {
-      // Existing customer: instant login without password
-      const profile = customers[phone];
-      setCurrentCustomer(profile);
-      setCustomerModalOpen(false);
-      alert(`স্বাগতম, ${profile.name}! আপনার প্রোফাইল সফলভাবে লোড হয়েছে।`);
-    } else {
-      // New customer: requires name & address to complete profile
-      if (!customerNameInput.trim() || !customerAddressInput.trim()) {
-        alert('নতুন প্রোফাইল তৈরি করতে অনুগ্রহ করে আপনার নাম ও ডেলিভারি ঠিকানা পূরণ করুন।');
-        return;
-      }
-      const newProfile: CustomerProfile = {
-        phone,
-        name: customerNameInput.trim(),
-        address: customerAddressInput.trim(),
-        loyaltyPoints: 50, // Welcome gift 50 points
-        registeredAt: todayStr,
-        totalOrders: 0,
-        totalSpent: 0
-      };
-      setCustomers(prev => ({ ...prev, [phone]: newProfile }));
-      setCurrentCustomer(newProfile);
-      setCustomerModalOpen(false);
-      alert(`ধন্যবাদ, ${newProfile.name}! সালমা ফুড কর্ণারে আপনার প্রোফাইল তৈরি হয়েছে এবং ৫০ বোনাস লয়্যালটি পয়েন্ট যুক্ত হয়েছে।`);
+    // 1. Check local/live memory store & order history first
+    let existingProfile = findCustomerByPhone(normalizedPhone, customers, orders);
+
+    // 2. If not found locally, pull latest from cPanel DB once in case customer registered on another device
+    if (!existingProfile) {
+      await pullFromServer();
+      existingProfile = findCustomerByPhone(normalizedPhone, customers, orders);
     }
+
+    if (existingProfile) {
+      // Existing registered customer: instant login with ONLY mobile number!
+      const canonicalProfile = { ...existingProfile, phone: normalizedPhone };
+      const updatedCustomers = { ...customers, [normalizedPhone]: canonicalProfile };
+      setCustomers(updatedCustomers);
+      setCurrentCustomer(canonicalProfile);
+      setCheckoutForm(prev => ({
+        ...prev,
+        phone: canonicalProfile.phone,
+        name: canonicalProfile.name,
+        address: canonicalProfile.address
+      }));
+      saveToCpanelDb('salma_customers', updatedCustomers);
+      setCustomerModalOpen(false);
+      alert(`স্বাগতম, ${canonicalProfile.name}! শুধুমাত্র মোবাইল নম্বর দিয়েই আপনার প্রোফাইল সফলভাবে লগইন হয়েছে।`);
+      return;
+    }
+
+    // Truly first-time customer: show registration fields if not yet visible
+    if (!customerIsNew) {
+      setCustomerIsNew(true);
+      return;
+    }
+
+    if (!customerNameInput.trim() || !customerAddressInput.trim()) {
+      alert('প্রথমবার রেজিস্ট্রেশন সম্পন্ন করতে অনুগ্রহ করে আপনার নাম ও ডেলিভারি ঠিকানা পূরণ করুন। পরবর্তীতে শুধু মোবাইল নম্বর দিয়েই লগইন করতে পারবেন।');
+      return;
+    }
+
+    const newProfile: CustomerProfile = {
+      phone: normalizedPhone,
+      name: customerNameInput.trim(),
+      address: customerAddressInput.trim(),
+      loyaltyPoints: 50, // Welcome gift 50 points
+      registeredAt: todayStr,
+      totalOrders: 0,
+      totalSpent: 0
+    };
+    const updatedCustomers = { ...customers, [normalizedPhone]: newProfile };
+    setCustomers(updatedCustomers);
+    setCurrentCustomer(newProfile);
+    setCheckoutForm(prev => ({
+      ...prev,
+      phone: newProfile.phone,
+      name: newProfile.name,
+      address: newProfile.address
+    }));
+    saveToCpanelDb('salma_customers', updatedCustomers);
+    setCustomerModalOpen(false);
+    alert(`ধন্যবাদ, ${newProfile.name}! আপনার রেজিস্ট্রেশন সম্পন্ন হয়েছে এবং ৫০ বোনাস পয়েন্ট যুক্ত হয়েছে। পরবর্তীতে শুধুমাত্র মোবাইল নম্বর (${normalizedPhone}) দিয়েই সরাসরি লগইন করতে পারবেন!`);
   };
 
   const handleCustomerLogout = () => {
     setCurrentCustomer(null);
     setCheckoutForm(prev => ({ ...prev, name: '', phone: '', address: '' }));
-    alert('সফলভাবে লগআউট করা হয়েছে।');
+    alert('সফলভাবে লগআউট করা হয়েছে। পরবর্তীতে শুধুমাত্র আপনার মোবাইল নম্বর দিয়েই লগইন করতে পারবেন।');
   };
 
   const handleUpdateCustomerProfile = (name: string, address: string) => {
     if (!currentCustomer) return;
-    const updated = { ...currentCustomer, name, address };
+    const normalizedPhone = normalizeBdPhone(currentCustomer.phone);
+    const updated = { ...currentCustomer, phone: normalizedPhone, name: name.trim(), address: address.trim() };
     setCurrentCustomer(updated);
-    setCustomers(prev => ({ ...prev, [updated.phone]: updated }));
+    const updatedCustomers = { ...customers, [normalizedPhone]: updated };
+    setCustomers(updatedCustomers);
+    saveToCpanelDb('salma_customers', updatedCustomers);
     alert('আপনার প্রোফাইল তথ্য সফলভাবে আপডেট হয়েছে!');
   };
 
@@ -834,7 +895,7 @@ export default function App() {
 
   const handleCheckout = (e: React.FormEvent) => {
     e.preventDefault();
-    const phone = checkoutForm.phone.trim();
+    const phone = normalizeBdPhone(checkoutForm.phone);
     const name = checkoutForm.name.trim();
     const address = checkoutForm.address.trim();
 
@@ -847,16 +908,17 @@ export default function App() {
     const pointsEarned = Math.floor(finalTotal / 10);
 
     // AUTO PROFILE CREATION / UPDATE IN DATABASE (PASSWORDLESS)
+    const existingCustomer = findCustomerByPhone(phone, customers, orders);
     let updatedProfile: CustomerProfile;
-    if (customers[phone]) {
-      const existing = customers[phone];
+    if (existingCustomer) {
       updatedProfile = {
-        ...existing,
+        ...existingCustomer,
+        phone,
         name,
         address,
-        loyaltyPoints: existing.loyaltyPoints + pointsEarned - (checkoutForm.useLoyalty ? Math.round(loyaltyDiscount * 2) : 0),
-        totalOrders: existing.totalOrders + 1,
-        totalSpent: existing.totalSpent + finalTotal
+        loyaltyPoints: existingCustomer.loyaltyPoints + pointsEarned - (checkoutForm.useLoyalty ? Math.round(loyaltyDiscount * 2) : 0),
+        totalOrders: existingCustomer.totalOrders + 1,
+        totalSpent: existingCustomer.totalSpent + finalTotal
       };
     } else {
       // First-time ordering customer auto registered!
@@ -871,8 +933,10 @@ export default function App() {
       };
     }
 
-    setCustomers(prev => ({ ...prev, [phone]: updatedProfile }));
+    const nextCustomers = { ...customers, [phone]: updatedProfile };
+    setCustomers(nextCustomers);
     setCurrentCustomer(updatedProfile);
+    saveToCpanelDb('salma_customers', nextCustomers);
 
     // Auto-generate or use Transaction ID
     const trxId = checkoutForm.transactionId.trim() || 
@@ -903,7 +967,9 @@ export default function App() {
       distanceVerificationMethod: distanceVerifiedType === 'gps' ? 'GPS' : distanceVerifiedType === 'area' ? 'Area' : distanceVerifiedType === 'address' ? 'Address' : 'Manual'
     };
 
-    setOrders(prev => [newOrder, ...prev]);
+    const nextOrders = [newOrder, ...orders];
+    setOrders(nextOrders);
+    saveToCpanelDb('salma_orders', nextOrders);
 
     // Automatic entry to POS Ledger - records the actual advance payment received
     const autoLedgerEntry: LedgerEntry = {
@@ -916,7 +982,9 @@ export default function App() {
       paymentMethod: checkoutForm.advancePaymentMethod,
       note: `অর্ডার ${newOrder.id} - ${name} (${checkoutForm.advanceOption === '100' ? '১০০% ফুল পেমেন্ট' : '৫০% অগ্রীম প্রাপ্তি ৳' + advanceAmount + ', বাকি বকেয়া ৳' + dueAmount}) (Trx: ${trxId})`
     };
-    setLedger(prev => [autoLedgerEntry, ...prev]);
+    const nextLedger = [autoLedgerEntry, ...ledger];
+    setLedger(nextLedger);
+    saveToCpanelDb('salma_ledger', nextLedger);
 
     setOrderSuccessModal(newOrder);
     playOrderSuccessSound();
@@ -938,7 +1006,9 @@ export default function App() {
       paymentMethod: quickIncomeInput.paymentMethod,
       note: quickIncomeInput.note || 'দৈনিক নগদ আয় এন্ট্রি'
     };
-    setLedger(prev => [entry, ...prev]);
+    const updated = [entry, ...ledger];
+    setLedger(updated);
+    saveToCpanelDb('salma_ledger', updated);
     setQuickIncomeInput({ category: 'খাবার বিক্রয় (Food Sales)', amount: '', paymentMethod: 'Cash', note: '' });
     alert('সফলভাবে আজকের আয় হিসাব যুক্ত হয়েছে!');
   };
@@ -957,14 +1027,80 @@ export default function App() {
       paymentMethod: quickExpenseInput.paymentMethod,
       note: quickExpenseInput.note || 'দৈনিক ব্যয় এন্ট্রি'
     };
-    setLedger(prev => [entry, ...prev]);
+    const updated = [entry, ...ledger];
+    setLedger(updated);
+    saveToCpanelDb('salma_ledger', updated);
     setQuickExpenseInput({ category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: '', paymentMethod: 'Cash', note: '' });
     alert('সফলভাবে আজকের ব্যয় হিসাব যুক্ত হয়েছে!');
   };
 
   const handleDeleteLedgerEntry = (id: string) => {
     if (confirm('আপনি কি এই হিসাব এন্ট্রিটি মুছে ফেলতে চান?')) {
-      setLedger(prev => prev.filter(l => l.id !== id));
+      const updated = ledger.filter(l => l.id !== id);
+      setLedger(updated);
+      saveToCpanelDb('salma_ledger', updated);
+    }
+  };
+
+  const handleEditLedgerEntryInApp = (entry: LedgerEntry) => {
+    const newAmountStr = prompt(`পরিমাণ (৳) পরিবর্তন করুন (${entry.category}):`, String(entry.amount));
+    if (newAmountStr === null) return;
+    const newNote = prompt('নোট / বিবরণ পরিবর্তন করুন:', entry.note);
+    if (newNote === null) return;
+    const updated = ledger.map(l => l.id === entry.id ? { ...l, amount: Math.max(0, Number(newAmountStr) || l.amount), note: newNote.trim() || l.note } : l);
+    setLedger(updated);
+    saveToCpanelDb('salma_ledger', updated);
+  };
+
+  const handleEditOrderInApp = (order: Order) => {
+    const newName = prompt('গ্রাহকের নাম এডিট করুন:', order.customerName);
+    if (newName === null) return;
+    const newAddr = prompt('ডেলিভারি ঠিকানা এডিট করুন:', order.address);
+    if (newAddr === null) return;
+    const newTotalStr = prompt('মোট বিল (৳) এডিট করুন:', String(order.totalAmount));
+    if (newTotalStr === null) return;
+    const updated = orders.map(o => o.id === order.id ? {
+      ...o,
+      customerName: newName.trim() || o.customerName,
+      address: newAddr.trim() || o.address,
+      totalAmount: Math.max(0, Number(newTotalStr) || o.totalAmount)
+    } : o);
+    setOrders(updated);
+    saveToCpanelDb('salma_orders', updated);
+  };
+
+  const handleDeleteOrderInApp = (orderId: string) => {
+    if (confirm(`আপনি কি নিশ্চিতভাবে অর্ডার #${orderId} মুছে ফেলতে চান?`)) {
+      const updated = orders.filter(o => o.id !== orderId);
+      setOrders(updated);
+      saveToCpanelDb('salma_orders', updated);
+    }
+  };
+
+  const handleEditCustomerInApp = (cust: CustomerProfile) => {
+    const newName = prompt('গ্রাহকের নাম এডিট করুন:', cust.name);
+    if (newName === null) return;
+    const newAddr = prompt('ডেলিভারি ঠিকানা এডিট করুন:', cust.address);
+    if (newAddr === null) return;
+    const newPtsStr = prompt('লয়্যালটি পয়েন্ট এডিট করুন:', String(cust.loyaltyPoints));
+    if (newPtsStr === null) return;
+    const updatedCust: CustomerProfile = {
+      ...cust,
+      name: newName.trim() || cust.name,
+      address: newAddr.trim() || cust.address,
+      loyaltyPoints: Math.max(0, Number(newPtsStr) || 0)
+    };
+    const updatedMap = { ...customers, [cust.phone]: updatedCust };
+    setCustomers(updatedMap);
+    saveToCpanelDb('salma_customers', updatedMap);
+  };
+
+  const handleDeleteCustomerInApp = (phone: string, name: string) => {
+    if (confirm(`আপনি কি নিশ্চিতভাবে গ্রাহক "${name}" (${phone})-এর প্রোফাইল মুছে ফেলতে চান?`)) {
+      const updatedMap = { ...customers };
+      delete updatedMap[phone];
+      setCustomers(updatedMap);
+      saveToCpanelDb('salma_customers', updatedMap);
     }
   };
 
@@ -1117,14 +1253,14 @@ export default function App() {
             </div>
             <div className="min-w-0">
               <h1 className="text-sm font-black bg-gradient-to-r from-red-700 to-emerald-800 bg-clip-text text-transparent truncate leading-tight">
-                সালমা ফুড কর্ণার
+                সালমা ফুড কর্ণার, গাজীপুর
               </h1>
               <button 
                 onClick={() => setShowShopLocationModal(true)}
                 className="text-[10px] text-emerald-700 font-bold flex items-center gap-0.5 hover:underline truncate"
               >
                 <MapPin className="w-2.5 h-2.5 text-red-600 shrink-0" />
-                <span className="truncate">{shopLocation.zoneName || 'ধানমন্ডি ৩২'} • {shopLocation.freeRadiusKm} কি.মি. ফ্রি</span>
+                <span className="truncate">{shopLocation.zoneName || 'চান্দনা চৌরাস্তা, গাজীপুর'} • {shopLocation.freeRadiusKm} কি.মি. ফ্রি</span>
               </button>
             </div>
           </div>
@@ -1206,8 +1342,8 @@ export default function App() {
                   <Smartphone className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-gray-900">পাসওয়ার্ড ছাড়া কাস্টমার লগইন</h3>
-                  <p className="text-[11px] text-gray-500">শুধুমাত্র মোবাইল নম্বর দিয়ে তৎক্ষণাৎ লগইন করুন</p>
+                  <h3 className="text-base font-bold text-gray-900">শুধুমাত্র মোবাইল নম্বর দিয়ে লগইন</h3>
+                  <p className="text-[11px] text-gray-500">একবার রেজিস্ট্রেশন করলে পরবর্তীতে শুধু মোবাইল নম্বর দিয়েই লগইন হবে</p>
                 </div>
               </div>
               <button onClick={() => setCustomerModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
@@ -1232,16 +1368,22 @@ export default function App() {
                     required
                   />
                 </div>
-                {customerPhoneInput.length >= 8 && !customerIsNew && (
-                  <p className="text-xs text-emerald-600 font-bold mt-1 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>রেজিস্টার্ড গ্রাহক পাওয়া গেছে: {customerNameInput}</span>
-                  </p>
+                {normalizeBdPhone(customerPhoneInput).length >= 10 && !customerIsNew && customerNameInput && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 mt-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <div>
+                        <p className="text-xs text-emerald-800 font-bold">রেজিস্টার্ড গ্রাহক: {customerNameInput}</p>
+                        <p className="text-[10px] text-emerald-600">📍 {customerAddressInput}</p>
+                      </div>
+                    </div>
+                    <span className="bg-emerald-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full">ওয়ান-ক্লিক লগইন</span>
+                  </div>
                 )}
-                {customerPhoneInput.length >= 8 && customerIsNew && (
-                  <p className="text-xs text-amber-600 font-bold mt-1 flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>নতুন গ্রাহক! নিচের নাম ও ঠিকানা দিন (বোনাস ৫০ পয়েন্ট পাবেন)</span>
+                {normalizeBdPhone(customerPhoneInput).length >= 10 && customerIsNew && (
+                  <p className="text-xs text-amber-700 font-bold mt-1.5 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                    <span>প্রথমবার রেজিস্ট্রেশন! নিচের নাম ও ঠিকানা দিন (পরবর্তীতে শুধু নম্বর দিয়েই লগইন হবে)</span>
                   </p>
                 )}
               </div>
@@ -1249,7 +1391,7 @@ export default function App() {
               {customerIsNew && (
                 <div className="space-y-2.5 bg-amber-50 p-3.5 rounded-2xl border border-amber-200">
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">আপনার নাম (Full Name)</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">আপনার নাম (শুধুমাত্র ১ম বারের জন্য)</label>
                     <input 
                       type="text"
                       placeholder="যেমন: সায়মা বেগম"
@@ -1260,9 +1402,9 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">ডেলিভারি ঠিকানা (Delivery Address)</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">ডেলিভারি ঠিকানা (শুধুমাত্র ১ম বারের জন্য)</label>
                     <textarea 
-                      placeholder="বাড়ি নং, রোড নং, এলাকা, ঢাকা"
+                      placeholder="বাড়ি নং, রোড নং, চান্দনা চৌরাস্তা / জয়দেবপুর, গাজীপুর"
                       value={customerAddressInput}
                       onChange={(e) => setCustomerAddressInput(e.target.value)}
                       rows={2}
@@ -1277,7 +1419,7 @@ export default function App() {
                 type="submit"
                 className="w-full bg-gradient-to-r from-red-600 to-emerald-600 text-white font-bold py-3 rounded-xl text-sm shadow-md transition active:scale-95 cursor-pointer"
               >
-                {customerIsNew ? 'রেজিস্টার ও লগইন করুন' : 'লগইন করুন (পাসওয়ার্ড ছাড়া)'}
+                {customerIsNew ? '১ম বার রেজিস্ট্রেশন ও লগইন করুন' : 'শুধু মোবাইল নম্বর দিয়ে লগইন করুন'}
               </button>
             </form>
           </div>
@@ -1348,24 +1490,27 @@ export default function App() {
             {/* TAB 1: MENU & ORDER */}
             {publicTab === 'menu' && (
               <div className="space-y-4">
-                {/* Compact Mobile Hero Card */}
+                {/* Compact Mobile Hero Card (Gazipur SEO Optimized) */}
                 <div className="bg-gradient-to-br from-red-700 via-amber-600 to-emerald-700 rounded-2xl p-4 text-white shadow-md relative overflow-hidden space-y-2.5">
                   <div className="flex items-center justify-between">
                     <span className="bg-white/20 backdrop-blur text-[10px] uppercase px-2.5 py-0.5 rounded-full font-bold">
-                      ⭐ সালমা ফুড স্পেশাল
+                      ⭐ গাজীপুরের সেরা রেস্টুরেন্ট
                     </span>
                     <button 
                       onClick={() => setShowShopLocationModal(true)}
                       className="bg-emerald-500 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs cursor-pointer"
                     >
                       <Truck className="w-3 h-3" />
-                      <span>{shopLocation.freeRadiusKm} কি.মি. ফ্রি ডেলিভারি</span>
+                      <span>গাজীপুরে {shopLocation.freeRadiusKm} কি.মি. ফ্রি ডেলিভারি</span>
                     </button>
                   </div>
 
                   <h2 className="text-lg font-black leading-snug">
-                    খাঁটি স্বাদে গরম গরম খাবার অর্ডার করুন মুহূর্তেই
+                    গাজীপুরে খাঁটি স্বাদে গরম গরম বিরিয়ানি, কাচ্চি ও বাংলা খাবার অর্ডার করুন মুহূর্তেই
                   </h2>
+                  <p className="text-[11px] text-amber-100 leading-relaxed">
+                    📍 চান্দনা চৌরাস্তা, জয়দেবপুর, শিববাড়ি, ভোগড়া বাইপাস, ডুয়েট (DUET), বোর্ড বাজার, টঙ্গী ও কোনাবাড়ী এলাকায় দ্রুততম হোম ডেলিভারি।
+                  </p>
                   
                   {/* Mobile Search Input */}
                   <div className="relative">
@@ -1374,7 +1519,7 @@ export default function App() {
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="কাচ্চি, তেহারি, চিকেন ফ্রাই খুঁজুন..."
+                      placeholder="গাজীপুর স্পেশাল কাচ্চি, তেহারি, ভাত, কারি খুঁজুন..."
                       className="w-full bg-white text-gray-800 placeholder-gray-400 pl-9 pr-3 py-2 rounded-xl shadow-sm focus:outline-none text-xs font-medium"
                     />
                   </div>
@@ -1388,7 +1533,7 @@ export default function App() {
                       onClick={() => setShowShopLocationModal(true)}
                       className="underline font-bold text-white cursor-pointer"
                     >
-                      ফ্রি ডেলিভারি ম্যাপ দেখুন ›
+                      গাজীপুর ফ্রি ডেলিভারি ম্যাপ দেখুন ›
                     </button>
                   </div>
                 </div>
@@ -1556,6 +1701,32 @@ export default function App() {
                     })}
                   </div>
                 )}
+
+                {/* Local Gazipur SEO & Delivery Coverage Section */}
+                <section aria-label="গাজীপুর ফুড ডেলিভারি ও রেস্টুরেন্ট তথ্য" className="bg-white rounded-2xl border border-amber-200 p-4 space-y-2 shadow-2xs text-xs">
+                  <div className="flex items-center gap-1.5 font-extrabold text-emerald-900 text-sm">
+                    <MapPin className="w-4 h-4 text-red-600 shrink-0" />
+                    <h2>সালমা ফুড কর্ণার গাজীপুর — অনলাইন খাবার অর্ডার ও হোম ডেলিভারি</h2>
+                  </div>
+                  <p className="text-[11px] text-gray-600 leading-relaxed">
+                    গাজীপুর সিটি কর্পোরেশন ও আশেপাশের এলাকার খাদ্যপ্রেমীদের জন্য <strong>সালমা ফুড কর্ণার (Salma Food Corner Gazipur)</strong> নিয়ে এসেছে ঘরোয়া স্বাদের ভাত, গরুর কালা ভুনা, খাসির কাচ্চি বিরিয়ানি, চিকেন দম বিরিয়ানি ও ফাস্ট ফুড। আমাদের প্রধান শাখা <strong>চান্দনা চৌরাস্তা (জয়দেবপুর রোড মোড়), গাজীপুর সদর</strong> থেকে ১ কিলোমিটারের মধ্যে সম্পূর্ণ ফ্রি হোম ডেলিভারি দেওয়া হয়।
+                  </p>
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {[
+                      'চান্দনা চৌরাস্তা, গাজীপুর',
+                      'জয়দেবপুর ও শিববাড়ি মোড়',
+                      'ভোগড়া বাইপাস, গাজীপুর',
+                      'ডুয়েট (DUET) ও শিমুলতলী',
+                      'বোর্ড বাজার ও জাতীয় বিশ্ববিদ্যালয়',
+                      'টঙ্গী কলেজ গেট ও স্টেশন রোড',
+                      'কোনাবাড়ী ও কাশিমপুর'
+                    ].map(zone => (
+                      <span key={zone} className="bg-amber-50 border border-amber-200 text-amber-900 px-2 py-0.5 rounded-lg text-[10px] font-bold">
+                        📍 {zone}
+                      </span>
+                    ))}
+                  </div>
+                </section>
               </div>
             )}
 
@@ -1616,36 +1787,59 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* Progress steps */}
-                          <div className="grid grid-cols-4 gap-2 text-center text-xs font-semibold py-2">
-                            {[
-                              { key: 'Placed', label: 'গৃহীত' },
-                              { key: 'Preparing', label: 'রান্না হচ্ছে' },
-                              { key: 'Out for Delivery', label: 'ডেলিভারিতে' },
-                              { key: 'Delivered', label: 'সম্পন্ন' }
-                            ].map((st, idx) => {
-                              const stepsOrder = ['Placed', 'Preparing', 'Out for Delivery', 'Delivered'];
-                              const currentIndex = stepsOrder.indexOf(order.status);
-                              const isCompleted = idx <= currentIndex;
-                              const isCurrent = order.status === st.key;
+                          {/* Read-Only Progress Steps for Customer (Cannot be clicked/modified by user) */}
+                          <div className="space-y-3 pt-1">
+                            <div className="grid grid-cols-4 gap-2 text-center text-xs font-semibold py-2 select-none">
+                              {[
+                                { key: 'Placed', label: 'গৃহীত' },
+                                { key: 'Preparing', label: 'রান্না হচ্ছে' },
+                                { key: 'Out for Delivery', label: 'ডেলিভারিতে' },
+                                { key: 'Delivered', label: 'সম্পন্ন' }
+                              ].map((st, idx) => {
+                                const stepsOrder = ['Placed', 'Preparing', 'Out for Delivery', 'Delivered'];
+                                const currentIndex = stepsOrder.indexOf(order.status);
+                                const isCompleted = idx <= currentIndex;
+                                const isCurrent = order.status === st.key;
 
-                              return (
-                                <button
-                                  key={st.key}
-                                  type="button"
-                                  onClick={() => {
-                                    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: st.key as Order['status'] } : o));
-                                  }}
-                                  title={`স্ট্যাটাস পরিবর্তন করুন: ${st.label}`}
-                                  className="flex flex-col items-center gap-1 cursor-pointer group focus:outline-none"
-                                >
-                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition group-hover:scale-105 ${isCompleted ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500'} ${isCurrent ? 'ring-4 ring-emerald-200 animate-pulse' : ''}`}>
-                                    {idx + 1}
+                                return (
+                                  <div
+                                    key={st.key}
+                                    className="flex flex-col items-center gap-1 cursor-default"
+                                  >
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${isCompleted ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500'} ${isCurrent ? 'ring-4 ring-emerald-200 animate-pulse' : ''}`}>
+                                      {idx + 1}
+                                    </div>
+                                    <span className={`text-[10px] sm:text-xs ${isCurrent ? 'text-emerald-700 font-bold' : 'text-gray-600'}`}>{st.label}</span>
                                   </div>
-                                  <span className={`text-[10px] sm:text-xs ${isCurrent ? 'text-emerald-700 font-bold' : 'text-gray-600'}`}>{st.label}</span>
-                                </button>
-                              );
-                            })}
+                                );
+                              })}
+                            </div>
+
+                            {/* Read-Only Status Badge Bar (Matching Admin Layout, View-Only for Customer) */}
+                            <div className="bg-white/90 border border-amber-200 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-1.5 select-none">
+                                <span className="text-xs font-bold text-gray-700">বর্তমান স্ট্যাটাস:</span>
+                                {(['Placed', 'Preparing', 'Out for Delivery', 'Delivered'] as const).map(st => {
+                                  const isActive = order.status === st;
+                                  return (
+                                    <span
+                                      key={st}
+                                      className={`text-[11px] px-2.5 py-1 rounded-lg font-bold ${
+                                        isActive
+                                          ? 'bg-emerald-600 text-white shadow-xs'
+                                          : 'bg-gray-100 text-gray-400'
+                                      }`}
+                                    >
+                                      {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <span className="text-[10px] text-gray-500 flex items-center gap-1 font-medium">
+                                <Lock className="w-3 h-3 text-amber-600" />
+                                <span>শুধুমাত্র এডমিন অ্যাপ থেকে পরিবর্তনযোগ্য</span>
+                              </span>
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -2163,8 +2357,16 @@ export default function App() {
                           {entry.type === 'income' ? '+' : '-'}৳{entry.amount}
                         </span>
                         <button 
+                          onClick={() => handleEditLedgerEntryInApp(entry)}
+                          className="text-blue-600 hover:text-blue-800 p-1 cursor-pointer"
+                          title="এডিট"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
                           onClick={() => handleDeleteLedgerEntry(entry.id)}
-                          className="text-gray-400 hover:text-red-600 p-1"
+                          className="text-gray-400 hover:text-red-600 p-1 cursor-pointer"
+                          title="ডিলেট"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -2281,24 +2483,47 @@ export default function App() {
                           <h4 className="font-bold text-xs text-gray-800 mt-1">{order.customerName} ({order.phone})</h4>
                           <p className="text-[11px] text-gray-600">📍 {order.address}</p>
                         </div>
-                        <span className="text-sm font-black text-gray-900">৳{order.totalAmount}</span>
+                        <div className="text-right space-y-1">
+                          <span className="text-sm font-black text-gray-900 block">৳{order.totalAmount}</span>
+                          <div className="flex items-center gap-1 justify-end">
+                            <button
+                              onClick={() => handleEditOrderInApp(order)}
+                              className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Edit3 className="w-2.5 h-2.5" /> এডিট
+                            </button>
+                            <button
+                              onClick={() => handleDeleteOrderInApp(order.id)}
+                              className="bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" /> ডিলেট
+                            </button>
+                          </div>
+                        </div>
                       </div>
                       <div className="text-[11px] space-y-0.5">
                         <p className="text-emerald-700 font-bold">অগ্রীম প্রাপ্ত: ৳{order.advancePaid} ({order.advancePaymentMethod || 'bKash'}) ✓</p>
                         {order.dueAmount > 0 && <p className="text-red-600 font-bold">বাকি প্রদেয়: ৳{order.dueAmount} (নগদ)</p>}
                       </div>
-                      <div className="grid grid-cols-2 gap-1.5 pt-1">
-                        {['Placed', 'Preparing', 'Out for Delivery', 'Delivered'].map(st => (
-                          <button
-                            key={st}
-                            onClick={() => {
-                              setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: st as any } : o));
-                            }}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold ${order.status === st ? 'bg-amber-500 text-white' : 'bg-white border text-gray-700'}`}
-                          >
-                            {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
-                          </button>
-                        ))}
+                      <div className="pt-1 border-t border-amber-200/60 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5 select-none">
+                          <span className="text-[11px] font-bold text-gray-700">অর্ডার স্ট্যাটাস:</span>
+                          {['Placed', 'Preparing', 'Out for Delivery', 'Delivered'].map(st => (
+                            <span
+                              key={st}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold ${order.status === st ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-400'}`}
+                            >
+                              {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
+                            </span>
+                          ))}
+                        </div>
+                        <a
+                          href="/admin.html"
+                          className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 hover:underline"
+                        >
+                          <Lock className="w-3 h-3" />
+                          <span>স্ট্যাটাস পরিবর্তন করতে এডমিন অ্যাপ (admin.html) ব্যবহার করুন →</span>
+                        </a>
                       </div>
                     </div>
                   ))}
@@ -2315,7 +2540,7 @@ export default function App() {
                       <Users className="w-4 h-4 text-emerald-600" />
                       <span>গ্রাহক ডাটাবেজ</span>
                     </h3>
-                    <p className="text-[10px] text-gray-500">পাসওয়ার্ডহীন অটোমেটিক প্রোফাইল</p>
+                    <p className="text-[10px] text-gray-500">পাসওয়ার্ডহীন অটোমেটিক প্রোফাইল (এডিট ও ডিলেট সুবিধা)</p>
                   </div>
                   <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] px-2.5 py-1 rounded-full">
                     মোট {Object.keys(customers).length} জন
@@ -2330,11 +2555,24 @@ export default function App() {
                         <p className="text-[11px] font-mono text-gray-600">📱 {cust.phone}</p>
                         <p className="text-[10px] text-gray-500 truncate">📍 {cust.address}</p>
                       </div>
-                      <div className="text-right shrink-0 space-y-0.5">
+                      <div className="text-right shrink-0 space-y-1">
                         <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full block">
-                          🎁 {cust.loyaltyPoints} Pts
+                          🎁 {cust.loyaltyPoints} Pts • ৳{cust.totalSpent}
                         </span>
-                        <span className="text-xs font-extrabold text-emerald-700 block">৳ {cust.totalSpent}</span>
+                        <div className="flex items-center gap-1 justify-end">
+                          <button
+                            onClick={() => handleEditCustomerInApp(cust)}
+                            className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-2.5 h-2.5" /> এডিট
+                          </button>
+                          <button
+                            onClick={() => handleDeleteCustomerInApp(cust.phone, cust.name)}
+                            className="bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" /> ডিলেট
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -2439,7 +2677,7 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-600 mb-0.5">মোবাইল নম্বর (লগইন আইডি)</label>
+                        <label className="block text-[11px] font-bold text-gray-600 mb-0.5">মোবাইল নম্বর (রেজিস্টার্ড নম্বরে নাম ও ঠিকানা অটো-ফিল হবে)</label>
                         <input 
                           type="tel" 
                           placeholder="017xxxxxxxx" 
@@ -2447,12 +2685,14 @@ export default function App() {
                           onChange={(e) => {
                             const val = e.target.value;
                             setCheckoutForm({ ...checkoutForm, phone: val });
-                            if (customers[val.trim()]) {
+                            const matched = findCustomerByPhone(val, customers, orders);
+                            if (matched) {
+                              setCurrentCustomer(matched);
                               setCheckoutForm(prev => ({
                                 ...prev,
                                 phone: val,
-                                name: customers[val.trim()].name,
-                                address: customers[val.trim()].address
+                                name: matched.name,
+                                address: matched.address
                               }));
                             }
                           }} 
@@ -2573,7 +2813,7 @@ export default function App() {
                           ডেলিভারি ঠিকানা (স্বয়ংক্রিয় ১ কি.মি. যাচাই সহ)
                         </label>
                         <textarea 
-                          placeholder="বাসা নং, রোড, এলাকা (যেমন: ধানমন্ডি ৩২, সোবহানবাগ, কলাবাগান...)" 
+                          placeholder="বাসা নং, রোড, এলাকা (যেমন: চান্দনা চৌরাস্তা, জয়দেবপুর, ভোগড়া বাইপাস, গাজীপুর...)" 
                           value={checkoutForm.address} 
                           onChange={(e) => {
                             const val = e.target.value;
@@ -2585,7 +2825,7 @@ export default function App() {
                           required 
                         />
                         <p className="text-[10px] text-gray-500 mt-0.5">
-                          💡 ঠিকানায় ধানমন্ডি ৩২, রাসেল স্কয়ার, সোবহানবাগ, শুক্রাবাদ, কলাবাগান ইত্যাদি লিখলে স্বয়ংক্রিয়ভাবে ফ্রি ডেলিভারি যুক্ত হবে।
+                          💡 ঠিকানায় চান্দনা চৌরাস্তা, জয়দেবপুর, শিববাড়ি, ভোগড়া বাইপাস, ডুয়েট, বোর্ড বাজার ইত্যাদি লিখলে স্বয়ংক্রিয়ভাবে গাজীপুর ১ কি.মি. ফ্রি ডেলিভারি যুক্ত হবে।
                         </p>
                       </div>
                       
@@ -2827,8 +3067,8 @@ export default function App() {
                   <Truck className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-extrabold text-base sm:text-lg">১ কি.মি. ফ্রি ডেলিভারি জোন</h3>
-                  <p className="text-[11px] text-amber-100">সালমা ফুড কর্ণার, ধানমন্ডি ৩২, ঢাকা</p>
+                  <h3 className="font-extrabold text-base sm:text-lg">১ কি.মি. ফ্রি ডেলিভারি জোন (গাজীপুর)</h3>
+                  <p className="text-[11px] text-amber-100">সালমা ফুড কর্ণার, চান্দনা চৌরাস্তা, গাজীপুর</p>
                 </div>
               </div>
               <button 
@@ -3087,23 +3327,36 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Image URL & Live Preview */}
-              <div>
-                <label className="block text-[11px] font-bold text-gray-700 mb-1">খাবারের ছবির URL (Image URL)</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="url" 
-                    placeholder="https://images.unsplash.com/..." 
-                    value={foodForm.image}
-                    onChange={(e) => setFoodForm({ ...foodForm, image: e.target.value })}
-                    className="flex-1 border rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-red-400 focus:outline-none font-mono"
-                  />
+              {/* Image Upload & Live Preview (cPanel Storage) */}
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3 space-y-2">
+                <label className="block text-[11px] font-bold text-emerald-950">
+                  খাবারের ছবি আপলোড (cPanel সার্ভারে সেভ হবে)
+                </label>
+                <div className="flex items-center gap-2.5">
                   {foodForm.image && (
-                    <div className="w-10 h-10 rounded-xl overflow-hidden border shrink-0 bg-gray-100">
+                    <div className="w-14 h-14 rounded-xl overflow-hidden border border-emerald-300 shrink-0 bg-white">
                       <img src={foodForm.image} alt="Preview" className="w-full h-full object-cover" />
                     </div>
                   )}
+                  <label className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer">
+                    <Upload className="w-4 h-4" />
+                    <span>{isUploadingAppFoodImg ? 'আপলোড হচ্ছে...' : '📤 গ্যালারি / ফোন থেকে ছবি আপলোড করুন'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAppFoodImageUpload}
+                      className="hidden"
+                      disabled={isUploadingAppFoodImg}
+                    />
+                  </label>
                 </div>
+                <input 
+                  type="text" 
+                  placeholder="অথবা ছবির URL দিন (uploads/food_...jpg বা https://...)" 
+                  value={foodForm.image}
+                  onChange={(e) => setFoodForm({ ...foodForm, image: e.target.value })}
+                  className="w-full border border-emerald-200 bg-white rounded-xl p-2 text-xs focus:ring-2 focus:ring-red-400 focus:outline-none font-mono"
+                />
               </div>
 
               {/* Descriptions */}
