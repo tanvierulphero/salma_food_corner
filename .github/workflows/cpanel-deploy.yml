@@ -5,6 +5,10 @@ on:
     branches:
       - main
       - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   web-deploy:
@@ -28,11 +32,35 @@ jobs:
       - name: 📄 Copy .htaccess to dist
         run: cp public/.htaccess dist/.htaccess || true
 
+      - name: 🧹 Sanitize FTP Credentials
+        id: clean_ftp
+        env:
+          RAW_SERVER: ${{ secrets.FTP_SERVER }}
+          RAW_USER: ${{ secrets.FTP_USERNAME }}
+          RAW_PASS: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          # Remove protocol (ftp://, http://, https://), trailing slashes, and spaces from server
+          CLEAN_SERVER=$(echo "$RAW_SERVER" | sed -e 's|^[^/]*//||' -e 's|/.*$||' | tr -d '[:space:]')
+          CLEAN_USER=$(echo "$RAW_USER" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          CLEAN_PASS=$(echo "$RAW_PASS" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          echo "server=$CLEAN_SERVER" >> $GITHUB_OUTPUT
+          echo "username=$CLEAN_USER" >> $GITHUB_OUTPUT
+          echo "password=$CLEAN_PASS" >> $GITHUB_OUTPUT
+          if [ -n "$CLEAN_SERVER" ] && [ -n "$CLEAN_USER" ] && [ -n "$CLEAN_PASS" ]; then
+            echo "has_ftp=true" >> $GITHUB_OUTPUT
+            echo "✅ FTP Server configured: $CLEAN_SERVER (User: $CLEAN_USER)"
+          else
+            echo "has_ftp=false" >> $GITHUB_OUTPUT
+            echo "⚠️ FTP Secrets not fully set. Skipping FTP step and using cPanel Git Version Control."
+          fi
+
       - name: 📂 Sync files to cPanel via FTP
+        if: steps.clean_ftp.outputs.has_ftp == 'true'
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
+          server: ${{ steps.clean_ftp.outputs.server }}
+          username: ${{ steps.clean_ftp.outputs.username }}
+          password: ${{ steps.clean_ftp.outputs.password }}
           local-dir: ./dist/
           server-dir: ./
+          security: loose
