@@ -35,7 +35,7 @@ export interface Order {
   advancePaymentMethod: 'bKash' | 'Nagad' | 'Card';
   transactionId?: string;
   paymentStatus: '50% Advance Paid (Due on Delivery)' | 'Fully Paid (100%)';
-  status: 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered';
+  status: 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled';
   createdAt: string;
   date: string; // YYYY-MM-DD
   loyaltyPointsEarned: number;

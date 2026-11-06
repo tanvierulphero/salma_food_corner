@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { CustomerProfile, SmsCampaignLog, SmsGatewayConfig } from '../types';
 import { playOrderSuccessSound, playAddToCartSound } from '../utils/audioFeedback';
-import { saveToCpanelDb } from '../utils/sqlSync';
+import { saveToCpanelDb, normalizeBdPhone } from '../utils/sqlSync';
 
 interface SmsMarketingPanelProps {
   customers: Record<string, CustomerProfile>;
@@ -165,8 +165,8 @@ export default function SmsMarketingPanel({
     if (audienceFilter === 'direct') {
       const numbers = directPhoneInput
         .split(/[\n,;]+/)
-        .map(n => n.trim())
-        .filter(n => n.length >= 10);
+        .map(n => normalizeBdPhone(n))
+        .filter(n => n.length === 11);
       return numbers.map((ph, idx) => ({
         phone: ph,
         name: `গ্রাহক ${idx + 1}`,

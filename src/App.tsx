@@ -65,7 +65,7 @@ interface Order {
   advancePaymentMethod: 'bKash' | 'Nagad' | 'Card';
   transactionId?: string;
   paymentStatus: '50% Advance Paid (Due on Delivery)' | 'Fully Paid (100%)';
-  status: 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered';
+  status: 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled';
   createdAt: string;
   date: string; // YYYY-MM-DD
   loyaltyPointsEarned: number;
@@ -734,8 +734,8 @@ export default function App() {
   const handlePasswordlessLoginOrRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     const normalizedPhone = normalizeBdPhone(customerPhoneInput);
-    if (!normalizedPhone || normalizedPhone.length < 10) {
-      alert('সঠিক মোবাইল নম্বর প্রদান করুন (যেমন: 01712345678)');
+    if (!normalizedPhone || normalizedPhone.length !== 11 || !normalizedPhone.startsWith('01')) {
+      alert('সঠিক ১১ ডিজিটের মোবাইল নম্বর প্রদান করুন (+88 ছাড়া, যেমন: 01712345678)');
       return;
     }
 
@@ -1069,8 +1069,53 @@ export default function App() {
     saveToCpanelDb('salma_orders', updated);
   };
 
+  const ensureCustomerSavedFromOrder = (order: Order) => {
+    const cleanPhone = normalizeBdPhone(order.phone) || order.phone.trim();
+    if (!cleanPhone) return;
+    const existing = findCustomerByPhone(cleanPhone, customers, orders);
+    const preservedProfile: CustomerProfile = existing
+      ? {
+          ...existing,
+          phone: cleanPhone,
+          name: existing.name || order.customerName,
+          address: existing.address || order.address
+        }
+      : {
+          phone: cleanPhone,
+          name: order.customerName || 'সম্মানিত গ্রাহক',
+          address: order.address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+          loyaltyPoints: 50,
+          registeredAt: order.date || todayStr,
+          totalOrders: 1,
+          totalSpent: order.totalAmount || 0
+        };
+    const updatedCustomers = { ...customers, [cleanPhone]: preservedProfile };
+    setCustomers(updatedCustomers);
+    if (currentCustomer && normalizeBdPhone(currentCustomer.phone) === cleanPhone) {
+      setCurrentCustomer(preservedProfile);
+    }
+    saveToCpanelDb('salma_customers', updatedCustomers);
+  };
+
+  const handleCancelOrder = (order: Order) => {
+    if (order.status === 'Cancelled') return;
+    if (confirm(`আপনি কি নিশ্চিতভাবে অর্ডার #${order.id} ক্যান্সেল (বাতিল) করতে চান? (আপনার কাস্টমার প্রোফাইল ও অ্যাকাউন্ট সংরক্ষিত থাকবে)`)) {
+      ensureCustomerSavedFromOrder(order);
+      const updatedOrders: Order[] = orders.map(o =>
+        o.id === order.id ? { ...o, status: 'Cancelled' } : o
+      );
+      setOrders(updatedOrders);
+      saveToCpanelDb('salma_orders', updatedOrders);
+      alert(`অর্ডার #${order.id} সফলভাবে ক্যান্সেল (বাতিল) করা হয়েছে এবং আপনার কাস্টমার তথ্য ডাটাবেসে সংরক্ষিত রয়েছে।`);
+    }
+  };
+
   const handleDeleteOrderInApp = (orderId: string) => {
-    if (confirm(`আপনি কি নিশ্চিতভাবে অর্ডার #${orderId} মুছে ফেলতে চান?`)) {
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (confirm(`আপনি কি নিশ্চিতভাবে অর্ডার #${orderId} মুছে ফেলতে চান? (কাস্টমারের প্রোফাইল সংরক্ষিত থাকবে)`)) {
+      if (targetOrder) {
+        ensureCustomerSavedFromOrder(targetOrder);
+      }
       const updated = orders.filter(o => o.id !== orderId);
       setOrders(updated);
       saveToCpanelDb('salma_orders', updated);
@@ -1353,18 +1398,20 @@ export default function App() {
 
             <form onSubmit={handlePasswordlessLoginOrRegister} className="space-y-3 pt-1">
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">আপনার মোবাইল নম্বর (Mobile Number)</label>
+                <label className="block text-xs font-bold text-gray-700 mb-1">আপনার ১১ ডিজিট মোবাইল নম্বর (+88 ছাড়া)</label>
                 <div className="relative">
                   <Phone className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
                   <input 
                     type="tel"
+                    maxLength={11}
                     placeholder="01712345678"
                     value={customerPhoneInput}
                     onChange={(e) => {
-                      setCustomerPhoneInput(e.target.value);
-                      handleCheckPhone(e.target.value);
+                      const cleanVal = normalizeBdPhone(e.target.value);
+                      setCustomerPhoneInput(cleanVal);
+                      handleCheckPhone(cleanVal);
                     }}
-                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-xl text-sm font-mono font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
                     required
                   />
                 </div>
@@ -1815,30 +1862,43 @@ export default function App() {
                               })}
                             </div>
 
-                            {/* Read-Only Status Badge Bar (Matching Admin Layout, View-Only for Customer) */}
+                            {/* Status Badge Bar & Customer Order Cancel Action */}
                             <div className="bg-white/90 border border-amber-200 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2">
                               <div className="flex flex-wrap items-center gap-1.5 select-none">
                                 <span className="text-xs font-bold text-gray-700">বর্তমান স্ট্যাটাস:</span>
-                                {(['Placed', 'Preparing', 'Out for Delivery', 'Delivered'] as const).map(st => {
-                                  const isActive = order.status === st;
-                                  return (
-                                    <span
-                                      key={st}
-                                      className={`text-[11px] px-2.5 py-1 rounded-lg font-bold ${
-                                        isActive
-                                          ? 'bg-emerald-600 text-white shadow-xs'
-                                          : 'bg-gray-100 text-gray-400'
-                                      }`}
-                                    >
-                                      {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
-                                    </span>
-                                  );
-                                })}
+                                {order.status === 'Cancelled' ? (
+                                  <span className="text-[11px] px-3 py-1 rounded-lg font-bold bg-red-600 text-white shadow-xs">
+                                    ✗ অর্ডার বাতিলকৃত (Cancelled)
+                                  </span>
+                                ) : (
+                                  (['Placed', 'Preparing', 'Out for Delivery', 'Delivered'] as const).map(st => {
+                                    const isActive = order.status === st;
+                                    return (
+                                      <span
+                                        key={st}
+                                        className={`text-[11px] px-2.5 py-1 rounded-lg font-bold ${
+                                          isActive
+                                            ? 'bg-emerald-600 text-white shadow-xs'
+                                            : 'bg-gray-100 text-gray-400'
+                                        }`}
+                                      >
+                                        {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
+                                      </span>
+                                    );
+                                  })
+                                )}
                               </div>
-                              <span className="text-[10px] text-gray-500 flex items-center gap-1 font-medium">
-                                <Lock className="w-3 h-3 text-amber-600" />
-                                <span>শুধুমাত্র এডমিন অ্যাপ থেকে পরিবর্তনযোগ্য</span>
-                              </span>
+
+                              {order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelOrder(order)}
+                                  className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 border border-red-200 text-[11px] font-bold px-3 py-1 rounded-lg flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  <span>অর্ডার ক্যান্সেল করুন</span>
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2485,7 +2545,15 @@ export default function App() {
                         </div>
                         <div className="text-right space-y-1">
                           <span className="text-sm font-black text-gray-900 block">৳{order.totalAmount}</span>
-                          <div className="flex items-center gap-1 justify-end">
+                          <div className="flex items-center gap-1 justify-end flex-wrap">
+                            {order.status !== 'Cancelled' && (
+                              <button
+                                onClick={() => handleCancelOrder(order)}
+                                className="bg-amber-50 text-amber-800 border border-amber-300 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                              >
+                                <X className="w-2.5 h-2.5" /> ক্যান্সেল
+                              </button>
+                            )}
                             <button
                               onClick={() => handleEditOrderInApp(order)}
                               className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
@@ -2677,13 +2745,14 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-600 mb-0.5">মোবাইল নম্বর (রেজিস্টার্ড নম্বরে নাম ও ঠিকানা অটো-ফিল হবে)</label>
+                        <label className="block text-[11px] font-bold text-gray-600 mb-0.5">মোবাইল নম্বর (১১ ডিজিট, +88 ছাড়া — রেজিস্টার্ড নম্বরে অটো-ফিল হবে)</label>
                         <input 
                           type="tel" 
-                          placeholder="017xxxxxxxx" 
+                          maxLength={11}
+                          placeholder="01712345678" 
                           value={checkoutForm.phone} 
                           onChange={(e) => {
-                            const val = e.target.value;
+                            const val = normalizeBdPhone(e.target.value);
                             setCheckoutForm({ ...checkoutForm, phone: val });
                             const matched = findCustomerByPhone(val, customers, orders);
                             if (matched) {
@@ -2696,7 +2765,7 @@ export default function App() {
                               }));
                             }
                           }} 
-                          className="w-full border rounded-lg p-2.5 text-xs font-bold" 
+                          className="w-full border rounded-lg p-2.5 text-xs font-mono font-bold" 
                           required 
                         />
                       </div>

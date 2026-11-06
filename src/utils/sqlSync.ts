@@ -295,8 +295,8 @@ export async function pullFromServer(): Promise<void> {
 }
 
 /**
- * Normalizes Bangladeshi mobile numbers so '01712-345678', '+8801712345678',
- * or Bengali digits '০১৭১২৩৪৫৬৭৮' all resolve to '01712345678'.
+ * Normalizes Bangladeshi mobile numbers strictly without '+88' (11 digits: '01XXXXXXXXX').
+ * Converts Bengali digits '০১৭১২৩৪৫৬৭৮' and strips any '+88'/'88' or formatting characters.
  */
 export function normalizeBdPhone(raw: string): string {
   if (!raw) return '';
@@ -304,14 +304,16 @@ export function normalizeBdPhone(raw: string): string {
     '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
     '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
   };
-  let ascii = raw.replace(/[০-৯]/g, (d) => bnToEnMap[d] || d);
+  const ascii = raw.replace(/[০-৯]/g, (d) => bnToEnMap[d] || d);
   let digits = ascii.replace(/\D/g, '');
-  if (digits.startsWith('8801') && digits.length === 13) {
+  if (digits.startsWith('8801')) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith('88') && digits.length > 11) {
     digits = digits.slice(2);
   } else if (digits.startsWith('1') && digits.length === 10) {
     digits = '0' + digits;
   }
-  return digits;
+  return digits.slice(0, 11);
 }
 
 /**

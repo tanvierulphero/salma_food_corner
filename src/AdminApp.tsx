@@ -686,7 +686,7 @@ export default function AdminApp() {
   // -------------------------------------------------------------
   // ORDERS MANAGEMENT (স্ট্যাটাস, এডিট ও ডিলেট)
   // -------------------------------------------------------------
-  const [orderFilter, setOrderFilter] = useState<'All' | 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered'>('All');
+  const [orderFilter, setOrderFilter] = useState<'All' | 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled'>('All');
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
 
   // Order Edit Modal State
@@ -754,8 +754,39 @@ export default function AdminApp() {
     alert(`অর্ডার #${editingOrderId} এর তথ্য সফলভাবে আপডেট করা হয়েছে!`);
   };
 
+  const preserveCustomerFromOrder = (order: Order) => {
+    const cleanPhone = normalizeBdPhone(order.phone) || order.phone.trim();
+    if (!cleanPhone) return;
+    setCustomers(prev => {
+      const existing = prev[cleanPhone];
+      const preserved: CustomerProfile = existing
+        ? {
+            ...existing,
+            phone: cleanPhone,
+            name: existing.name || order.customerName,
+            address: existing.address || order.address
+          }
+        : {
+            phone: cleanPhone,
+            name: order.customerName || 'সম্মানিত গ্রাহক',
+            address: order.address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+            loyaltyPoints: 50,
+            registeredAt: order.date || todayStr,
+            totalOrders: 1,
+            totalSpent: order.totalAmount || 0
+          };
+      const nextMap = { ...prev, [cleanPhone]: preserved };
+      saveToCpanelDb('salma_customers', nextMap);
+      return nextMap;
+    });
+  };
+
   const handleDeleteOrder = (orderId: string) => {
-    if (confirm(`আপনি কি সত্যিই অর্ডার #${orderId} ডাটাবেজ থেকে সম্পূর্ণ মুছে ফেলতে (ডিলেট) চান?`)) {
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (confirm(`আপনি কি সত্যিই অর্ডার #${orderId} ডাটাবেজ থেকে মুছে ফেলতে (ডিলেট) চান? (গ্রাহকের প্রোফাইল সংরক্ষিত থাকবে)`)) {
+      if (targetOrder) {
+        preserveCustomerFromOrder(targetOrder);
+      }
       setOrders(prev => {
         const updatedList = prev.filter(o => o.id !== orderId);
         saveToCpanelDb('salma_orders', updatedList);
@@ -766,6 +797,10 @@ export default function AdminApp() {
   };
 
   const handleUpdateOrderStatus = (orderId: string, newStatus: Order['status']) => {
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (targetOrder) {
+      preserveCustomerFromOrder(targetOrder);
+    }
     setOrders(prev => {
       const updatedList = prev.map(o => {
         if (o.id === orderId) {
@@ -1709,7 +1744,7 @@ export default function AdminApp() {
 
               {/* Status Filter */}
               <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none text-xs">
-                {(['All', 'Placed', 'Preparing', 'Out for Delivery', 'Delivered'] as const).map(st => (
+                {(['All', 'Placed', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'] as const).map(st => (
                   <button
                     key={st}
                     onClick={() => setOrderFilter(st)}
@@ -1717,7 +1752,7 @@ export default function AdminApp() {
                       orderFilter === st ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
-                    {st === 'All' ? 'সব' : st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
+                    {st === 'All' ? 'সব' : st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : st === 'Delivered' ? 'সম্পন্ন' : 'বাতিল'}
                   </button>
                 ))}
               </div>
@@ -1791,18 +1826,22 @@ export default function AdminApp() {
 
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          {(['Placed', 'Preparing', 'Out for Delivery', 'Delivered'] as const).map(st => (
+                          {(['Placed', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'] as const).map(st => (
                             <button
                               key={st}
                               type="button"
                               onClick={() => handleUpdateOrderStatus(order.id, st)}
                               className={`text-[11px] px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
                                 order.status === st 
-                                  ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-300' 
-                                  : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-100'
+                                  ? st === 'Cancelled'
+                                    ? 'bg-red-600 text-white shadow-sm ring-2 ring-red-300'
+                                    : 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-300' 
+                                  : st === 'Cancelled'
+                                    ? 'bg-red-50 border border-red-200 text-red-700 hover:bg-red-100'
+                                    : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-100'
                               }`}
                             >
-                              {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : 'সম্পন্ন'}
+                              {st === 'Placed' ? 'গৃহীত' : st === 'Preparing' ? 'রান্না হচ্ছে' : st === 'Out for Delivery' ? 'ডেলিভারিতে' : st === 'Delivered' ? 'সম্পন্ন' : 'বাতিল (Cancel)'}
                             </button>
                           ))}
                         </div>
@@ -2382,12 +2421,13 @@ export default function AdminApp() {
               </div>
 
               <div>
-                <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর * (লগইন আইডি)</label>
+                <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর * (১১ ডিজিট, +88 ছাড়া)</label>
                 <input 
                   type="tel"
-                  placeholder="017xxxxxxxx"
+                  maxLength={11}
+                  placeholder="01712345678"
                   value={newCustPhone}
-                  onChange={(e) => setNewCustPhone(e.target.value)}
+                  onChange={(e) => setNewCustPhone(normalizeBdPhone(e.target.value))}
                   className="w-full border border-gray-300 rounded-xl p-2.5 text-xs font-mono font-bold"
                   required
                 />
@@ -2486,12 +2526,13 @@ export default function AdminApp() {
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর *</label>
+                  <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর * (+88 ছাড়া)</label>
                   <input
                     type="tel"
+                    maxLength={11}
                     required
                     value={orderEditForm.phone}
-                    onChange={(e) => setOrderEditForm({ ...orderEditForm, phone: e.target.value })}
+                    onChange={(e) => setOrderEditForm({ ...orderEditForm, phone: normalizeBdPhone(e.target.value) })}
                     className="w-full border border-gray-300 rounded-xl p-2 text-xs font-mono font-bold"
                   />
                 </div>
@@ -2595,6 +2636,7 @@ export default function AdminApp() {
                   <option value="Preparing">রান্না হচ্ছে (Preparing)</option>
                   <option value="Out for Delivery">ডেলিভারিতে (Out for Delivery)</option>
                   <option value="Delivered">সম্পন্ন (Delivered)</option>
+                  <option value="Cancelled">বাতিলকৃত (Cancelled)</option>
                 </select>
               </div>
 

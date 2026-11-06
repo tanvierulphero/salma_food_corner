@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { DueEntry, LedgerEntry, Order, CustomerProfile } from '../types';
 import { playAddToCartSound, playOrderSuccessSound } from '../utils/audioFeedback';
-import { saveToCpanelDb } from '../utils/sqlSync';
+import { saveToCpanelDb, normalizeBdPhone } from '../utils/sqlSync';
 
 interface DueLedgerManagerProps {
   ledger: LedgerEntry[];
@@ -88,7 +88,7 @@ export default function DueLedgerManager({
   const uniqueDueCustomers = new Set(activeDues.map(d => d.customerPhone)).size;
 
   // Order Dues (from online orders that have remaining delivery due)
-  const orderDuesList = orders.filter(o => o.dueAmount > 0 && o.status !== 'Delivered');
+  const orderDuesList = orders.filter(o => o.dueAmount > 0 && o.status !== 'Delivered' && o.status !== 'Cancelled');
   const totalOrderDue = orderDuesList.reduce((sum, o) => sum + o.dueAmount, 0);
 
   // Filter Logic
@@ -864,13 +864,14 @@ export default function DueLedgerManager({
 
               {/* Customer Phone */}
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">মোবাইল নম্বর *</label>
+                <label className="block text-xs font-bold text-gray-700 mb-1">মোবাইল নম্বর * (১১ ডিজিট, +88 ছাড়া)</label>
                 <input
                   type="tel"
+                  maxLength={11}
                   required
                   placeholder="যেমন: 01712345678"
                   value={formData.customerPhone}
-                  onChange={(e) => setFormData({ ...formData, customerPhone: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, customerPhone: normalizeBdPhone(e.target.value) })}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-red-500 font-mono"
                 />
               </div>
