@@ -1,0 +1,8 @@
+---
+deployment:
+  tasks:
+    # cPanel ইউজারনেম অনুযায়ী DEPLOYPATH অটোমেটিক public_html ফোল্ডারে সেট হবে
+    - export DEPLOYPATH=$HOME/public_html/
+    # যদি আপনার প্রজেক্টের বিল্ড ফাইল (dist ফোল্ডার) গিট রিপোজিটরিতে থাকে, তবে নিচের কমান্ডটি সেগুলো public_html এ কপি করবে:
+    - /bin/cp -Rf dist/* $DEPLOYPATH 2>/dev/null || true
+    - /bin/cp -f public/.htaccess $DEPLOYPATH/.htaccess 2>/dev/null || true
