@@ -24,22 +24,6 @@ import DueLedgerManager from './components/DueLedgerManager';
 
 const ADMIN_PIN_DEFAULT = '1234';
 
-// One-time clear of previous demo data so owner starts completely fresh from scratch
-if (typeof window !== 'undefined' && localStorage.getItem('salma_fresh_db_v1') !== 'true') {
-  try {
-    localStorage.setItem('salma_menu_items', JSON.stringify([]));
-    localStorage.setItem('salma_orders', JSON.stringify([]));
-    localStorage.setItem('salma_ledger', JSON.stringify([]));
-    localStorage.setItem('salma_customers', JSON.stringify({}));
-    localStorage.setItem('salma_due_ledger', JSON.stringify([]));
-    localStorage.setItem('salma_sms_logs', JSON.stringify([]));
-    localStorage.removeItem('salma_logged_customer');
-    localStorage.setItem('salma_fresh_db_v1', 'true');
-  } catch (e) {
-    console.error(e);
-  }
-}
-
 export default function AdminApp() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem('salma_admin_auth') === 'true';

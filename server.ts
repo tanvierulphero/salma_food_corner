@@ -100,6 +100,40 @@ app.post('/api/send-sms', async (req, res) => {
   }
 });
 
+// Server-side database store (mirrors cPanel api.php behavior in preview)
+const serverDbStore: Record<string, any> = {};
+
+app.get('/api.php', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.json({
+    status: 'ok',
+    connected: true,
+    mysqlConnected: false,
+    data: serverDbStore
+  });
+});
+
+app.post('/api.php', (req, res) => {
+  const action = req.query.action;
+  if (action === 'setup_db') {
+    return res.json({
+      status: 'ok',
+      mysqlConnected: true,
+      message: 'ডাটাবেস কনফিগারেশন সংরক্ষিত হয়েছে (cPanel সার্ভারে এটি সরাসরি MySQL-এর সাথে যুক্ত হবে)।'
+    });
+  }
+  const { key, value } = req.body || {};
+  if (!key) {
+    return res.status(400).json({ status: 'error', message: 'Invalid payload' });
+  }
+  try {
+    serverDbStore[key] = typeof value === 'string' ? JSON.parse(value) : value;
+  } catch {
+    serverDbStore[key] = value;
+  }
+  res.json({ status: 'ok', connected: true, key });
+});
+
 // Vite middleware setup for development
 async function setupServer() {
   if (process.env.NODE_ENV !== 'production') {

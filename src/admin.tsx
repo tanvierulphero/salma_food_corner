@@ -3,10 +3,13 @@ import AdminApp from './AdminApp.tsx';
 import './index.css';
 import { initSqlDatabaseSync } from './utils/sqlSync';
 
-initSqlDatabaseSync();
-
-const container = document.getElementById('admin-root');
-if (container) {
-  const root = createRoot(container);
-  root.render(<AdminApp />);
+async function bootstrapAdmin() {
+  await initSqlDatabaseSync();
+  const container = document.getElementById('admin-root');
+  if (container) {
+    const root = createRoot(container);
+    root.render(<AdminApp />);
+  }
 }
+
+bootstrapAdmin();

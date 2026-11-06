@@ -2,6 +2,9 @@
   RewriteEngine On
   RewriteBase /
 
+  # api.php সরাসরি রান করবে (কখনোই index.html এ যাবে না)
+  RewriteRule ^api\.php$ - [L]
+
   # /admin এ গেলে সরাসরি admin.html ওপেন হবে
   RewriteRule ^admin/?$ admin.html [L]
 
@@ -14,14 +17,10 @@
   RewriteRule . /index.html [L]
 </IfModule>
 
-# Browser Caching & Speed Optimization for cPanel
-<IfModule mod_expires.c>
-  ExpiresActive On
-  ExpiresByType text/html "access plus 0 seconds"
-  ExpiresByType text/css "access plus 1 year"
-  ExpiresByType application/javascript "access plus 1 year"
-  ExpiresByType image/jpeg "access plus 1 year"
-  ExpiresByType image/png "access plus 1 year"
-  ExpiresByType image/webp "access plus 1 year"
-  ExpiresByType image/svg+xml "access plus 1 year"
+# API ও HTML ক্যাশিং বন্ধ রাখা যাতে সবসময় লাইভ ডাটা লোড হয়
+<IfModule mod_headers.c>
+  <FilesMatch "\.(php|html|json)$">
+    Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+    Header set Pragma "no-cache"
+  </FilesMatch>
 </IfModule>

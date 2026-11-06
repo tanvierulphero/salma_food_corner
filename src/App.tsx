@@ -102,22 +102,6 @@ interface Review {
   date: string;
 }
 
-// One-time clear of previous demo data so user starts fresh from scratch
-if (typeof window !== 'undefined' && localStorage.getItem('salma_fresh_db_v1') !== 'true') {
-  try {
-    localStorage.setItem('salma_menu_items', JSON.stringify([]));
-    localStorage.setItem('salma_orders', JSON.stringify([]));
-    localStorage.setItem('salma_ledger', JSON.stringify([]));
-    localStorage.setItem('salma_customers', JSON.stringify({}));
-    localStorage.setItem('salma_due_ledger', JSON.stringify([]));
-    localStorage.setItem('salma_sms_logs', JSON.stringify([]));
-    localStorage.removeItem('salma_logged_customer');
-    localStorage.setItem('salma_fresh_db_v1', 'true');
-  } catch (e) {
-    console.error(e);
-  }
-}
-
 const INITIAL_MENU: FoodItem[] = [];
 
 
@@ -671,18 +655,31 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [deliveryToast]);
 
-  // Listen for cross-tab order updates from AdminApp (/admin.html)
+  // Listen for live updates from cPanel server / AdminApp (/admin.html)
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'salma_orders' && e.newValue) {
-        try {
+      if (!e.newValue) return;
+      try {
+        if (e.key === 'salma_orders') {
           const updatedOrders = JSON.parse(e.newValue);
-          if (Array.isArray(updatedOrders)) {
-            setOrders(updatedOrders);
+          if (Array.isArray(updatedOrders)) setOrders(updatedOrders);
+        } else if (e.key === 'salma_menu_items') {
+          const updatedMenu = JSON.parse(e.newValue);
+          if (Array.isArray(updatedMenu)) setMenuItems(updatedMenu);
+        } else if (e.key === 'salma_customers') {
+          const updatedCust = JSON.parse(e.newValue);
+          if (updatedCust && typeof updatedCust === 'object') setCustomers(updatedCust);
+        } else if (e.key === 'salma_ledger') {
+          const updatedLedger = JSON.parse(e.newValue);
+          if (Array.isArray(updatedLedger)) setLedger(updatedLedger);
+        } else if (e.key === 'salma_shop_location') {
+          const updatedLoc = JSON.parse(e.newValue);
+          if (updatedLoc && typeof updatedLoc === 'object') {
+            setShopLocation({ ...DEFAULT_SHOP_LOCATION, ...updatedLoc });
           }
-        } catch (err) {
-          console.error(err);
         }
+      } catch (err) {
+        console.error(err);
       }
     };
     window.addEventListener('storage', handleStorageChange);
