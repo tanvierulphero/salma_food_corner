@@ -21,6 +21,13 @@ import {
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import DueLedgerManager from './components/DueLedgerManager';
+import {
+  getMysqlStatus,
+  subscribeMysqlStatus,
+  setupMysqlDatabase,
+  syncAllToMysqlNow,
+  saveToCpanelDb
+} from './utils/sqlSync';
 
 const ADMIN_PIN_DEFAULT = '1234';
 
@@ -250,6 +257,50 @@ export default function AdminApp() {
     setFoodModalOpen(true);
   };
 
+  // cPanel MySQL (phpMyAdmin) Database Connection State
+  const [mysqlStatus, setMysqlStatus] = useState(() => getMysqlStatus());
+  const [dbModalOpen, setDbModalOpen] = useState(false);
+  const [dbForm, setDbForm] = useState({
+    dbHost: 'localhost',
+    dbName: '',
+    dbUser: '',
+    dbPass: ''
+  });
+  const [dbConnecting, setDbConnecting] = useState(false);
+  const [dbNotice, setDbNotice] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [isSyncingNow, setIsSyncingNow] = useState(false);
+
+  useEffect(() => {
+    return subscribeMysqlStatus(() => {
+      setMysqlStatus({ ...getMysqlStatus() });
+    });
+  }, []);
+
+  const handleSaveMysqlConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDbConnecting(true);
+    setDbNotice(null);
+    const res = await setupMysqlDatabase(dbForm);
+    setDbConnecting(false);
+    if (res.ok) {
+      setDbNotice({ type: 'ok', text: res.message });
+      if (soundOn) playOrderSuccessSound();
+      setTimeout(() => {
+        setDbModalOpen(false);
+      }, 1500);
+    } else {
+      setDbNotice({ type: 'err', text: res.message });
+    }
+  };
+
+  const handleSyncAllNow = async () => {
+    setIsSyncingNow(true);
+    await syncAllToMysqlNow();
+    setIsSyncingNow(false);
+    if (soundOn) playAddToCartSound();
+    alert('সকল ডাটা সফলভাবে cPanel সার্ভার ও MySQL ডাটাবেসে সিঙ্ক করা হয়েছে!');
+  };
+
   const handleSaveFood = (e: React.FormEvent) => {
     e.preventDefault();
     if (!foodForm.nameBn.trim() || !foodForm.price || Number(foodForm.price) <= 0) {
@@ -267,27 +318,31 @@ export default function AdminApp() {
 
     if (editingFoodId) {
       // Edit existing
-      setMenuItems(prev => prev.map(item => {
-        if (item.id === editingFoodId) {
-          return {
-            ...item,
-            nameBn: foodForm.nameBn.trim(),
-            nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
-            category: isBundleFinal && foodForm.category !== 'combo' ? 'combo' : foodForm.category,
-            price: Number(foodForm.price),
-            originalPrice: foodForm.originalPrice ? Number(foodForm.originalPrice) : undefined,
-            image: foodForm.image.trim(),
-            descriptionBn: foodForm.descriptionBn.trim(),
-            descriptionEn: foodForm.descriptionEn.trim(),
-            spicyLevel: foodForm.spicyLevel,
-            isVeg: foodForm.isVeg,
-            isBundle: isBundleFinal,
-            bundleItems: bList.length > 0 ? bList : undefined,
-            bundleSavings: computedSavings
-          };
-        }
-        return item;
-      }));
+      setMenuItems(prev => {
+        const updated = prev.map(item => {
+          if (item.id === editingFoodId) {
+            return {
+              ...item,
+              nameBn: foodForm.nameBn.trim(),
+              nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
+              category: isBundleFinal && foodForm.category !== 'combo' ? 'combo' : foodForm.category,
+              price: Number(foodForm.price),
+              originalPrice: foodForm.originalPrice ? Number(foodForm.originalPrice) : undefined,
+              image: foodForm.image.trim(),
+              descriptionBn: foodForm.descriptionBn.trim(),
+              descriptionEn: foodForm.descriptionEn.trim(),
+              spicyLevel: foodForm.spicyLevel,
+              isVeg: foodForm.isVeg,
+              isBundle: isBundleFinal,
+              bundleItems: bList.length > 0 ? bList : undefined,
+              bundleSavings: computedSavings
+            };
+          }
+          return item;
+        });
+        saveToCpanelDb('salma_menu_items', updated);
+        return updated;
+      });
       alert(`'${foodForm.nameBn}' মেনুতে সফলভাবে আপডেট করা হয়েছে!`);
     } else {
       // Add new
@@ -309,15 +364,23 @@ export default function AdminApp() {
         bundleItems: bList.length > 0 ? bList : undefined,
         bundleSavings: computedSavings
       };
-      setMenuItems(prev => [newItem, ...prev]);
-      alert(`নতুন খাবার '${newItem.nameBn}' সফলভাবে মেনুতে যোগ করা হয়েছে!`);
+      setMenuItems(prev => {
+        const updated = [newItem, ...prev];
+        saveToCpanelDb('salma_menu_items', updated);
+        return updated;
+      });
+      alert(`নতুন খাবার '${newItem.nameBn}' সফলভাবে মেনু ও ডাটাবেসে যোগ করা হয়েছে!`);
     }
     setFoodModalOpen(false);
   };
 
   const handleDeleteFood = (id: string, nameBn: string) => {
     if (confirm(`আপনি কি সত্যিই '${nameBn}' মেনু থেকে মুছে ফেলতে (বিয়োজন) চান?`)) {
-      setMenuItems(prev => prev.filter(item => item.id !== id));
+      setMenuItems(prev => {
+        const updated = prev.filter(item => item.id !== id);
+        saveToCpanelDb('salma_menu_items', updated);
+        return updated;
+      });
       alert(`'${nameBn}' মেনু থেকে মুছে ফেলা হয়েছে।`);
     }
   };
@@ -1949,6 +2012,111 @@ export default function AdminApp() {
                   className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-xs font-bold shadow transition active:scale-95"
                 >
                   সংরক্ষণ করুন
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: CPANEL MYSQL (PHPMYADMIN) DATABASE SETUP                 */}
+      {/* ============================================================== */}
+      {dbModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 border border-gray-200">
+            <div className="flex justify-between items-center border-b pb-3">
+              <div>
+                <h3 className="font-black text-gray-900 text-base flex items-center gap-2">
+                  <span>🗄️ cPanel MySQL (phpMyAdmin) সেটআপ</span>
+                </h3>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  একবার কানেক্ট করলে সব খাবার, অর্ডার ও হিসাব সরাসরি phpMyAdmin টেবিলে সেভ হবে।
+                </p>
+              </div>
+              <button onClick={() => setDbModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {dbNotice && (
+              <div className={`p-3 rounded-xl text-xs font-bold border ${
+                dbNotice.type === 'ok' 
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900' 
+                  : 'bg-red-50 border-red-300 text-red-700'
+              }`}>
+                {dbNotice.text}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveMysqlConfig} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">Database Host</label>
+                <input
+                  type="text"
+                  value={dbForm.dbHost}
+                  onChange={(e) => setDbForm({ ...dbForm, dbHost: e.target.value })}
+                  placeholder="localhost"
+                  className="w-full border border-gray-300 rounded-xl p-2.5 font-mono"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">cPanel Database Name *</label>
+                <input
+                  type="text"
+                  value={dbForm.dbName}
+                  onChange={(e) => setDbForm({ ...dbForm, dbName: e.target.value })}
+                  placeholder="যেমন: cpaneluser_salmafood"
+                  className="w-full border border-gray-300 rounded-xl p-2.5 font-mono font-bold"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">cPanel Database Username *</label>
+                <input
+                  type="text"
+                  value={dbForm.dbUser}
+                  onChange={(e) => setDbForm({ ...dbForm, dbUser: e.target.value })}
+                  placeholder="যেমন: cpaneluser_dbuser"
+                  className="w-full border border-gray-300 rounded-xl p-2.5 font-mono font-bold"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">Database User Password *</label>
+                <input
+                  type="password"
+                  value={dbForm.dbPass}
+                  onChange={(e) => setDbForm({ ...dbForm, dbPass: e.target.value })}
+                  placeholder="আপনার ডাটাবেস ইউজারের পাসওয়ার্ড"
+                  className="w-full border border-gray-300 rounded-xl p-2.5 font-mono"
+                  required
+                />
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-[11px] text-amber-900 space-y-1">
+                <p className="font-bold">💡 গুরুত্বপূর্ণ টিপস:</p>
+                <p>cPanel ➔ <b>MySQL® Databases</b>-এ গিয়ে আপনার Database User-কে অবশ্যই Database-এর সাথে <b>Add User to Database (ALL PRIVILEGES)</b> করে নেবেন।</p>
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setDbModalOpen(false)}
+                  className="flex-1 border border-gray-300 py-2.5 rounded-xl font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  disabled={dbConnecting}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-bold shadow transition active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  {dbConnecting ? 'কানেক্ট হচ্ছে...' : 'কানেক্ট ও সেভ করুন'}
                 </button>
               </div>
             </form>

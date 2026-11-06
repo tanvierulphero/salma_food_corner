@@ -1,7 +1,7 @@
 /**
- * cPanel Server & MySQL Database Engine (Zero Browser LocalStorage)
- * All application state is loaded from and saved directly to ./api.php on the cPanel server.
- * Browser localStorage is completely bypassed and cleared.
+ * cPanel Server & MySQL (phpMyAdmin) Database Engine
+ * - Intercepts Storage.prototype so all localStorage.getItem / setItem calls use the cPanel server DB
+ * - Provides direct MySQL configuration & status helpers for AdminApp
  */
 
 const SYNCED_KEYS = new Set([
@@ -20,8 +20,131 @@ const memoryStore = new Map<string, string>();
 let isRemoteApplying = false;
 let isInitialized = false;
 
+let dbStatusInfo: {
+  mysqlConnected: boolean;
+  dbName: string | null;
+  mysqlError: string | null;
+} = {
+  mysqlConnected: false,
+  dbName: null,
+  mysqlError: null
+};
+
+const statusListeners = new Set<() => void>();
+
+export function getMysqlStatus() {
+  return dbStatusInfo;
+}
+
+export function subscribeMysqlStatus(cb: () => void) {
+  statusListeners.add(cb);
+  return () => {
+    statusListeners.delete(cb);
+  };
+}
+
+function notifyStatusListeners() {
+  statusListeners.forEach((cb) => cb());
+}
+
 function getApiUrl(action: string): string {
   return `./api.php?action=${action}&_t=${Date.now()}`;
+}
+
+export async function saveToCpanelDb(key: string, value: any): Promise<void> {
+  const strValue = typeof value === 'string' ? value : JSON.stringify(value);
+  memoryStore.set(key, strValue);
+  try {
+    const res = await fetch(getApiUrl('save'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value: strValue }),
+      keepalive: true
+    });
+    const data = await res.json().catch(() => null);
+    if (data && typeof data.mysqlConnected === 'boolean') {
+      dbStatusInfo = {
+        ...dbStatusInfo,
+        mysqlConnected: data.mysqlConnected
+      };
+      notifyStatusListeners();
+    }
+  } catch (err) {
+    console.error('cPanel DB Save Error:', err);
+  }
+}
+
+export async function syncAllToMysqlNow(): Promise<boolean> {
+  try {
+    for (const key of SYNCED_KEYS) {
+      if (memoryStore.has(key)) {
+        const val = memoryStore.get(key)!;
+        await fetch(getApiUrl('save'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, value: val })
+        });
+      }
+    }
+    await pullFromServer();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function setupMysqlDatabase(config: {
+  dbHost: string;
+  dbName: string;
+  dbUser: string;
+  dbPass: string;
+}): Promise<{ ok: boolean; message: string; dbName?: string }> {
+  try {
+    const currentData: Record<string, any> = {};
+    for (const key of SYNCED_KEYS) {
+      if (memoryStore.has(key)) {
+        try {
+          currentData[key] = JSON.parse(memoryStore.get(key)!);
+        } catch {
+          currentData[key] = memoryStore.get(key);
+        }
+      }
+    }
+
+    const res = await fetch(getApiUrl('setup_db'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...config,
+        currentData
+      })
+    });
+
+    const result = await res.json();
+    if (res.ok && result.status === 'ok') {
+      dbStatusInfo = {
+        mysqlConnected: true,
+        dbName: result.dbName || config.dbName,
+        mysqlError: null
+      };
+      notifyStatusListeners();
+      return {
+        ok: true,
+        message: result.message || 'ডাটাবেস সফলভাবে কানেক্ট হয়েছে!',
+        dbName: result.dbName || config.dbName
+      };
+    } else {
+      return {
+        ok: false,
+        message: result.message || 'ডাটাবেস কানেকশন ব্যর্থ হয়েছে। তথ্যগুলো পুনরায় চেক করুন।'
+      };
+    }
+  } catch (err: any) {
+    return {
+      ok: false,
+      message: 'সার্ভারের সাথে যোগাযোগ করা যায়নি: ' + (err?.message || '')
+    };
+  }
 }
 
 export async function pullFromServer(): Promise<void> {
@@ -39,7 +162,16 @@ export async function pullFromServer(): Promise<void> {
     if (!res.ok || !contentType.includes('application/json')) return;
 
     const result = await res.json();
-    if (!result || !result.data || typeof result.data !== 'object') return;
+    if (!result) return;
+
+    dbStatusInfo = {
+      mysqlConnected: Boolean(result.mysqlConnected),
+      dbName: result.dbName || null,
+      mysqlError: result.mysqlError || null
+    };
+    notifyStatusListeners();
+
+    if (!result.data || typeof result.data !== 'object') return;
 
     isRemoteApplying = true;
     try {
@@ -62,7 +194,7 @@ export async function pullFromServer(): Promise<void> {
       isRemoteApplying = false;
     }
   } catch {
-    // Silent fallback if network temporarily unreachable
+    // Ignore transient network errors
   }
 }
 
@@ -70,30 +202,29 @@ export async function initSqlDatabaseSync(): Promise<void> {
   if (typeof window === 'undefined' || isInitialized) return;
   isInitialized = true;
 
-  // Clear any old browser localStorage so local storage is not used
+  // Clear native browser localStorage completely before overriding
   try {
-    window.localStorage.clear();
+    Storage.prototype.clear.call(window.localStorage);
   } catch {
     // Ignore
   }
 
-  // Override Storage prototype / localStorage methods to use our in-memory cPanel Server Store
-  const customGetItem = (key: string): string | null => {
+  // Patch Storage.prototype so ALL calls to localStorage.getItem / setItem across all modules use memoryStore + cPanel API
+  Storage.prototype.getItem = function (key: string): string | null {
     return memoryStore.has(key) ? memoryStore.get(key)! : null;
   };
 
-  const customSetItem = (key: string, value: string): void => {
+  Storage.prototype.setItem = function (key: string, value: string): void {
     const strValue = String(value);
     const previousValue = memoryStore.get(key);
 
-    // Do not re-save if the value hasn't actually changed
     if (previousValue === strValue) {
       return;
     }
 
     memoryStore.set(key, strValue);
 
-    // If this is the initial component mount setting a default empty array/object, do not overwrite server
+    // Skip initial mount empty default array/object so page load never overwrites server DB
     if (previousValue === undefined && (strValue === '[]' || strValue === '{}')) {
       return;
     }
@@ -110,40 +241,18 @@ export async function initSqlDatabaseSync(): Promise<void> {
     }
   };
 
-  const customRemoveItem = (key: string): void => {
+  Storage.prototype.removeItem = function (key: string): void {
     memoryStore.delete(key);
   };
 
-  const customClear = (): void => {
+  Storage.prototype.clear = function (): void {
     memoryStore.clear();
   };
-
-  try {
-    Object.defineProperty(window, 'localStorage', {
-      value: {
-        getItem: customGetItem,
-        setItem: customSetItem,
-        removeItem: customRemoveItem,
-        clear: customClear,
-        key: (index: number) => Array.from(memoryStore.keys())[index] ?? null,
-        get length() {
-          return memoryStore.size;
-        }
-      },
-      configurable: true,
-      writable: true
-    });
-  } catch {
-    window.localStorage.getItem = customGetItem;
-    window.localStorage.setItem = customSetItem;
-    window.localStorage.removeItem = customRemoveItem;
-    window.localStorage.clear = customClear;
-  }
 
   // Load initial database state from cPanel server BEFORE mounting React app
   await pullFromServer();
 
-  // Keep all tabs/devices in sync with cPanel server every 5 seconds and on window focus
+  // Keep all tabs/devices synced with cPanel server
   window.addEventListener('focus', () => {
     pullFromServer();
   });

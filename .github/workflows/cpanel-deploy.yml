@@ -7,9 +7,6 @@ on:
       - master
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   web-deploy:
     name: 🎉 Build App & Sync to cPanel
@@ -17,8 +14,6 @@ jobs:
     steps:
       - name: 🚚 Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
@@ -31,21 +26,11 @@ jobs:
       - name: 🛠️ Build Production Files (dist)
         run: npx vite build
 
-      - name: 📄 Copy .htaccess to dist
-        run: cp public/.htaccess dist/.htaccess || true
-
-      - name: 💾 Save Built dist Folder to Git (For cPanel Git Version Control)
+      - name: 📄 Copy .htaccess, api.php & database.sql to dist
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f dist/ .cpanel.yml
-          if ! git diff --staged --quiet; then
-            git commit -m "chore: update production dist build for cPanel [skip ci]"
-            git push
-            echo "✅ Production dist/ folder updated in Git repository!"
-          else
-            echo "✅ dist/ folder is already up to date."
-          fi
+          cp public/.htaccess dist/.htaccess || true
+          cp public/api.php dist/api.php || true
+          cp public/database.sql dist/database.sql || true
 
       - name: 📂 Sync files to cPanel (FTP / FTPS / SFTP Auto-Fallback)
         continue-on-error: true
@@ -56,7 +41,7 @@ jobs:
         run: |
           CLEAN_SERVER=$(echo "$RAW_SERVER" | sed -e 's|^[^/]*//||' -e 's|/.*$||' -e 's|:.*$||' | tr -d '[:space:]')
           if [ -z "$CLEAN_SERVER" ] || [ -z "$FTP_USER" ] || [ -z "$FTP_PASS" ]; then
-            echo "ℹ️ FTP Secrets দেওয়া নেই। তবে dist/ ফোল্ডার গিটে সেভ হয়েছে—cPanel Git Version Control থেকে সরাসরি Pull করতে পারবেন।"
+            echo "ℹ️ FTP Secrets দেওয়া নেই। তবে dist/ ফোল্ডার রিপোজিটরিতে আগে থেকেই বিল্ড করা আছে—cPanel Git Version Control থেকে সরাসরি Pull/Deploy করতে পারবেন।"
             exit 0
           fi
 
@@ -93,8 +78,4 @@ jobs:
             mirror -R --verbose --only-newer ./dist/ ./public_html/
           " && echo "✅ Successfully deployed via SFTP!" && exit 0
 
-          echo "----------------------------------------------------------------"
-          echo "ℹ️ নোট: FTP ইউজারনেম বা পাসওয়ার্ড cPanel গ্রহণ করেনি (530 Login failed)।"
-          echo "তবে চিন্তা নেই! আপনার বিল্ড করা dist/ ফোল্ডারটি রিপোজিটরিতে সেভ করে দেওয়া হয়েছে।"
-          echo "আপনি cPanel -> Git Version Control থেকে সরাসরি Pull/Deploy করতে পারবেন।"
-          echo "----------------------------------------------------------------"
+          echo "✅ Build completed."

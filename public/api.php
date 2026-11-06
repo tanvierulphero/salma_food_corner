@@ -1,10 +1,7 @@
 <?php
 /**
  * ============================================================================
- * সালমা ফুড কর্ণার (Salma Food Corner) - cPanel Server & MySQL Database API
- * ============================================================================
- * এই ফাইলটি cPanel সার্ভারে (MySQL phpMyAdmin + Server Storage) সকল ডাটা সেভ করে।
- * ব্রাউজারের লোকাল স্টোরেজের ওপর নির্ভর না করে সরাসরি সার্ভার থেকে ডাটা লোড ও সেভ হয়।
+ * সালমা ফুড কর্ণার (Salma Food Corner) - cPanel phpMyAdmin & MySQL API (api.php)
  * ============================================================================
  */
 
@@ -20,19 +17,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
-// ডিফল্ট MySQL কনফিগারেশন (প্রয়োজনে এখানে অথবা এডমিন প্যানেল থেকে সেট করা যাবে)
+// ডিফল্ট কনফিগারেশন (এডমিন প্যানেল থেকে সেট করলে db_config.php ফাইলে স্থায়ীভাবে সেভ হবে)
 $DB_HOST = 'localhost';
-$DB_NAME = 'cpaneluser_salmafood';
-$DB_USER = 'cpaneluser_dbuser';
-$DB_PASS = 'YOUR_DB_PASSWORD';
+$DB_NAME = '';
+$DB_USER = '';
+$DB_PASS = '';
 
-// যদি এডমিন প্যানেল থেকে db_config.php সেভ করা থাকে, তবে সেটি লোড হবে (Git Push করলে মুছে যাবে না)
-$configFile = __DIR__ . '/db_config.php';
-if (file_exists($configFile)) {
-    @include $configFile;
+// db_config.php লোড করা (public_html অথবা তার উপরের ফোল্ডার থেকে, যাতে Git Push করলেও না মুছে যায়)
+$configFileLocal = __DIR__ . '/db_config.php';
+$configFileParent = dirname(__DIR__) . '/salma_db_config.php';
+
+if (file_exists($configFileLocal)) {
+    @include $configFileLocal;
+} elseif (file_exists($configFileParent)) {
+    @include $configFileParent;
 }
 
-// cPanel সার্ভারের ফাইল-বেসড ব্যাকআপ ডাটাবেস (MySQL কনফিগার করার আগেও ১০০% ডাটা সার্ভারে সেভ রাখবে)
+// সার্ভারের ফাইল-বেসড ব্যাকআপ ডাটাবেস (public_html এবং parent ফোল্ডারে)
 $serverDbFile = __DIR__ . '/salma_server_db.json';
 
 function readServerDbFile($file) {
@@ -44,18 +45,22 @@ function readServerDbFile($file) {
 }
 
 function writeServerDbFile($file, $data) {
-    @file_put_contents($file, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+    @file_put_contents($file, json_encode((object)$data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
 }
 
 mysqli_report(MYSQLI_REPORT_OFF);
 $conn = null;
 $mysqlConnected = false;
+$mysqlError = null;
 
-if (!empty($DB_NAME) && $DB_NAME !== 'cpaneluser_salmafood' && $DB_PASS !== 'YOUR_DB_PASSWORD') {
-    $conn = @new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
+if (!empty($DB_NAME) && !empty($DB_USER) && $DB_NAME !== 'cpaneluser_salmafood') {
+    $conn = @new mysqli($DB_HOST ?: 'localhost', $DB_USER, $DB_PASS, $DB_NAME);
     if ($conn && !$conn->connect_error) {
         $conn->set_charset('utf8mb4');
+        $conn->query("SET SESSION sql_mode = ''");
         $mysqlConnected = true;
+    } else {
+        $mysqlError = $conn ? $conn->connect_error : 'Connection failed';
     }
 }
 
@@ -159,6 +164,128 @@ function initMysqlTables($conn) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 }
 
+function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
+    if (!$conn) return null;
+
+    $key = $conn->real_escape_string($rawKey);
+    $valEscaped = $conn->real_escape_string($valJson);
+
+    $conn->query("INSERT INTO `salma_app_store` (`store_key`, `store_value`)
+                  VALUES ('$key', '$valEscaped')
+                  ON DUPLICATE KEY UPDATE `store_value` = '$valEscaped'");
+
+    $parsed = json_decode($valJson, true);
+    if (!is_array($parsed)) return null;
+
+    if ($rawKey === 'salma_menu_items') {
+        $conn->query("DELETE FROM `menu_items`");
+        foreach ($parsed as $item) {
+            if (!is_array($item)) continue;
+            $id = $conn->real_escape_string((string)($item['id'] ?? ('food-' . uniqid())));
+            $nameBn = $conn->real_escape_string((string)($item['nameBn'] ?? ''));
+            $nameEn = $conn->real_escape_string((string)($item['nameEn'] ?? ''));
+            $cat = $conn->real_escape_string((string)($item['category'] ?? 'popular'));
+            $price = floatval($item['price'] ?? 0);
+            $origPrice = isset($item['originalPrice']) && $item['originalPrice'] !== '' ? floatval($item['originalPrice']) : 'NULL';
+            $image = $conn->real_escape_string((string)($item['image'] ?? ''));
+            $rating = floatval($item['rating'] ?? 5.0);
+            $reviews = intval($item['reviewsCount'] ?? 1);
+            $descBn = $conn->real_escape_string((string)($item['descriptionBn'] ?? ''));
+            $descEn = $conn->real_escape_string((string)($item['descriptionEn'] ?? ''));
+            $spicy = intval($item['spicyLevel'] ?? 1);
+            $isVeg = !empty($item['isVeg']) ? 1 : 0;
+            $isBundle = !empty($item['isBundle']) ? 1 : 0;
+            $bundleItems = isset($item['bundleItems']) ? "'" . $conn->real_escape_string(json_encode($item['bundleItems'], JSON_UNESCAPED_UNICODE)) . "'" : 'NULL';
+            $bundleSavings = isset($item['bundleSavings']) && $item['bundleSavings'] !== '' ? floatval($item['bundleSavings']) : 'NULL';
+
+            $conn->query("REPLACE INTO `menu_items` (`id`,`name_bn`,`name_en`,`category`,`price`,`original_price`,`image`,`rating`,`reviews_count`,`description_bn`,`description_en`,`spicy_level`,`is_veg`,`is_bundle`,`bundle_items`,`bundle_savings`)
+                VALUES ('$id','$nameBn','$nameEn','$cat',$price,$origPrice,'$image',$rating,$reviews,'$descBn','$descEn',$spicy,$isVeg,$isBundle,$bundleItems,$bundleSavings)");
+        }
+    } elseif ($rawKey === 'salma_orders') {
+        $conn->query("DELETE FROM `orders`");
+        foreach ($parsed as $ord) {
+            if (!is_array($ord)) continue;
+            $id = $conn->real_escape_string((string)($ord['id'] ?? ('ORD-' . uniqid())));
+            $cName = $conn->real_escape_string((string)($ord['customerName'] ?? ''));
+            $phone = $conn->real_escape_string((string)($ord['phone'] ?? ''));
+            $addr = $conn->real_escape_string((string)($ord['address'] ?? ''));
+            $itemsJson = $conn->real_escape_string(json_encode($ord['items'] ?? [], JSON_UNESCAPED_UNICODE));
+            $total = floatval($ord['totalAmount'] ?? 0);
+            $disc = floatval($ord['discount'] ?? 0);
+            $adv = floatval($ord['advancePaid'] ?? 0);
+            $due = floatval($ord['dueAmount'] ?? 0);
+            $pm = $conn->real_escape_string((string)($ord['paymentMethod'] ?? ''));
+            $apm = $conn->real_escape_string((string)($ord['advancePaymentMethod'] ?? 'bKash'));
+            $trx = $conn->real_escape_string((string)($ord['transactionId'] ?? ''));
+            $pStat = $conn->real_escape_string((string)($ord['paymentStatus'] ?? ''));
+            $stat = $conn->real_escape_string((string)($ord['status'] ?? 'Placed'));
+            $oDate = $conn->real_escape_string((string)($ord['date'] ?? date('Y-m-d')));
+            $cAt = $conn->real_escape_string((string)($ord['createdAt'] ?? ''));
+            $pts = intval($ord['loyaltyPointsEarned'] ?? 0);
+            $dist = isset($ord['deliveryDistanceKm']) && $ord['deliveryDistanceKm'] !== '' ? floatval($ord['deliveryDistanceKm']) : 'NULL';
+            $free = !empty($ord['isFreeDeliveryWithin1km']) ? 1 : 0;
+
+            $conn->query("REPLACE INTO `orders` (`id`,`customer_name`,`phone`,`address`,`items_json`,`total_amount`,`discount`,`advance_paid`,`due_amount`,`payment_method`,`advance_payment_method`,`transaction_id`,`payment_status`,`status`,`order_date`,`created_at_str`,`loyalty_points_earned`,`delivery_distance_km`,`is_free_delivery`)
+                VALUES ('$id','$cName','$phone','$addr','$itemsJson',$total,$disc,$adv,$due,'$pm','$apm','$trx','$pStat','$stat','$oDate','$cAt',$pts,$dist,$free)");
+        }
+    } elseif ($rawKey === 'salma_ledger') {
+        $conn->query("DELETE FROM `ledger_entries`");
+        foreach ($parsed as $le) {
+            if (!is_array($le)) continue;
+            $id = $conn->real_escape_string((string)($le['id'] ?? ('led-' . uniqid())));
+            $vNo = $conn->real_escape_string((string)($le['voucherNo'] ?? ''));
+            $type = ($le['type'] ?? 'income') === 'expense' ? 'expense' : 'income';
+            $cat = $conn->real_escape_string((string)($le['category'] ?? ''));
+            $amt = floatval($le['amount'] ?? 0);
+            $eDate = $conn->real_escape_string((string)($le['date'] ?? date('Y-m-d')));
+            $pm = $conn->real_escape_string((string)($le['paymentMethod'] ?? 'Cash'));
+            $note = $conn->real_escape_string((string)($le['note'] ?? ''));
+
+            $conn->query("REPLACE INTO `ledger_entries` (`id`,`voucher_no`,`type`,`category`,`amount`,`entry_date`,`payment_method`,`note`)
+                VALUES ('$id','$vNo','$type','$cat',$amt,'$eDate','$pm','$note')");
+        }
+    } elseif ($rawKey === 'salma_due_ledger') {
+        $conn->query("DELETE FROM `due_entries`");
+        foreach ($parsed as $de) {
+            if (!is_array($de)) continue;
+            $id = $conn->real_escape_string((string)($de['id'] ?? ('due-' . uniqid())));
+            $vNo = $conn->real_escape_string((string)($de['voucherNo'] ?? ''));
+            $cName = $conn->real_escape_string((string)($de['customerName'] ?? ''));
+            $cPhone = $conn->real_escape_string((string)($de['customerPhone'] ?? ''));
+            $ordId = $conn->real_escape_string((string)($de['orderId'] ?? ''));
+            $tot = floatval($de['totalAmount'] ?? 0);
+            $paid = floatval($de['paidAmount'] ?? 0);
+            $due = floatval($de['dueAmount'] ?? 0);
+            $eDate = $conn->real_escape_string((string)($de['date'] ?? date('Y-m-d')));
+            $dDate = $conn->real_escape_string((string)($de['dueDate'] ?? ''));
+            $desc = $conn->real_escape_string((string)($de['itemsDescription'] ?? ''));
+            $stat = in_array($de['status'] ?? '', ['unpaid','partial','paid']) ? $de['status'] : 'unpaid';
+            $pJson = $conn->real_escape_string(json_encode($de['payments'] ?? [], JSON_UNESCAPED_UNICODE));
+            $note = $conn->real_escape_string((string)($de['note'] ?? ''));
+
+            $conn->query("REPLACE INTO `due_entries` (`id`,`voucher_no`,`customer_name`,`customer_phone`,`order_id`,`total_amount`,`paid_amount`,`due_amount`,`entry_date`,`due_date`,`items_description`,`status`,`payments_json`,`note`)
+                VALUES ('$id','$vNo','$cName','$cPhone','$ordId',$tot,$paid,$due,'$eDate','$dDate','$desc','$stat','$pJson','$note')");
+        }
+    } elseif ($rawKey === 'salma_customers') {
+        $conn->query("DELETE FROM `customers`");
+        foreach ($parsed as $phoneKey => $cust) {
+            if (!is_array($cust)) continue;
+            $phone = $conn->real_escape_string((string)($cust['phone'] ?? $phoneKey));
+            $name = $conn->real_escape_string((string)($cust['name'] ?? ''));
+            $addr = $conn->real_escape_string((string)($cust['address'] ?? ''));
+            $pts = intval($cust['loyaltyPoints'] ?? 0);
+            $reg = $conn->real_escape_string((string)($cust['registeredAt'] ?? ''));
+            $tOrd = intval($cust['totalOrders'] ?? 0);
+            $tSpent = floatval($cust['totalSpent'] ?? 0);
+
+            $conn->query("REPLACE INTO `customers` (`phone`,`name`,`address`,`loyalty_points`,`registered_at`,`total_orders`,`total_spent`)
+                VALUES ('$phone','$name','$addr',$pts,'$reg',$tOrd,$tSpent)");
+        }
+    }
+
+    return $conn->error ?: null;
+}
+
 if ($mysqlConnected) {
     initMysqlTables($conn);
 }
@@ -172,7 +299,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'setup_db') {
     $raw = file_get_contents('php://input');
     $payload = json_decode($raw, true);
 
-    $host = trim($payload['dbHost'] ?? 'localhost');
+    $host = trim($payload['dbHost'] ?? 'localhost') ?: 'localhost';
     $name = trim($payload['dbName'] ?? '');
     $user = trim($payload['dbUser'] ?? '');
     $pass = $payload['dbPass'] ?? '';
@@ -194,36 +321,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'setup_db') {
     }
 
     $testConn->set_charset('utf8mb4');
+    $testConn->query("SET SESSION sql_mode = ''");
     initMysqlTables($testConn);
 
-    // Save db_config.php on cPanel server
+    // Save db_config.php in both public_html and parent directory so Git deploy never erases it
     $phpConfig = "<?php\n"
         . "\$DB_HOST = " . var_export($host, true) . ";\n"
         . "\$DB_NAME = " . var_export($name, true) . ";\n"
         . "\$DB_USER = " . var_export($user, true) . ";\n"
         . "\$DB_PASS = " . var_export($pass, true) . ";\n";
-    @file_put_contents($configFile, $phpConfig, LOCK_EX);
+    @file_put_contents($configFileLocal, $phpConfig, LOCK_EX);
+    @file_put_contents($configFileParent, $phpConfig, LOCK_EX);
 
-    // যদি সার্ভার ফাইলে আগে কোনো ডাটা থেকে থাকে, তা MySQL এ পুশ করে দেওয়া
+    // Sync any existing data from payload or server file into MySQL tables immediately
     $existingData = readServerDbFile($serverDbFile);
+    if (isset($payload['currentData']) && is_array($payload['currentData'])) {
+        foreach ($payload['currentData'] as $k => $v) {
+            $existingData[$k] = $v;
+        }
+        writeServerDbFile($serverDbFile, $existingData);
+    }
+
     foreach ($existingData as $k => $v) {
-        $kEsc = $testConn->real_escape_string($k);
         $vJson = is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE);
-        $vEsc = $testConn->real_escape_string($vJson);
-        $testConn->query("INSERT INTO `salma_app_store` (`store_key`, `store_value`) VALUES ('$kEsc', '$vEsc') ON DUPLICATE KEY UPDATE `store_value` = '$vEsc'");
+        syncKeyToRelationalTables($testConn, $k, $vJson);
     }
 
     $testConn->close();
     echo json_encode([
         'status' => 'ok',
         'mysqlConnected' => true,
-        'message' => 'আলহামদুলিল্লাহ! cPanel MySQL (phpMyAdmin) ডাটাবেস সফলভাবে কানেক্ট ও সব টেবিল তৈরি হয়েছে!'
+        'dbName' => $name,
+        'message' => 'আলহামদুলিল্লাহ! cPanel MySQL (phpMyAdmin) ডাটাবেস সফলভাবে কানেক্ট হয়েছে এবং সকল ডাটা টেবিলে সেভ হয়েছে!'
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 // ============================================================================
-// ১. সার্ভার থেকে সকল ডাটা লোড করা (GET /api.php?action=load)
+// ১. সার্ভার ও MySQL থেকে সকল ডাটা লোড করা (GET /api.php?action=load)
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === 'status')) {
     $data = readServerDbFile($serverDbFile);
@@ -235,6 +370,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
                 $decoded = json_decode($row['store_value'], true);
                 $data[$row['store_key']] = ($decoded !== null) ? $decoded : $row['store_value'];
             }
+        } elseif (!empty($data)) {
+            // যদি ফাইলে ডাটা থাকে কিন্তু MySQL খালি থাকে, তবে স্বয়ংক্রিয়ভাবে MySQL টেবিলে পুশ করবে
+            foreach ($data as $k => $v) {
+                $vJson = is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE);
+                syncKeyToRelationalTables($conn, $k, $vJson);
+            }
         }
     }
 
@@ -243,14 +384,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
         'connected' => true,
         'mysqlConnected' => $mysqlConnected,
         'dbName' => $mysqlConnected ? $DB_NAME : null,
-        'data' => $data
+        'mysqlError' => $mysqlError,
+        'data' => (object)$data
     ], JSON_UNESCAPED_UNICODE);
     if ($conn) $conn->close();
     exit;
 }
 
 // ============================================================================
-// ২. সার্ভারে ডাটা সেভ করা (POST /api.php?action=save)
+// ২. সার্ভারে ও phpMyAdmin টেবিলে ডাটা সেভ করা (POST /api.php?action=save)
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $raw = file_get_contents('php://input');
@@ -266,127 +408,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $valJson = is_string($payload['value']) ? $payload['value'] : json_encode($payload['value'], JSON_UNESCAPED_UNICODE);
     $parsed = json_decode($valJson, true);
 
-    // ১) সর্বদা cPanel সার্ভারের ফাইলে সেভ হবে (যাতে কোনো অবস্থাতেই ডাটা মিস না হয়)
+    // ১) সার্ভার ফাইলে সেভ
     $serverData = readServerDbFile($serverDbFile);
     $serverData[$rawKey] = ($parsed !== null) ? $parsed : $valJson;
     writeServerDbFile($serverDbFile, $serverData);
 
-    // ২) MySQL কানেক্টেড থাকলে phpMyAdmin এর সকল টেবিলে রিয়েল-টাইম সেভ হবে
+    // ২) MySQL কানেক্টেড থাকলে phpMyAdmin এর সকল টেবিলে রিয়েল-টাইম সেভ
+    $sqlErr = null;
     if ($mysqlConnected && $conn) {
-        $key = $conn->real_escape_string($rawKey);
-        $valEscaped = $conn->real_escape_string($valJson);
-
-        $sql = "INSERT INTO `salma_app_store` (`store_key`, `store_value`)
-                VALUES ('$key', '$valEscaped')
-                ON DUPLICATE KEY UPDATE `store_value` = '$valEscaped'";
-        $conn->query($sql);
-
-        if ($rawKey === 'salma_menu_items' && is_array($parsed)) {
-            $conn->query("TRUNCATE TABLE `menu_items`");
-            foreach ($parsed as $item) {
-                $id = $conn->real_escape_string($item['id'] ?? '');
-                $nameBn = $conn->real_escape_string($item['nameBn'] ?? '');
-                $nameEn = $conn->real_escape_string($item['nameEn'] ?? '');
-                $cat = $conn->real_escape_string($item['category'] ?? 'popular');
-                $price = floatval($item['price'] ?? 0);
-                $origPrice = isset($item['originalPrice']) ? floatval($item['originalPrice']) : 'NULL';
-                $image = $conn->real_escape_string($item['image'] ?? '');
-                $rating = floatval($item['rating'] ?? 5.0);
-                $reviews = intval($item['reviewsCount'] ?? 1);
-                $descBn = $conn->real_escape_string($item['descriptionBn'] ?? '');
-                $descEn = $conn->real_escape_string($item['descriptionEn'] ?? '');
-                $spicy = intval($item['spicyLevel'] ?? 1);
-                $isVeg = !empty($item['isVeg']) ? 1 : 0;
-                $isBundle = !empty($item['isBundle']) ? 1 : 0;
-                $bundleItems = isset($item['bundleItems']) ? "'" . $conn->real_escape_string(json_encode($item['bundleItems'], JSON_UNESCAPED_UNICODE)) . "'" : 'NULL';
-                $bundleSavings = isset($item['bundleSavings']) ? floatval($item['bundleSavings']) : 'NULL';
-
-                $conn->query("INSERT INTO `menu_items` (`id`,`name_bn`,`name_en`,`category`,`price`,`original_price`,`image`,`rating`,`reviews_count`,`description_bn`,`description_en`,`spicy_level`,`is_veg`,`is_bundle`,`bundle_items`,`bundle_savings`)
-                    VALUES ('$id','$nameBn','$nameEn','$cat',$price,$origPrice,'$image',$rating,$reviews,'$descBn','$descEn',$spicy,$isVeg,$isBundle,$bundleItems,$bundleSavings)");
-            }
-        } elseif ($rawKey === 'salma_orders' && is_array($parsed)) {
-            $conn->query("TRUNCATE TABLE `orders`");
-            foreach ($parsed as $ord) {
-                $id = $conn->real_escape_string($ord['id'] ?? '');
-                $cName = $conn->real_escape_string($ord['customerName'] ?? '');
-                $phone = $conn->real_escape_string($ord['phone'] ?? '');
-                $addr = $conn->real_escape_string($ord['address'] ?? '');
-                $itemsJson = $conn->real_escape_string(json_encode($ord['items'] ?? [], JSON_UNESCAPED_UNICODE));
-                $total = floatval($ord['totalAmount'] ?? 0);
-                $disc = floatval($ord['discount'] ?? 0);
-                $adv = floatval($ord['advancePaid'] ?? 0);
-                $due = floatval($ord['dueAmount'] ?? 0);
-                $pm = $conn->real_escape_string($ord['paymentMethod'] ?? '');
-                $apm = $conn->real_escape_string($ord['advancePaymentMethod'] ?? 'bKash');
-                $trx = $conn->real_escape_string($ord['transactionId'] ?? '');
-                $pStat = $conn->real_escape_string($ord['paymentStatus'] ?? '');
-                $stat = $conn->real_escape_string($ord['status'] ?? 'Placed');
-                $oDate = $conn->real_escape_string($ord['date'] ?? '');
-                $cAt = $conn->real_escape_string($ord['createdAt'] ?? '');
-                $pts = intval($ord['loyaltyPointsEarned'] ?? 0);
-                $dist = isset($ord['deliveryDistanceKm']) ? floatval($ord['deliveryDistanceKm']) : 'NULL';
-                $free = !empty($ord['isFreeDeliveryWithin1km']) ? 1 : 0;
-
-                $conn->query("INSERT INTO `orders` (`id`,`customer_name`,`phone`,`address`,`items_json`,`total_amount`,`discount`,`advance_paid`,`due_amount`,`payment_method`,`advance_payment_method`,`transaction_id`,`payment_status`,`status`,`order_date`,`created_at_str`,`loyalty_points_earned`,`delivery_distance_km`,`is_free_delivery`)
-                    VALUES ('$id','$cName','$phone','$addr','$itemsJson',$total,$disc,$adv,$due,'$pm','$apm','$trx','$pStat','$stat','$oDate','$cAt',$pts,$dist,$free)");
-            }
-        } elseif ($rawKey === 'salma_ledger' && is_array($parsed)) {
-            $conn->query("TRUNCATE TABLE `ledger_entries`");
-            foreach ($parsed as $le) {
-                $id = $conn->real_escape_string($le['id'] ?? '');
-                $vNo = $conn->real_escape_string($le['voucherNo'] ?? '');
-                $type = ($le['type'] ?? 'income') === 'expense' ? 'expense' : 'income';
-                $cat = $conn->real_escape_string($le['category'] ?? '');
-                $amt = floatval($le['amount'] ?? 0);
-                $eDate = $conn->real_escape_string($le['date'] ?? '');
-                $pm = $conn->real_escape_string($le['paymentMethod'] ?? 'Cash');
-                $note = $conn->real_escape_string($le['note'] ?? '');
-
-                $conn->query("INSERT INTO `ledger_entries` (`id`,`voucher_no`,`type`,`category`,`amount`,`entry_date`,`payment_method`,`note`)
-                    VALUES ('$id','$vNo','$type','$cat',$amt,'$eDate','$pm','$note')");
-            }
-        } elseif ($rawKey === 'salma_due_ledger' && is_array($parsed)) {
-            $conn->query("TRUNCATE TABLE `due_entries`");
-            foreach ($parsed as $de) {
-                $id = $conn->real_escape_string($de['id'] ?? '');
-                $vNo = $conn->real_escape_string($de['voucherNo'] ?? '');
-                $cName = $conn->real_escape_string($de['customerName'] ?? '');
-                $cPhone = $conn->real_escape_string($de['customerPhone'] ?? '');
-                $ordId = $conn->real_escape_string($de['orderId'] ?? '');
-                $tot = floatval($de['totalAmount'] ?? 0);
-                $paid = floatval($de['paidAmount'] ?? 0);
-                $due = floatval($de['dueAmount'] ?? 0);
-                $eDate = $conn->real_escape_string($de['date'] ?? '');
-                $dDate = $conn->real_escape_string($de['dueDate'] ?? '');
-                $desc = $conn->real_escape_string($de['itemsDescription'] ?? '');
-                $stat = $conn->real_escape_string($de['status'] ?? 'unpaid');
-                $pJson = $conn->real_escape_string(json_encode($de['payments'] ?? [], JSON_UNESCAPED_UNICODE));
-                $note = $conn->real_escape_string($de['note'] ?? '');
-
-                $conn->query("INSERT INTO `due_entries` (`id`,`voucher_no`,`customer_name`,`customer_phone`,`order_id`,`total_amount`,`paid_amount`,`due_amount`,`entry_date`,`due_date`,`items_description`,`status`,`payments_json`,`note`)
-                    VALUES ('$id','$vNo','$cName','$cPhone','$ordId',$tot,$paid,$due,'$eDate','$dDate','$desc','$stat','$pJson','$note')");
-            }
-        } elseif ($rawKey === 'salma_customers' && is_array($parsed)) {
-            $conn->query("TRUNCATE TABLE `customers`");
-            foreach ($parsed as $phoneKey => $cust) {
-                $phone = $conn->real_escape_string($cust['phone'] ?? $phoneKey);
-                $name = $conn->real_escape_string($cust['name'] ?? '');
-                $addr = $conn->real_escape_string($cust['address'] ?? '');
-                $pts = intval($cust['loyaltyPoints'] ?? 0);
-                $reg = $conn->real_escape_string($cust['registeredAt'] ?? '');
-                $tOrd = intval($cust['totalOrders'] ?? 0);
-                $tSpent = floatval($cust['totalSpent'] ?? 0);
-
-                $conn->query("INSERT INTO `customers` (`phone`,`name`,`address`,`loyalty_points`,`registered_at`,`total_orders`,`total_spent`)
-                    VALUES ('$phone','$name','$addr',$pts,'$reg',$tOrd,$tSpent)");
-            }
-        }
+        $sqlErr = syncKeyToRelationalTables($conn, $rawKey, $valJson);
     }
 
     echo json_encode([
         'status' => 'ok',
         'connected' => true,
         'mysqlConnected' => $mysqlConnected,
+        'sqlError' => $sqlErr,
         'key' => $rawKey
     ]);
     if ($conn) $conn->close();
