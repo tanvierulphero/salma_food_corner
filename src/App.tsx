@@ -24,7 +24,8 @@ import {
 } from './utils/audioFeedback';
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
-import { ShopLocationConfig, DEFAULT_SHOP_LOCATION } from './types';
+import { ShopLocationConfig, DEFAULT_SHOP_LOCATION, MenuCategory, DEFAULT_MENU_CATEGORIES } from './types';
+import CategoryManagerModal from './components/CategoryManagerModal';
 import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer, getCustomerDueOrAdvanceBalance, getCustomerTransactions } from './utils/sqlSync';
 
 // Types
@@ -32,7 +33,7 @@ interface FoodItem {
   id: string;
   nameBn: string;
   nameEn: string;
-  category: 'popular' | 'biryani' | 'fastfood' | 'curry' | 'dessert' | 'combo';
+  category: string;
   price: number;
   originalPrice?: number;
   image: string;
@@ -292,6 +293,48 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('salma_menu_items', JSON.stringify(menuItems));
   }, [menuItems]);
+
+  const [menuCategories, setMenuCategories] = useState<MenuCategory[]>(() => {
+    const saved = localStorage.getItem('salma_menu_categories');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return DEFAULT_MENU_CATEGORIES;
+  });
+
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'salma_menu_categories' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMenuCategories(parsed);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  const handleSaveCategories = (updatedCats: MenuCategory[], updatedMenu?: FoodItem[]) => {
+    setMenuCategories(updatedCats);
+    saveToCpanelDb('salma_menu_categories', updatedCats);
+
+    if (updatedMenu) {
+      setMenuItems(updatedMenu);
+      saveToCpanelDb('salma_menu_items', updatedMenu);
+    }
+  };
 
   const [foodModalOpen, setFoodModalOpen] = useState<boolean>(false);
   const [editingFoodId, setEditingFoodId] = useState<string | null>(null);
@@ -1586,25 +1629,28 @@ export default function App() {
 
                 {/* Horizontal Touch Category Pills */}
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                  {[
-                    { id: 'all', label: 'সব খাবার' },
-                    { id: 'combo', label: '🎁 কম্বো ও বান্ডেল' },
-                    { id: 'popular', label: '🔥 জনপ্রিয়' },
-                    { id: 'biryani', label: '🍛 বিরিয়ানি' },
-                    { id: 'fastfood', label: '🍔 ফাস্ট ফুড' },
-                    { id: 'curry', label: '🥘 মাংস ও কারি' },
-                    { id: 'dessert', label: '🍮 ডেজার্ট' }
-                  ].map(cat => (
+                  <button
+                    onClick={() => setCategoryFilter('all')}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition shadow-2xs cursor-pointer ${
+                      categoryFilter === 'all' 
+                        ? 'bg-red-600 text-white shadow-sm' 
+                        : 'bg-white text-gray-700 border border-amber-200/80'
+                    }`}
+                  >
+                    সব খাবার
+                  </button>
+                  {menuCategories.map(cat => (
                     <button
                       key={cat.id}
                       onClick={() => setCategoryFilter(cat.id)}
-                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition shadow-2xs cursor-pointer ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition shadow-2xs cursor-pointer flex items-center gap-1 ${
                         categoryFilter === cat.id 
                           ? 'bg-red-600 text-white shadow-sm' 
                           : 'bg-white text-gray-700 border border-amber-200/80'
                       }`}
                     >
-                      {cat.label}
+                      {cat.icon && <span>{cat.icon}</span>}
+                      <span>{cat.nameBn}</span>
                     </button>
                   ))}
                 </div>
@@ -2381,17 +2427,25 @@ export default function App() {
                       মেনুতে নতুন খাবার সংযোজন, তথ্য এডিট এবং বিয়োজন করুন।
                     </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => setIsCategoryModalOpen(true)}
+                      className="bg-amber-600 hover:bg-amber-700 text-white py-2 px-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition cursor-pointer"
+                      title="ক্যাটাগরি ম্যানেজমেন্ট"
+                    >
+                      <Settings className="w-3.5 h-3.5 text-amber-200" />
+                      <span>ক্যাটাগরি</span>
+                    </button>
                     <button
                       onClick={handleResetMenuToDefault}
-                      className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition cursor-pointer"
+                      className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition cursor-pointer"
                     >
                       <RefreshCw className="w-3.5 h-3.5 text-gray-600" />
-                      <span>রিস্টোর মেনু</span>
+                      <span>রিস্টোর</span>
                     </button>
                     <button
                       onClick={handleOpenAddFoodModal}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition cursor-pointer"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>+ নতুন খাবার</span>
@@ -2412,26 +2466,38 @@ export default function App() {
                     />
                   </div>
                   <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                    {[
-                      { id: 'all', label: 'সব' },
-                      { id: 'popular', label: 'জনপ্রিয়' },
-                      { id: 'biryani', label: 'বিরিয়ানি' },
-                      { id: 'fastfood', label: 'ফাস্ট ফুড' },
-                      { id: 'curry', label: 'কারি' },
-                      { id: 'dessert', label: 'ডেজার্ট' }
-                    ].map(cat => (
-                      <button
-                        key={cat.id}
-                        onClick={() => setAdminFoodCategory(cat.id)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
-                          adminFoodCategory === cat.id 
-                            ? 'bg-red-600 text-white shadow-xs' 
-                            : 'bg-gray-100 text-gray-700'
-                        }`}
-                      >
-                        {cat.label}
-                      </button>
-                    ))}
+                    <button
+                      onClick={() => setAdminFoodCategory('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+                        adminFoodCategory === 'all' 
+                          ? 'bg-red-600 text-white shadow-xs' 
+                          : 'bg-gray-100 text-gray-700'
+                      }`}
+                    >
+                      সব ({menuItems.length})
+                    </button>
+                    {menuCategories.map(cat => {
+                      const count = menuItems.filter(item => item.category === cat.id).length;
+                      return (
+                        <button
+                          key={cat.id}
+                          onClick={() => setAdminFoodCategory(cat.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer flex items-center gap-1 ${
+                            adminFoodCategory === cat.id 
+                              ? 'bg-red-600 text-white shadow-xs' 
+                              : 'bg-gray-100 text-gray-700'
+                          }`}
+                        >
+                          {cat.icon && <span>{cat.icon}</span>}
+                          <span>{cat.nameBn}</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                            adminFoodCategory === cat.id ? 'bg-white/25 text-white' : 'bg-gray-200 text-gray-600'
+                          }`}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -2775,7 +2841,7 @@ export default function App() {
             {adminTab === 'location' && (
               <ShopLocationManager 
                 soundOn={isSoundEnabled()}
-                onLocationUpdate={(newLoc) => setShopLocation(newLoc)}
+                onLocationUpdate={(newLoc: ShopLocationConfig) => setShopLocation(newLoc)}
               />
             )}
 
@@ -3474,14 +3540,14 @@ export default function App() {
                   <label className="block text-[11px] font-bold text-gray-700 mb-1">ক্যাটাগরি</label>
                   <select
                     value={foodForm.category}
-                    onChange={(e) => setFoodForm({ ...foodForm, category: e.target.value as any })}
+                    onChange={(e) => setFoodForm({ ...foodForm, category: e.target.value })}
                     className="w-full border rounded-xl p-2.5 text-xs bg-white font-semibold focus:ring-2 focus:ring-red-400 focus:outline-none"
                   >
-                    <option value="popular">জনপ্রিয় (Popular)</option>
-                    <option value="biryani">বিরিয়ানি ও পোলাও (Biryani)</option>
-                    <option value="fastfood">ফাস্ট ফুড (Fast Food)</option>
-                    <option value="curry">মাংস ও কারি (Curry)</option>
-                    <option value="dessert">ডেজার্ট ও পানীয় (Dessert)</option>
+                    {menuCategories.map(cat => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.icon ? `${cat.icon} ` : ''}{cat.nameBn} ({cat.nameEn})
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -3613,6 +3679,15 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ================= CATEGORY MANAGER MODAL ================= */}
+      <CategoryManagerModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        categories={menuCategories}
+        menuItems={menuItems}
+        onSaveCategories={handleSaveCategories}
+      />
 
       {/* ================= SUPPORT CHAT MOBILE BOTTOM SHEET ================= */}
       {isChatOpen && (

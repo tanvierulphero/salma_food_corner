@@ -245,6 +245,11 @@ export default function DueLedgerManager({
       return;
     }
     setIsNewCustomerInline(false);
+    // If clicking already selected customer, deselect so all customers can be viewed
+    if (selectedCustomerKey === key) {
+      setSelectedCustomerKey('');
+      return;
+    }
     setSelectedCustomerKey(key);
     const found = allCustomersList.find(c => (normalizeBdPhone(c.phone) || c.name.trim()) === key);
     if (found) {
@@ -529,6 +534,13 @@ export default function DueLedgerManager({
 
   // Filter Logic across Customer Profiles
   const filteredCustomerGroups = customerLedgerGroups.filter(grp => {
+    // CRITICAL: When a customer is selected at the top, ONLY show that customer's transactions!
+    if (selectedCustomerKey) {
+      if (grp.customerKey !== selectedCustomerKey) {
+        return false;
+      }
+    }
+
     const hasTransactions = grp.dueEntries.length > 0 || grp.orders.length > 0;
 
     if (activeFilter === 'due' && grp.remainingDue <= 0) return false;
@@ -1223,6 +1235,18 @@ export default function DueLedgerManager({
             {/* Quick Select Customer Pills with Balance Badges Next to Name */}
             {allCustomersList.length > 0 && (
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                <button
+                  type="button"
+                  onClick={() => setSelectedCustomerKey('')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 border transition cursor-pointer ${
+                    !selectedCustomerKey
+                      ? 'bg-gray-900 text-white border-gray-900 shadow-xs'
+                      : 'bg-white hover:bg-gray-100 text-gray-700 border-gray-200'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>সব গ্রাহক ({allCustomersList.length})</span>
+                </button>
                 {allCustomersList.map(cust => {
                   const key = normalizeBdPhone(cust.phone) || cust.name.trim();
                   const isSelected = selectedCustomerKey === key;
@@ -1234,21 +1258,27 @@ export default function DueLedgerManager({
                       onClick={() => handleSelectCustomerFromDropdown(key)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 border transition cursor-pointer ${
                         isSelected
-                          ? 'bg-gray-900 text-white border-gray-900 shadow-xs'
-                          : 'bg-gray-50 hover:bg-amber-50 text-gray-800 border-gray-200'
+                          ? 'bg-red-700 text-white border-red-700 shadow-xs'
+                          : 'bg-white hover:bg-amber-50 text-gray-800 border-gray-200'
                       }`}
                     >
                       <span>{cust.name}</span>
                       {bal.remainingDue > 0 ? (
-                        <span className="bg-red-100 text-red-700 text-[10px] font-black px-1.5 py-0.5 rounded-md">
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${
+                          isSelected ? 'bg-white text-red-700' : 'bg-red-100 text-red-700'
+                        }`}>
                           বাকি: ৳{bal.remainingDue}
                         </span>
                       ) : bal.advanceDeposit > 0 ? (
-                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-1.5 py-0.5 rounded-md">
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${
+                          isSelected ? 'bg-white text-emerald-800' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
                           অগ্রীম: ৳{bal.advanceDeposit}
                         </span>
                       ) : (
-                        <span className="bg-gray-200 text-gray-600 text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                          isSelected ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'
+                        }`}>
                           ৳০
                         </span>
                       )}
@@ -1262,44 +1292,66 @@ export default function DueLedgerManager({
 
         {/* STEP 2: TRANSACTION ENTRY AFTER SELECTING CUSTOMER */}
         {selectedCustomerObj ? (
-          <div className="bg-gradient-to-br from-amber-50/70 via-white to-emerald-50/40 border-2 border-emerald-300 rounded-2xl p-4 space-y-4 animate-fadeIn">
+          <div className="bg-gradient-to-br from-amber-50/70 via-white to-emerald-50/40 border-2 border-emerald-300 rounded-2xl p-3.5 sm:p-4 space-y-3.5 animate-fadeIn">
             {/* Selected Customer Profile Banner with Remaining Due / Advance Deposit Next to Name */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white p-3.5 rounded-2xl border border-gray-200 shadow-2xs">
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-red-600 to-amber-500 text-white font-black text-sm flex items-center justify-center shrink-0">
-                  {selectedCustomerObj.name.charAt(0)}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="font-black text-sm text-gray-900">{selectedCustomerObj.name}</h4>
-                    {/* Badge right next to customer name */}
-                    {selectedCustomerBalance.remainingDue > 0 ? (
-                      <span className="bg-red-100 text-red-700 border border-red-300 text-xs font-black px-2.5 py-0.5 rounded-full">
-                        অবশিষ্ট বাকি: ৳ {selectedCustomerBalance.remainingDue}
-                      </span>
-                    ) : selectedCustomerBalance.advanceDeposit > 0 ? (
-                      <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-black px-2.5 py-0.5 rounded-full">
-                        অগ্রীম জমা: ৳ {selectedCustomerBalance.advanceDeposit}
-                      </span>
-                    ) : (
-                      <span className="bg-gray-100 text-gray-700 border border-gray-300 text-xs font-bold px-2.5 py-0.5 rounded-full">
-                        অবশিষ্ট বাকি: ৳ ০
-                      </span>
-                    )}
+            <div className="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-2xs space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-red-600 to-amber-500 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-xs">
+                    {selectedCustomerObj.name.charAt(0)}
                   </div>
-                  <p className="text-[11px] text-gray-500 font-mono mt-0.5">
-                    📱 {selectedCustomerObj.phone} • মোট বিল: ৳{selectedCustomerBalance.totalBill} • মোট জমা: ৳{selectedCustomerBalance.totalPaid}
-                  </p>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-black text-base text-gray-900 leading-none">{selectedCustomerObj.name}</h4>
+                      {/* Badge right next to customer name */}
+                      {selectedCustomerBalance.remainingDue > 0 ? (
+                        <span className="bg-red-600 text-white text-[11px] font-black px-2.5 py-0.5 rounded-full shadow-2xs flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" />
+                          <span>অবশিষ্ট বাকি: ৳ {selectedCustomerBalance.remainingDue}</span>
+                        </span>
+                      ) : selectedCustomerBalance.advanceDeposit > 0 ? (
+                        <span className="bg-emerald-600 text-white text-[11px] font-black px-2.5 py-0.5 rounded-full shadow-2xs flex items-center gap-1">
+                          <Wallet className="w-3 h-3" />
+                          <span>অগ্রীম জমা: ৳ {selectedCustomerBalance.advanceDeposit}</span>
+                        </span>
+                      ) : (
+                        <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>হিসাব পরিশোধিত (৳০)</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedCustomerKey('')}
+                  className="text-xs font-bold text-gray-600 hover:text-red-600 bg-gray-50 hover:bg-red-50 border border-gray-200 hover:border-red-200 px-3 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
+                  title="সব গ্রাহকের তালিকা দেখতে সিলেকশন মুছুন"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>সব গ্রাহক দেখুন</span>
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedCustomerKey('')}
-                className="text-[11px] font-bold text-gray-500 hover:text-red-600 self-end sm:self-center cursor-pointer"
-              >
-                ✕ পরিবর্তন করুন
-              </button>
+              <div className="flex items-center gap-3 text-xs text-gray-600 flex-wrap pt-2 border-t border-gray-100">
+                <a
+                  href={`tel:${selectedCustomerObj.phone}`}
+                  className="font-mono font-bold text-gray-800 hover:text-blue-600 flex items-center gap-1"
+                >
+                  <Phone className="w-3.5 h-3.5 text-gray-400" />
+                  <span>{selectedCustomerObj.phone}</span>
+                </a>
+                <span className="text-gray-300">•</span>
+                <span className="text-gray-600 font-semibold">
+                  মোট বিল: <b className="text-gray-900 font-black">৳ {selectedCustomerBalance.totalBill}</b>
+                </span>
+                <span className="text-gray-300">•</span>
+                <span className="text-emerald-700 font-bold">
+                  মোট জমা: <b className="text-emerald-800 font-black">৳ {selectedCustomerBalance.totalPaid}</b>
+                </span>
+              </div>
             </div>
 
             {/* Transaction Mode Switcher: New Due vs Any Amount Deposit */}
@@ -1332,16 +1384,19 @@ export default function DueLedgerManager({
 
             {/* MODE 1: NEW DUE ENTRY FOR SELECTED CUSTOMER */}
             {customerTxMode === 'new_due' ? (
-              <form onSubmit={handleAddNewDue} className="bg-white p-3.5 rounded-2xl border border-red-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-red-900">
-                    📝 {selectedCustomerObj.name}-এর নামে নতুন বাকি যোগ করুন
+              <form onSubmit={handleAddNewDue} className="bg-white p-4 rounded-2xl border border-red-200 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between border-b pb-2 border-red-100">
+                  <span className="text-xs font-black text-red-900 flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-red-600" />
+                    <span>{selectedCustomerObj.name}-এর নামে নতুন বাকি যোগ করুন</span>
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">বাকির পরিমাণ / বিল (৳) *</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">
+                      বাকির পরিমাণ / বিল (৳) <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="number"
                       min="0"
@@ -1354,15 +1409,17 @@ export default function DueLedgerManager({
                         customerPhone: selectedCustomerObj.phone,
                         totalAmount: e.target.value
                       })}
-                      className="w-full border border-red-300 rounded-xl px-3 py-2 text-xs font-black text-red-600 focus:outline-none focus:border-red-600"
+                      className="w-full bg-white border-2 border-red-300 rounded-xl px-3.5 py-2.5 text-sm font-black text-red-600 focus:outline-none focus:border-red-600"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">নগদ / অগ্রীম জমা (যেকোনো পরিমাণ)</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">
+                      নগদ / অগ্রীম জমা <span className="text-gray-400 text-[11px] font-normal">(ঐচ্ছিক)</span>
+                    </label>
                     <input
                       type="number"
                       min="0"
-                      placeholder="৳ 0 (ঐচ্ছিক)"
+                      placeholder="৳ 0 (যদি কোনো টাকা দেয়)"
                       value={formData.initialPaid}
                       onChange={(e) => setFormData({
                         ...formData,
@@ -1370,34 +1427,37 @@ export default function DueLedgerManager({
                         customerPhone: selectedCustomerObj.phone,
                         initialPaid: e.target.value
                       })}
-                      className="w-full border border-emerald-300 rounded-xl px-3 py-2 text-xs font-black text-emerald-700 focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">খাবারের বিবরণ *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="যেমন: কাচ্চি বিরিয়ানি ও রোস্ট"
-                      value={formData.itemsDescription}
-                      onChange={(e) => setFormData({
-                        ...formData,
-                        customerName: selectedCustomerObj.name,
-                        customerPhone: selectedCustomerObj.phone,
-                        itemsDescription: e.target.value
-                      })}
-                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:border-red-500"
+                      className="w-full bg-white border-2 border-emerald-300 rounded-xl px-3.5 py-2.5 text-sm font-black text-emerald-700 focus:outline-none focus:border-emerald-600"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    খাবারের বিবরণ বা আইটেমসমূহ <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="যেমন: কাচ্চি বিরিয়ানি ও রোস্ট"
+                    value={formData.itemsDescription}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      customerName: selectedCustomerObj.name,
+                      customerPhone: selectedCustomerObj.phone,
+                      itemsDescription: e.target.value
+                    })}
+                    className="w-full bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 text-xs font-medium text-gray-900 focus:outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">পেমেন্ট মেথড</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">পেমেন্ট মেথড</label>
                     <select
                       value={formData.paymentMethod}
                       onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value as any })}
-                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white font-bold"
+                      className="w-full bg-white border border-gray-300 rounded-xl px-3 py-2.5 text-xs font-bold cursor-pointer"
                     >
                       <option value="Cash">ক্যাশ (Cash)</option>
                       <option value="bKash">বিকাশ (bKash)</option>
@@ -1405,29 +1465,29 @@ export default function DueLedgerManager({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">পরিশোধের সম্ভাব্য তারিখ</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">পরিশোধের সম্ভাব্য তারিখ</label>
                     <input
                       type="date"
                       value={formData.dueDate}
                       onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
-                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs"
+                      className="w-full bg-white border border-gray-300 rounded-xl px-3 py-2 text-xs"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">মন্তব্য / নোট</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">মন্তব্য / নোট</label>
                     <input
                       type="text"
                       placeholder="ঐচ্ছিক নোট"
                       value={formData.note}
                       onChange={(e) => setFormData({ ...formData, note: e.target.value })}
-                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs"
+                      className="w-full bg-white border border-gray-300 rounded-xl px-3 py-2.5 text-xs"
                     />
                   </div>
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xs py-2.5 rounded-xl shadow-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xs sm:text-sm py-3 px-4 rounded-xl shadow-xs transition active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
                   <span>{selectedCustomerObj.name}-এর নামে বাকি এন্ট্রি সেভ করুন</span>
@@ -1435,25 +1495,28 @@ export default function DueLedgerManager({
               </form>
             ) : (
               /* MODE 2: ANY AMOUNT DEPOSIT / ADVANCE DEPOSIT FOR SELECTED CUSTOMER */
-              <form onSubmit={handleDirectCustomerDeposit} className="bg-white p-3.5 rounded-2xl border border-emerald-300 space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-1">
-                  <span className="text-xs font-black text-emerald-950">
-                    💰 {selectedCustomerObj.name}-এর একাউন্টে যেকোনো পরিমাণ জমা দিন (বাকি পরিশোধ বা অগ্রীম জমা)
+              <form onSubmit={handleDirectCustomerDeposit} className="bg-white p-4 rounded-2xl border border-emerald-300 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between flex-wrap gap-2 border-b pb-2 border-emerald-100">
+                  <span className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
+                    <Wallet className="w-4 h-4 text-emerald-600" />
+                    <span>{selectedCustomerObj.name}-এর একাউন্টে টাকা জমা দিন</span>
                   </span>
                   {selectedCustomerBalance.remainingDue > 0 && (
                     <button
                       type="button"
                       onClick={() => setPaymentData({ ...paymentData, amount: String(selectedCustomerBalance.remainingDue) })}
-                      className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-lg hover:bg-emerald-200 cursor-pointer"
+                      className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-xl hover:bg-emerald-200 cursor-pointer"
                     >
                       সম্পূর্ণ বকেয়া (৳{selectedCustomerBalance.remainingDue}) বসান
                     </button>
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">জমার পরিমাণ (৳) * (যেকোনো পরিমাণ)</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">
+                      জমার পরিমাণ (৳) <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="number"
                       min="1"
@@ -1461,15 +1524,15 @@ export default function DueLedgerManager({
                       placeholder="যেমন: 200 বা 1000"
                       value={paymentData.amount}
                       onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
-                      className="w-full border-2 border-emerald-400 rounded-xl px-3 py-2 text-sm font-black text-emerald-700 focus:outline-none focus:border-emerald-600"
+                      className="w-full bg-white border-2 border-emerald-400 rounded-xl px-3.5 py-2.5 text-base font-black text-emerald-700 focus:outline-none focus:border-emerald-600"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">জমার মাধ্যম</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">জমার মাধ্যম</label>
                     <select
                       value={paymentData.paymentMethod}
                       onChange={(e) => setPaymentData({ ...paymentData, paymentMethod: e.target.value as any })}
-                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white font-bold"
+                      className="w-full bg-white border border-gray-300 rounded-xl px-3 py-2.5 text-xs font-bold cursor-pointer"
                     >
                       <option value="Cash">নগদ ক্যাশ (Cash)</option>
                       <option value="bKash">বিকাশ (bKash)</option>
@@ -1478,21 +1541,21 @@ export default function DueLedgerManager({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">নোট / বিবরণ</label>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">নোট / বিবরণ</label>
                     <input
                       type="text"
                       placeholder="যেমন: বাকি পরিশোধ / অগ্রীম জমা"
                       value={paymentData.note}
                       onChange={(e) => setPaymentData({ ...paymentData, note: e.target.value })}
-                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs"
+                      className="w-full bg-white border border-gray-300 rounded-xl px-3 py-2.5 text-xs"
                     />
                   </div>
                 </div>
 
                 {/* Live Preview of Resulting Balance after Deposit */}
                 {Number(paymentData.amount) > 0 && (
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-xs flex items-center justify-between">
-                    <span className="font-bold text-emerald-900">এই জমার পর কাস্টমারের নতুন ব্যালেন্স হবে:</span>
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs flex items-center justify-between">
+                    <span className="font-bold text-emerald-900">এই জমার পর নতুন ব্যালেন্স হবে:</span>
                     {selectedCustomerBalance.totalBill - (selectedCustomerBalance.totalPaid + Number(paymentData.amount)) > 0 ? (
                       <span className="font-black text-red-600">
                         অবশিষ্ট বাকি: ৳ {selectedCustomerBalance.totalBill - (selectedCustomerBalance.totalPaid + Number(paymentData.amount))}
@@ -1507,7 +1570,7 @@ export default function DueLedgerManager({
                   </div>
                 )}
 
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
                   <label className="flex items-center gap-2 text-xs font-bold text-emerald-950 cursor-pointer">
                     <input
                       type="checkbox"
@@ -1520,7 +1583,7 @@ export default function DueLedgerManager({
 
                   <button
                     type="submit"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs px-5 py-2.5 rounded-xl shadow-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm px-6 py-2.5 rounded-xl shadow-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Check className="w-4 h-4" />
                     <span>জমা নিশ্চিত করুন</span>
@@ -1573,6 +1636,26 @@ export default function DueLedgerManager({
           ))}
         </div>
       </div>
+
+      {/* Selected Customer Scope Alert */}
+      {selectedCustomerKey && selectedCustomerObj && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 flex items-center justify-between gap-2 text-xs text-amber-950 shadow-2xs animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+            <span>
+              বর্তমানে শুধুমাত্র <b>{selectedCustomerObj.name}</b>-এর হিসাব ও লেনদেন দেখাচ্ছে।
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedCustomerKey('')}
+            className="bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1 cursor-pointer transition shrink-0"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>সকল গ্রাহক দেখুন</span>
+          </button>
+        </div>
+      )}
 
       {/* ============================================================== */}
       {/* SECTION: ONLINE ORDERS DUE DELIVERY SECTION                   */}
@@ -1683,17 +1766,17 @@ export default function DueLedgerManager({
                   }`}
                 >
                   {/* Customer Profile Header Card */}
-                  <div className={`p-4 ${
+                  <div className={`p-4 space-y-3 ${
                     hasDue
                       ? 'bg-gradient-to-r from-red-50/70 via-rose-50/40 to-white'
                       : hasAdvance
                       ? 'bg-gradient-to-r from-emerald-50/70 via-teal-50/40 to-white'
                       : 'bg-gradient-to-r from-gray-50 to-white'
                   }`}>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      {/* Left: Customer Info & Name & Net Balance Badge */}
-                      <div className="flex items-start gap-3">
-                        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black text-sm shrink-0 shadow-2xs ${
+                    {/* Row 1: Left has Avatar + Name + Balance Badge; Right has Quick Call & Slip Print */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2.5">
+                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shrink-0 shadow-2xs ${
                           hasDue
                             ? 'bg-red-600 text-white'
                             : hasAdvance
@@ -1704,69 +1787,91 @@ export default function DueLedgerManager({
                         </div>
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="text-base font-black text-gray-900 tracking-tight">
+                            <h3 className="text-base font-black text-gray-900 tracking-tight leading-none">
                               {grp.customerName}
                             </h3>
                             {/* Profile Net Balance Badge Right Next to Name */}
                             {hasDue ? (
-                              <span className="bg-red-600 text-white text-[11px] font-black px-2.5 py-0.5 rounded-full shadow-2xs flex items-center gap-1 animate-pulse">
+                              <span className="bg-red-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-2xs flex items-center gap-1">
                                 <AlertTriangle className="w-3 h-3" />
                                 <span>অবশিষ্ট বাকি: ৳{grp.remainingDue}</span>
                               </span>
                             ) : hasAdvance ? (
-                              <span className="bg-emerald-600 text-white text-[11px] font-black px-2.5 py-0.5 rounded-full shadow-2xs flex items-center gap-1">
+                              <span className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-2xs flex items-center gap-1">
                                 <Wallet className="w-3 h-3" />
                                 <span>অগ্রীম জমা: ৳{grp.advanceDeposit}</span>
                               </span>
                             ) : (
-                              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1">
                                 <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                                 <span>হিসাব পরিশোধিত (৳০)</span>
                               </span>
                             )}
                           </div>
 
-                          <div className="flex items-center gap-3 text-xs text-gray-600 flex-wrap">
+                          <div className="flex items-center gap-2 text-xs text-gray-500 font-medium flex-wrap pt-0.5">
                             <a
                               href={`tel:${grp.customerPhone}`}
-                              className="font-mono font-bold text-gray-800 hover:text-blue-600 flex items-center gap-1"
+                              className="font-mono font-bold text-gray-700 hover:text-blue-600 flex items-center gap-1"
                             >
-                              <Phone className="w-3.5 h-3.5 text-gray-400" />
+                              <Phone className="w-3 h-3 text-gray-400" />
                               <span>{grp.customerPhone}</span>
                             </a>
                             <span className="text-gray-300">•</span>
                             <span className="text-[11px] text-gray-500 flex items-center gap-1">
                               <MapPin className="w-3 h-3 text-gray-400" />
-                              <span>{grp.customerAddress}</span>
+                              <span className="truncate max-w-[170px] sm:max-w-none">{grp.customerAddress}</span>
                             </span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Right: 3 KPI Summary Chips */}
-                      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-center shrink-0">
-                        <div className="bg-white/90 border border-gray-200/80 rounded-xl px-2.5 py-1.5 shadow-2xs">
-                          <span className="text-[9px] font-bold text-gray-500 block">মোট খাবার বিল</span>
-                          <span className="text-xs font-black text-gray-900">৳{grp.totalBill}</span>
-                        </div>
-                        <div className="bg-white/90 border border-emerald-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
-                          <span className="text-[9px] font-bold text-emerald-700 block">মোট জমা</span>
-                          <span className="text-xs font-black text-emerald-700">৳{grp.totalPaid}</span>
-                        </div>
-                        <div className={`rounded-xl px-2.5 py-1.5 shadow-2xs border ${
-                          hasDue
-                            ? 'bg-red-50 border-red-200 text-red-700'
-                            : hasAdvance
-                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                            : 'bg-gray-50 border-gray-200 text-gray-700'
-                        }`}>
-                          <span className="text-[9px] font-bold block">
-                            {hasDue ? 'নিট বাকি' : hasAdvance ? 'অগ্রীম জমা' : 'ব্যালেন্স'}
-                          </span>
-                          <span className="text-xs font-black">
-                            ৳{hasDue ? grp.remainingDue : hasAdvance ? grp.advanceDeposit : 0}
-                          </span>
-                        </div>
+                      {/* Right: Call & Statement Slip */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <a
+                          href={`tel:${grp.customerPhone}`}
+                          className="p-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 shadow-2xs transition"
+                          title="কল দিন"
+                        >
+                          <Phone className="w-3.5 h-3.5" />
+                        </a>
+                        <button
+                          onClick={() => {
+                            setStatementCustomer(grp);
+                            setIsCustomerStatementOpen(true);
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-gray-100 text-gray-700 text-xs font-bold border border-gray-200 shadow-2xs flex items-center gap-1 transition cursor-pointer"
+                          title="স্টেটমেন্ট স্লিপ"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">স্টেটমেন্ট স্লিপ</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Row 2: 3 Full-Width KPI Summary Cards (Never cramped, clear bold numbers) */}
+                    <div className="grid grid-cols-3 gap-2 w-full text-center pt-0.5">
+                      <div className="bg-white/95 border border-gray-200/90 rounded-2xl p-2.5 shadow-2xs">
+                        <span className="text-[10px] font-semibold text-gray-500 block leading-tight">মোট খাবার বিল</span>
+                        <span className="text-sm font-black text-gray-900 block mt-0.5">৳ {grp.totalBill}</span>
+                      </div>
+                      <div className="bg-white/95 border border-emerald-200 rounded-2xl p-2.5 shadow-2xs">
+                        <span className="text-[10px] font-semibold text-emerald-700 block leading-tight">মোট জমা</span>
+                        <span className="text-sm font-black text-emerald-700 block mt-0.5">৳ {grp.totalPaid}</span>
+                      </div>
+                      <div className={`rounded-2xl p-2.5 shadow-2xs border ${
+                        hasDue
+                          ? 'bg-red-50 border-red-200 text-red-700'
+                          : hasAdvance
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                          : 'bg-gray-50 border-gray-200 text-gray-700'
+                      }`}>
+                        <span className="text-[10px] font-bold block leading-tight">
+                          {hasDue ? 'নিট বাকি' : hasAdvance ? 'অগ্রীম জমা' : 'ব্যালেন্স'}
+                        </span>
+                        <span className="text-sm font-black block mt-0.5">
+                          ৳ {hasDue ? grp.remainingDue : hasAdvance ? grp.advanceDeposit : 0}
+                        </span>
                       </div>
                     </div>
 
@@ -1803,22 +1908,9 @@ export default function DueLedgerManager({
                             </button>
                           </>
                         )}
-
-                        {/* Full Customer Statement Slip */}
-                        <button
-                          onClick={() => {
-                            setStatementCustomer(grp);
-                            setIsCustomerStatementOpen(true);
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-gray-100 text-gray-700 text-[11px] font-bold border border-gray-200 flex items-center gap-1 transition cursor-pointer"
-                          title="গ্রাহকের সম্পূর্ণ হিসাবের খতিয়ান স্লিপ প্রিন্ট করুন"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          <span>স্টেটমেন্ট স্লিপ</span>
-                        </button>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {/* + Add New Due for this customer */}
                         <button
                           onClick={() => handleOpenAddDueForCustomer(grp)}

@@ -1,8 +1,25 @@
+export interface MenuCategory {
+  id: string;
+  nameBn: string;
+  nameEn: string;
+  icon?: string;
+  description?: string;
+}
+
+export const DEFAULT_MENU_CATEGORIES: MenuCategory[] = [
+  { id: 'combo', nameBn: 'কম্বো ও বান্ডেল', nameEn: 'Combo & Bundles', icon: '🎁' },
+  { id: 'popular', nameBn: 'জনপ্রিয় খাবার', nameEn: 'Popular Items', icon: '🔥' },
+  { id: 'biryani', nameBn: 'বিরিয়ানি ও পোলাও', nameEn: 'Biryani & Pulao', icon: '🍛' },
+  { id: 'fastfood', nameBn: 'ফাস্ট ফুড', nameEn: 'Fast Food', icon: '🍔' },
+  { id: 'curry', nameBn: 'মাংস ও কারি', nameEn: 'Curry & Meat', icon: '🥘' },
+  { id: 'dessert', nameBn: 'ডেজার্ট ও ড্রিংকস', nameEn: 'Dessert & Drinks', icon: '🍮' }
+];
+
 export interface FoodItem {
   id: string;
   nameBn: string;
   nameEn: string;
-  category: 'popular' | 'biryani' | 'fastfood' | 'curry' | 'dessert' | 'combo';
+  category: string;
   price: number;
   originalPrice?: number;
   image: string;

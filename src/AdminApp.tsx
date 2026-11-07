@@ -10,10 +10,11 @@ import {
   Search, Lock, Unlock, LogOut, ArrowUpRight, ArrowDownRight, DollarSign, 
   Printer, Volume2, VolumeX, Eye, ArrowLeft, ShieldCheck, Tag, Sparkles,
   ShoppingBag, Calendar, Clock, MapPin, Hash, Check, X, ShieldAlert,
-  BookOpen, Upload, Camera, Image as ImageIcon
+  BookOpen, Upload, Camera, Image as ImageIcon, Layers
 } from 'lucide-react';
 import { 
-  FoodItem, Order, LedgerEntry, CustomerProfile, INITIAL_MENU_DATA 
+  FoodItem, Order, LedgerEntry, CustomerProfile, INITIAL_MENU_DATA,
+  MenuCategory, DEFAULT_MENU_CATEGORIES 
 } from './types';
 import { 
   playAddToCartSound, playOrderSuccessSound, isSoundEnabled, setSoundEnabled 
@@ -21,6 +22,7 @@ import {
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import DueLedgerManager from './components/DueLedgerManager';
+import CategoryManagerModal from './components/CategoryManagerModal';
 import {
   getMysqlStatus,
   subscribeMysqlStatus,
@@ -62,6 +64,48 @@ export default function AdminApp() {
     }
     return INITIAL_MENU_DATA;
   });
+
+  const [menuCategories, setMenuCategories] = useState<MenuCategory[]>(() => {
+    const saved = localStorage.getItem('salma_menu_categories');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return DEFAULT_MENU_CATEGORIES;
+  });
+
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'salma_menu_categories' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMenuCategories(parsed);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  const handleSaveCategories = (updatedCats: MenuCategory[], updatedMenu?: FoodItem[]) => {
+    setMenuCategories(updatedCats);
+    saveToCpanelDb('salma_menu_categories', updatedCats);
+
+    if (updatedMenu) {
+      setMenuItems(updatedMenu);
+      saveToCpanelDb('salma_menu_items', updatedMenu);
+    }
+  };
 
   const [orders, setOrders] = useState<Order[]>(() => {
     const saved = localStorage.getItem('salma_orders');
@@ -1302,6 +1346,14 @@ export default function AdminApp() {
 
               <div className="flex items-center gap-2 flex-wrap">
                 <button 
+                  onClick={() => setIsCategoryModalOpen(true)}
+                  className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
+                  title="ক্যাটাগরি এডিট, ডিলেট ও নতুন যোগ"
+                >
+                  <Layers className="w-4 h-4 text-amber-200" />
+                  <span>⚙️ ক্যাটাগরি ম্যানেজমেন্ট</span>
+                </button>
+                <button 
                   onClick={() => handleOpenAddFood(false)}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 shadow transition cursor-pointer"
                 >
@@ -1331,25 +1383,39 @@ export default function AdminApp() {
                 />
               </div>
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                {[
-                  { id: 'all', label: 'সব' },
-                  { id: 'combo', label: '🎁 কম্বো ও বান্ডেল' },
-                  { id: 'popular', label: 'জনপ্রিয়' },
-                  { id: 'biryani', label: 'বিরিয়ানি' },
-                  { id: 'fastfood', label: 'ফাস্ট ফুড' },
-                  { id: 'curry', label: 'মাংস ও কারি' },
-                  { id: 'dessert', label: 'ডেজার্ট' }
-                ].map(cat => (
-                  <button
-                    key={cat.id}
-                    onClick={() => setMenuCategoryFilter(cat.id)}
-                    className={`text-xs px-3 py-2 rounded-xl font-bold whitespace-nowrap transition cursor-pointer ${
-                      menuCategoryFilter === cat.id ? 'bg-red-600 text-white' : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'
-                    }`}
-                  >
-                    {cat.label}
-                  </button>
-                ))}
+                <button
+                  onClick={() => setMenuCategoryFilter('all')}
+                  className={`text-xs px-3 py-2 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                    menuCategoryFilter === 'all' ? 'bg-red-600 text-white' : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  <span>সব খাবার</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                    menuCategoryFilter === 'all' ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {menuItems.length}
+                  </span>
+                </button>
+                {menuCategories.map(cat => {
+                  const count = menuItems.filter(item => item.category === cat.id).length;
+                  return (
+                    <button
+                      key={cat.id}
+                      onClick={() => setMenuCategoryFilter(cat.id)}
+                      className={`text-xs px-3 py-2 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                        menuCategoryFilter === cat.id ? 'bg-red-600 text-white' : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'
+                      }`}
+                    >
+                      <span>{cat.icon || '🍽️'}</span>
+                      <span>{cat.nameBn}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                        menuCategoryFilter === cat.id ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -2096,12 +2162,11 @@ export default function AdminApp() {
                     }}
                     className="w-full border border-gray-300 rounded-xl p-2.5 text-xs bg-white font-bold"
                   >
-                    <option value="popular">জনপ্রিয় (Popular)</option>
-                    <option value="combo">🎁 কম্বো ও বান্ডেল (Combo & Bundles)</option>
-                    <option value="biryani">বিরিয়ানি ও পোলাও (Biryani)</option>
-                    <option value="fastfood">ফাস্ট ফুড (Fast Food)</option>
-                    <option value="curry">মাংস ও কারি (Curry)</option>
-                    <option value="dessert">ডেজার্ট ও ড্রিংকস (Dessert)</option>
+                    {menuCategories.map(cat => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.icon ? `${cat.icon} ` : ''}{cat.nameBn} ({cat.nameEn})
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -2326,6 +2391,17 @@ export default function AdminApp() {
           </div>
         </div>
       )}
+
+      {/* ============================================================== */}
+      {/* MODAL: CATEGORY MANAGER (ADD, EDIT, DELETE CATEGORIES)         */}
+      {/* ============================================================== */}
+      <CategoryManagerModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        categories={menuCategories}
+        menuItems={menuItems}
+        onSaveCategories={handleSaveCategories}
+      />
 
       {/* ============================================================== */}
       {/* MODAL: KOT / ORDER RECEIPT PRINT MODAL                          */}

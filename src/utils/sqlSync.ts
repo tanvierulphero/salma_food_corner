@@ -14,7 +14,8 @@ const SYNCED_KEYS = new Set([
   'salma_shop_location',
   'salma_location_presets',
   'salma_sms_logs',
-  'salma_active_offer'
+  'salma_active_offer',
+  'salma_menu_categories'
 ]);
 
 const SESSION_KEYS = new Set(['salma_logged_customer', 'salma_admin_auth']);
