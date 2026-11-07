@@ -107,11 +107,38 @@ app.post('/api/send-sms', async (req, res) => {
   }
 });
 
-// Server-side database store (mirrors cPanel api.php behavior in preview)
-const serverDbStore: Record<string, any> = {};
+// Server-side persistent database store (mirrors cPanel api.php behavior in preview & Node production)
+const serverDbFilePath = path.resolve(__dirname, 'public', 'salma_server_db.json');
+
+function loadServerDbFromDisk(): Record<string, any> {
+  try {
+    if (fs.existsSync(serverDbFilePath)) {
+      const raw = fs.readFileSync(serverDbFilePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to read salma_server_db.json:', err);
+  }
+  return {};
+}
+
+function saveServerDbToDisk(data: Record<string, any>): void {
+  try {
+    fs.writeFileSync(serverDbFilePath, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to write salma_server_db.json:', err);
+  }
+}
+
+const serverDbStore: Record<string, any> = loadServerDbFromDisk();
 
 app.get('/api.php', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  const latestDiskData = loadServerDbFromDisk();
+  Object.assign(serverDbStore, latestDiskData);
   res.json({
     status: 'ok',
     connected: true,
@@ -121,7 +148,7 @@ app.get('/api.php', (_req, res) => {
 });
 
 app.post('/api.php', (req, res) => {
-  const action = req.query.action;
+  const action = req.query.action || req.body?.action;
   if (action === 'upload_image') {
     const { imageBase64 } = req.body || {};
     if (!imageBase64 || typeof imageBase64 !== 'string') {
@@ -150,6 +177,10 @@ app.post('/api.php', (req, res) => {
     }
   }
   if (action === 'setup_db') {
+    if (req.body?.currentData && typeof req.body.currentData === 'object') {
+      Object.assign(serverDbStore, req.body.currentData);
+      saveServerDbToDisk(serverDbStore);
+    }
     return res.json({
       status: 'ok',
       mysqlConnected: true,
@@ -165,6 +196,7 @@ app.post('/api.php', (req, res) => {
   } catch {
     serverDbStore[key] = value;
   }
+  saveServerDbToDisk(serverDbStore);
   res.json({ status: 'ok', connected: true, key });
 });
 

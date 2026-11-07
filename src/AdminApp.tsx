@@ -365,31 +365,30 @@ export default function AdminApp() {
 
     if (editingFoodId) {
       // Edit existing
-      setMenuItems(prev => {
-        const updated = prev.map(item => {
-          if (item.id === editingFoodId) {
-            return {
-              ...item,
-              nameBn: foodForm.nameBn.trim(),
-              nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
-              category: isBundleFinal && foodForm.category !== 'combo' ? 'combo' : foodForm.category,
-              price: Number(foodForm.price),
-              originalPrice: foodForm.originalPrice ? Number(foodForm.originalPrice) : undefined,
-              image: foodForm.image.trim(),
-              descriptionBn: foodForm.descriptionBn.trim(),
-              descriptionEn: foodForm.descriptionEn.trim(),
-              spicyLevel: foodForm.spicyLevel,
-              isVeg: foodForm.isVeg,
-              isBundle: isBundleFinal,
-              bundleItems: bList.length > 0 ? bList : undefined,
-              bundleSavings: computedSavings
-            };
-          }
-          return item;
-        });
-        saveToCpanelDb('salma_menu_items', updated);
-        return updated;
+      const updated = menuItems.map(item => {
+        if (item.id === editingFoodId) {
+          return {
+            ...item,
+            nameBn: foodForm.nameBn.trim(),
+            nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
+            category: isBundleFinal && foodForm.category !== 'combo' ? 'combo' : foodForm.category,
+            price: Number(foodForm.price),
+            originalPrice: foodForm.originalPrice ? Number(foodForm.originalPrice) : undefined,
+            image: foodForm.image.trim(),
+            descriptionBn: foodForm.descriptionBn.trim(),
+            descriptionEn: foodForm.descriptionEn.trim(),
+            spicyLevel: foodForm.spicyLevel,
+            isVeg: foodForm.isVeg,
+            isBundle: isBundleFinal,
+            bundleItems: bList.length > 0 ? bList : undefined,
+            bundleSavings: computedSavings
+          };
+        }
+        return item;
       });
+      saveToCpanelDb('salma_menu_items', updated);
+      setMenuItems(updated);
+      setFoodModalOpen(false);
       alert(`'${foodForm.nameBn}' মেনুতে সফলভাবে আপডেট করা হয়েছে!`);
     } else {
       // Add new
@@ -411,23 +410,19 @@ export default function AdminApp() {
         bundleItems: bList.length > 0 ? bList : undefined,
         bundleSavings: computedSavings
       };
-      setMenuItems(prev => {
-        const updated = [newItem, ...prev];
-        saveToCpanelDb('salma_menu_items', updated);
-        return updated;
-      });
+      const updated = [newItem, ...menuItems];
+      saveToCpanelDb('salma_menu_items', updated);
+      setMenuItems(updated);
+      setFoodModalOpen(false);
       alert(`নতুন খাবার '${newItem.nameBn}' সফলভাবে মেনু ও ডাটাবেসে যোগ করা হয়েছে!`);
     }
-    setFoodModalOpen(false);
   };
 
   const handleDeleteFood = (id: string, nameBn: string) => {
     if (confirm(`আপনি কি সত্যিই '${nameBn}' মেনু থেকে মুছে ফেলতে (বিয়োজন) চান?`)) {
-      setMenuItems(prev => {
-        const updated = prev.filter(item => item.id !== id);
-        saveToCpanelDb('salma_menu_items', updated);
-        return updated;
-      });
+      const updated = menuItems.filter(item => item.id !== id);
+      saveToCpanelDb('salma_menu_items', updated);
+      setMenuItems(updated);
       alert(`'${nameBn}' মেনু থেকে মুছে ফেলা হয়েছে।`);
     }
   };
@@ -493,24 +488,22 @@ export default function AdminApp() {
     }
 
     if (editingCustOriginalPhone) {
-      setCustomers(prev => {
-        const nextMap = { ...prev };
-        const oldRecord = nextMap[editingCustOriginalPhone];
-        if (editingCustOriginalPhone !== cleanPhone) {
-          delete nextMap[editingCustOriginalPhone];
-        }
-        nextMap[cleanPhone] = {
-          phone: cleanPhone,
-          name,
-          address: address || 'চান্দনা চৌরাস্তা, গাজীপুর',
-          loyaltyPoints: Math.max(0, Number(newCustPoints) || 0),
-          registeredAt: oldRecord?.registeredAt || todayStr,
-          totalOrders: Math.max(0, Number(newCustOrders) || 0),
-          totalSpent: Math.max(0, Number(newCustSpent) || 0)
-        };
-        saveToCpanelDb('salma_customers', nextMap);
-        return nextMap;
-      });
+      const nextMap = { ...customers };
+      const oldRecord = nextMap[editingCustOriginalPhone];
+      if (editingCustOriginalPhone !== cleanPhone) {
+        delete nextMap[editingCustOriginalPhone];
+      }
+      nextMap[cleanPhone] = {
+        phone: cleanPhone,
+        name,
+        address: address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+        loyaltyPoints: Math.max(0, Number(newCustPoints) || 0),
+        registeredAt: oldRecord?.registeredAt || todayStr,
+        totalOrders: Math.max(0, Number(newCustOrders) || 0),
+        totalSpent: Math.max(0, Number(newCustSpent) || 0)
+      };
+      saveToCpanelDb('salma_customers', nextMap);
+      setCustomers(nextMap);
       setCustomerModalOpen(false);
       setEditingCustOriginalPhone(null);
       if (soundOn) playAddToCartSound();
@@ -527,11 +520,9 @@ export default function AdminApp() {
       totalOrders: Math.max(0, Number(newCustOrders) || 0),
       totalSpent: Math.max(0, Number(newCustSpent) || 0)
     };
-    setCustomers(prev => {
-      const updated = { ...prev, [cleanPhone]: newProfile };
-      saveToCpanelDb('salma_customers', updated);
-      return updated;
-    });
+    const updatedCustomers = { ...customers, [cleanPhone]: newProfile };
+    saveToCpanelDb('salma_customers', updatedCustomers);
+    setCustomers(updatedCustomers);
     setCustomerModalOpen(false);
     setNewCustPhone('');
     setNewCustName('');
@@ -542,12 +533,10 @@ export default function AdminApp() {
 
   const handleDeleteCustomer = (phoneKey: string, custName: string) => {
     if (confirm(`আপনি কি সত্যিই গ্রাহক '${custName} (${phoneKey})' এর প্রোফাইল ডাটাবেজ থেকে মুছে ফেলতে চান?`)) {
-      setCustomers(prev => {
-        const updated = { ...prev };
-        delete updated[phoneKey];
-        saveToCpanelDb('salma_customers', updated);
-        return updated;
-      });
+      const updated = { ...customers };
+      delete updated[phoneKey];
+      saveToCpanelDb('salma_customers', updated);
+      setCustomers(updated);
       if (soundOn) playAddToCartSound();
     }
   };
@@ -594,25 +583,23 @@ export default function AdminApp() {
       alert('সঠিক টাকার পরিমাণ দিন।');
       return;
     }
-    setLedger(prev => {
-      const updated = prev.map(item => {
-        if (item.id === editingLedgerId) {
-          return {
-            ...item,
-            type: ledgerEditForm.type,
-            voucherNo: ledgerEditForm.voucherNo.trim() || item.voucherNo,
-            category: ledgerEditForm.category.trim() || item.category,
-            amount: amt,
-            date: ledgerEditForm.date || item.date,
-            paymentMethod: ledgerEditForm.paymentMethod,
-            note: ledgerEditForm.note.trim()
-          };
-        }
-        return item;
-      });
-      saveToCpanelDb('salma_ledger', updated);
-      return updated;
+    const updated = ledger.map(item => {
+      if (item.id === editingLedgerId) {
+        return {
+          ...item,
+          type: ledgerEditForm.type,
+          voucherNo: ledgerEditForm.voucherNo.trim() || item.voucherNo,
+          category: ledgerEditForm.category.trim() || item.category,
+          amount: amt,
+          date: ledgerEditForm.date || item.date,
+          paymentMethod: ledgerEditForm.paymentMethod,
+          note: ledgerEditForm.note.trim()
+        };
+      }
+      return item;
     });
+    saveToCpanelDb('salma_ledger', updated);
+    setLedger(updated);
     setLedgerModalOpen(false);
     setEditingLedgerId(null);
     if (soundOn) playAddToCartSound();
@@ -632,11 +619,9 @@ export default function AdminApp() {
       paymentMethod: quickIncome.paymentMethod,
       note: quickIncome.note || 'দৈনিক নগদ আয়'
     };
-    setLedger(prev => {
-      const updated = [entry, ...prev];
-      saveToCpanelDb('salma_ledger', updated);
-      return updated;
-    });
+    const updated = [entry, ...ledger];
+    saveToCpanelDb('salma_ledger', updated);
+    setLedger(updated);
     setQuickIncome({ category: 'খাবার বিক্রয় (Food Sales)', amount: '', paymentMethod: 'Cash', note: '' });
     if (soundOn) playAddToCartSound();
     alert(`৳${entry.amount} আয় সফলভাবে এন্ট্রি হয়েছে!`);
@@ -655,11 +640,9 @@ export default function AdminApp() {
       paymentMethod: quickExpense.paymentMethod,
       note: quickExpense.note || 'দৈনিক খরচ'
     };
-    setLedger(prev => {
-      const updated = [entry, ...prev];
-      saveToCpanelDb('salma_ledger', updated);
-      return updated;
-    });
+    const updated = [entry, ...ledger];
+    saveToCpanelDb('salma_ledger', updated);
+    setLedger(updated);
     setQuickExpense({ category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: '', paymentMethod: 'Cash', note: '' });
     if (soundOn) playAddToCartSound();
     alert(`৳${entry.amount} ব্যয় সফলভাবে এন্ট্রি হয়েছে!`);
@@ -667,11 +650,9 @@ export default function AdminApp() {
 
   const handleDeleteLedger = (id: string) => {
     if (confirm('আপনি কি এই হিসাব এন্ট্রিটি মুছে ফেলতে চান?')) {
-      setLedger(prev => {
-        const updated = prev.filter(l => l.id !== id);
-        saveToCpanelDb('salma_ledger', updated);
-        return updated;
-      });
+      const updated = ledger.filter(l => l.id !== id);
+      saveToCpanelDb('salma_ledger', updated);
+      setLedger(updated);
     }
   };
 
@@ -727,28 +708,26 @@ export default function AdminApp() {
     const total = Math.max(0, Number(orderEditForm.totalAmount) || 0);
     const adv = Math.max(0, Number(orderEditForm.advancePaid) || 0);
     const due = Math.max(0, Number(orderEditForm.dueAmount));
-    setOrders(prev => {
-      const updatedList = prev.map(o => {
-        if (o.id === editingOrderId) {
-          return {
-            ...o,
-            customerName: orderEditForm.customerName.trim() || o.customerName,
-            phone: normalizeBdPhone(orderEditForm.phone.trim()) || orderEditForm.phone.trim() || o.phone,
-            address: orderEditForm.address.trim() || o.address,
-            totalAmount: total,
-            advancePaid: adv,
-            dueAmount: due,
-            advancePaymentMethod: orderEditForm.advancePaymentMethod,
-            transactionId: orderEditForm.transactionId.trim(),
-            paymentStatus: (due === 0 ? 'Fully Paid (100%)' : '50% Advance Paid (Due on Delivery)') as Order['paymentStatus'],
-            status: orderEditForm.status
-          };
-        }
-        return o;
-      });
-      saveToCpanelDb('salma_orders', updatedList);
-      return updatedList;
+    const updatedList = orders.map(o => {
+      if (o.id === editingOrderId) {
+        return {
+          ...o,
+          customerName: orderEditForm.customerName.trim() || o.customerName,
+          phone: normalizeBdPhone(orderEditForm.phone.trim()) || orderEditForm.phone.trim() || o.phone,
+          address: orderEditForm.address.trim() || o.address,
+          totalAmount: total,
+          advancePaid: adv,
+          dueAmount: due,
+          advancePaymentMethod: orderEditForm.advancePaymentMethod,
+          transactionId: orderEditForm.transactionId.trim(),
+          paymentStatus: (due === 0 ? 'Fully Paid (100%)' : '50% Advance Paid (Due on Delivery)') as Order['paymentStatus'],
+          status: orderEditForm.status
+        };
+      }
+      return o;
     });
+    saveToCpanelDb('salma_orders', updatedList);
+    setOrders(updatedList);
     setOrderEditModalOpen(false);
     setEditingOrderId(null);
     if (soundOn) playAddToCartSound();
@@ -758,28 +737,26 @@ export default function AdminApp() {
   const preserveCustomerFromOrder = (order: Order) => {
     const cleanPhone = normalizeBdPhone(order.phone) || order.phone.trim();
     if (!cleanPhone) return;
-    setCustomers(prev => {
-      const existing = prev[cleanPhone];
-      const preserved: CustomerProfile = existing
-        ? {
-            ...existing,
-            phone: cleanPhone,
-            name: existing.name || order.customerName,
-            address: existing.address || order.address
-          }
-        : {
-            phone: cleanPhone,
-            name: order.customerName || 'সম্মানিত গ্রাহক',
-            address: order.address || 'চান্দনা চৌরাস্তা, গাজীপুর',
-            loyaltyPoints: 50,
-            registeredAt: order.date || todayStr,
-            totalOrders: 1,
-            totalSpent: order.totalAmount || 0
-          };
-      const nextMap = { ...prev, [cleanPhone]: preserved };
-      saveToCpanelDb('salma_customers', nextMap);
-      return nextMap;
-    });
+    const existing = customers[cleanPhone];
+    const preserved: CustomerProfile = existing
+      ? {
+          ...existing,
+          phone: cleanPhone,
+          name: existing.name || order.customerName,
+          address: existing.address || order.address
+        }
+      : {
+          phone: cleanPhone,
+          name: order.customerName || 'সম্মানিত গ্রাহক',
+          address: order.address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+          loyaltyPoints: 50,
+          registeredAt: order.date || todayStr,
+          totalOrders: 1,
+          totalSpent: order.totalAmount || 0
+        };
+    const nextMap = { ...customers, [cleanPhone]: preserved };
+    saveToCpanelDb('salma_customers', nextMap);
+    setCustomers(nextMap);
   };
 
   const handleDeleteOrder = (orderId: string) => {
@@ -788,11 +765,9 @@ export default function AdminApp() {
       if (targetOrder) {
         preserveCustomerFromOrder(targetOrder);
       }
-      setOrders(prev => {
-        const updatedList = prev.filter(o => o.id !== orderId);
-        saveToCpanelDb('salma_orders', updatedList);
-        return updatedList;
-      });
+      const updatedList = orders.filter(o => o.id !== orderId);
+      saveToCpanelDb('salma_orders', updatedList);
+      setOrders(updatedList);
       if (soundOn) playAddToCartSound();
     }
   };
@@ -802,20 +777,18 @@ export default function AdminApp() {
     if (targetOrder) {
       preserveCustomerFromOrder(targetOrder);
     }
-    setOrders(prev => {
-      const updatedList = prev.map(o => {
-        if (o.id === orderId) {
-          const updated = { ...o, status: newStatus };
-          if (o.status === 'Preparing' && newStatus === 'Out for Delivery') {
-            localStorage.setItem('salma_delivery_toast', JSON.stringify(updated));
-          }
-          return updated;
+    const updatedList = orders.map(o => {
+      if (o.id === orderId) {
+        const updated = { ...o, status: newStatus };
+        if (o.status === 'Preparing' && newStatus === 'Out for Delivery') {
+          localStorage.setItem('salma_delivery_toast', JSON.stringify(updated));
         }
-        return o;
-      });
-      saveToCpanelDb('salma_orders', updatedList);
-      return updatedList;
+        return updated;
+      }
+      return o;
     });
+    saveToCpanelDb('salma_orders', updatedList);
+    setOrders(updatedList);
     if (soundOn) playAddToCartSound();
   };
 
@@ -1611,6 +1584,7 @@ export default function AdminApp() {
             orders={orders}
             setOrders={setOrders}
             customers={customers}
+            setCustomers={setCustomers}
             soundOn={soundOn}
           />
         )}

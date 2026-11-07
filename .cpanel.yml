@@ -3,4 +3,6 @@ deployment:
   tasks:
     - export DEPLOYPATH=/home/$(whoami)/public_html/
     - /bin/cp -Rf dist/* $DEPLOYPATH
+    - /bin/cp -f public/api.php $DEPLOYPATH/api.php
+    - /bin/cp -f public/database.sql $DEPLOYPATH/database.sql
     - /bin/cp -f public/.htaccess $DEPLOYPATH/.htaccess

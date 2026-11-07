@@ -10,7 +10,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, Accept, Cache-Control');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -33,8 +33,9 @@ if (file_exists($configFileLocal)) {
     @include $configFileParent;
 }
 
-// সার্ভারের ফাইল-বেসড ব্যাকআপ ডাটাবেস (public_html এবং parent ফোল্ডারে)
+// সার্ভারের ফাইল-বেসড ব্যাকআপ ডাটাবেস (public_html এবং parent ফোল্ডারে দ্বৈত ব্যাকআপ)
 $serverDbFile = __DIR__ . '/salma_server_db.json';
+$serverDbFileBackup = dirname(__DIR__) . '/salma_server_db.json';
 $uploadsDirLocal = __DIR__ . '/uploads';
 $uploadsDirBackup = dirname(__DIR__) . '/salma_uploads';
 
@@ -60,7 +61,17 @@ if (is_dir($uploadsDirBackup) && is_dir($uploadsDirLocal)) {
     }
 }
 
-function readServerDbFile($file) {
+function isNonEmptyVal($val) {
+    if ($val === null || $val === '') return false;
+    if (is_array($val)) return count($val) > 0;
+    if (is_string($val)) {
+        $t = trim($val);
+        return $t !== '' && $t !== '[]' && $t !== '{}' && $t !== 'null';
+    }
+    return true;
+}
+
+function readSingleJsonFile($file) {
     if (!file_exists($file)) return [];
     $content = @file_get_contents($file);
     if (!$content) return [];
@@ -68,8 +79,30 @@ function readServerDbFile($file) {
     return is_array($decoded) ? $decoded : [];
 }
 
-function writeServerDbFile($file, $data) {
-    @file_put_contents($file, json_encode((object)$data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+function readServerDbFile($localFile, $backupFile = null) {
+    $localData = readSingleJsonFile($localFile);
+    $backupData = $backupFile ? readSingleJsonFile($backupFile) : [];
+
+    if (empty($localData) && !empty($backupData)) {
+        return $backupData;
+    }
+    if (!empty($backupData)) {
+        foreach ($backupData as $k => $v) {
+            if (!isset($localData[$k]) || (!isNonEmptyVal($localData[$k]) && isNonEmptyVal($v))) {
+                $localData[$k] = $v;
+            }
+        }
+    }
+    return $localData;
+}
+
+function writeServerDbFile($localFile, $data, $backupFile = null) {
+    $encoded = json_encode((object)$data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    @file_put_contents($localFile, $encoded, LOCK_EX);
+    @chmod($localFile, 0644);
+    if ($backupFile) {
+        @file_put_contents($backupFile, $encoded, LOCK_EX);
+    }
 }
 
 mysqli_report(MYSQLI_REPORT_OFF);
@@ -88,6 +121,13 @@ if (!empty($DB_NAME) && !empty($DB_USER) && $DB_NAME !== 'cpaneluser_salmafood')
     }
 }
 
+function ensureColumn($conn, $table, $column, $definition) {
+    $res = @$conn->query("SHOW COLUMNS FROM `$table` LIKE '$column'");
+    if ($res && $res->num_rows === 0) {
+        @$conn->query("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+    }
+}
+
 function initMysqlTables($conn) {
     if (!$conn) return;
 
@@ -97,6 +137,8 @@ function initMysqlTables($conn) {
       `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (`store_key`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    @$conn->query("ALTER TABLE `salma_app_store` MODIFY `store_value` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;");
 
     $conn->query("CREATE TABLE IF NOT EXISTS `menu_items` (
       `id` varchar(64) NOT NULL,
@@ -119,8 +161,10 @@ function initMysqlTables($conn) {
       PRIMARY KEY (`id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 
-    // নিশ্চিত করা যে পূর্বের টেবিলেও image কলামটি LONGTEXT থাকে
     @$conn->query("ALTER TABLE `menu_items` MODIFY `image` LONGTEXT;");
+    ensureColumn($conn, 'menu_items', 'is_bundle', "tinyint(1) DEFAULT 0");
+    ensureColumn($conn, 'menu_items', 'bundle_items', "text");
+    ensureColumn($conn, 'menu_items', 'bundle_savings', "decimal(10,2) DEFAULT NULL");
 
     $conn->query("CREATE TABLE IF NOT EXISTS `orders` (
       `id` varchar(64) NOT NULL,
@@ -145,6 +189,16 @@ function initMysqlTables($conn) {
       `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (`id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    @$conn->query("ALTER TABLE `orders` MODIFY `items_json` LONGTEXT NOT NULL;");
+    @$conn->query("ALTER TABLE `orders` MODIFY `status` varchar(50) NOT NULL DEFAULT 'Placed';");
+    ensureColumn($conn, 'orders', 'advance_payment_method', "varchar(30) DEFAULT 'bKash'");
+    ensureColumn($conn, 'orders', 'transaction_id', "varchar(100) DEFAULT NULL");
+    ensureColumn($conn, 'orders', 'payment_status', "varchar(100) DEFAULT NULL");
+    ensureColumn($conn, 'orders', 'created_at_str', "varchar(50) DEFAULT NULL");
+    ensureColumn($conn, 'orders', 'loyalty_points_earned', "int(11) DEFAULT 0");
+    ensureColumn($conn, 'orders', 'delivery_distance_km', "decimal(6,2) DEFAULT NULL");
+    ensureColumn($conn, 'orders', 'is_free_delivery', "tinyint(1) DEFAULT 0");
 
     $conn->query("CREATE TABLE IF NOT EXISTS `ledger_entries` (
       `id` varchar(64) NOT NULL,
@@ -171,12 +225,19 @@ function initMysqlTables($conn) {
       `entry_date` varchar(20) NOT NULL,
       `due_date` varchar(20) DEFAULT NULL,
       `items_description` text,
-      `status` enum('unpaid','partial','paid') NOT NULL DEFAULT 'unpaid',
+      `status` varchar(30) NOT NULL DEFAULT 'unpaid',
       `payments_json` longtext,
       `note` text,
       `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (`id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    @$conn->query("ALTER TABLE `due_entries` MODIFY `payments_json` LONGTEXT;");
+    @$conn->query("ALTER TABLE `due_entries` MODIFY `status` varchar(30) NOT NULL DEFAULT 'unpaid';");
+    ensureColumn($conn, 'due_entries', 'order_id', "varchar(64) DEFAULT NULL");
+    ensureColumn($conn, 'due_entries', 'due_date', "varchar(20) DEFAULT NULL");
+    ensureColumn($conn, 'due_entries', 'payments_json', "longtext");
+    ensureColumn($conn, 'due_entries', 'note', "text");
 
     $conn->query("CREATE TABLE IF NOT EXISTS `customers` (
       `phone` varchar(30) NOT NULL,
@@ -202,7 +263,7 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
                   ON DUPLICATE KEY UPDATE `store_value` = '$valEscaped'");
 
     $parsed = json_decode($valJson, true);
-    if (!is_array($parsed)) return null;
+    if (!is_array($parsed)) return $conn->error ?: null;
 
     if ($rawKey === 'salma_menu_items') {
         $conn->query("DELETE FROM `menu_items`");
@@ -317,7 +378,10 @@ if ($mysqlConnected) {
     initMysqlTables($conn);
 }
 
-$action = isset($_GET['action']) ? $_GET['action'] : 'load';
+$rawInput = file_get_contents('php://input');
+$jsonPayload = $rawInput ? json_decode($rawInput, true) : null;
+
+$action = isset($_GET['action']) ? $_GET['action'] : (is_array($jsonPayload) && isset($jsonPayload['action']) ? $jsonPayload['action'] : 'load');
 
 // ============================================================================
 // ০.ক এডমিন প্যানেল থেকে খাবারের ছবি সরাসরি cPanel সার্ভারে আপলোড ও সেভ করা (action=upload_image)
@@ -337,9 +401,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_image') {
         $binaryData = @file_get_contents($tmpName);
     } else {
         // ২) যদি JSON Base64 (imageBase64) হিসেবে আসে
-        $raw = file_get_contents('php://input');
-        $payload = json_decode($raw, true);
-        if (is_array($payload) && !empty($payload['imageBase64'])) {
+        $payload = is_array($jsonPayload) ? $jsonPayload : [];
+        if (!empty($payload['imageBase64'])) {
             $b64 = $payload['imageBase64'];
             if (preg_match('/^data:image\/(\w+);base64,/', $b64, $matches)) {
                 $detectedExt = strtolower($matches[1]);
@@ -376,7 +439,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_image') {
             'message' => 'ছবিটি সফলভাবে cPanel সার্ভারের uploads/ ফোল্ডারে সেভ হয়েছে!'
         ], JSON_UNESCAPED_UNICODE);
     } else {
-        // যদি ফোল্ডার পারমিশন না থাকে, তবে সরাসরি ডাটাবেসে সেভ রাখার জন্য Base64 URL রিটার্ন করবে
         $mime = $ext === 'png' ? 'image/png' : ($ext === 'webp' ? 'image/webp' : 'image/jpeg');
         $dataUri = 'data:' . $mime . ';base64,' . base64_encode($binaryData);
         echo json_encode([
@@ -394,8 +456,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_image') {
 // ০.খ এডমিন প্যানেল থেকে সরাসরি MySQL Database কনফিগার করা (action=setup_db)
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'setup_db') {
-    $raw = file_get_contents('php://input');
-    $payload = json_decode($raw, true);
+    $payload = is_array($jsonPayload) ? $jsonPayload : [];
 
     $host = trim($payload['dbHost'] ?? 'localhost') ?: 'localhost';
     $name = trim($payload['dbName'] ?? '');
@@ -432,12 +493,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'setup_db') {
     @file_put_contents($configFileParent, $phpConfig, LOCK_EX);
 
     // Sync any existing data from payload or server file into MySQL tables immediately
-    $existingData = readServerDbFile($serverDbFile);
+    $existingData = readServerDbFile($serverDbFile, $serverDbFileBackup);
     if (isset($payload['currentData']) && is_array($payload['currentData'])) {
         foreach ($payload['currentData'] as $k => $v) {
-            $existingData[$k] = $v;
+            if (isNonEmptyVal($v) || !isset($existingData[$k])) {
+                $existingData[$k] = $v;
+            }
         }
-        writeServerDbFile($serverDbFile, $existingData);
+        writeServerDbFile($serverDbFile, $existingData, $serverDbFileBackup);
     }
 
     foreach ($existingData as $k => $v) {
@@ -459,18 +522,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'setup_db') {
 // ১. সার্ভার ও MySQL থেকে সকল ডাটা লোড করা (GET /api.php?action=load)
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === 'status')) {
-    $data = readServerDbFile($serverDbFile);
+    $fileData = readServerDbFile($serverDbFile, $serverDbFileBackup);
+    $data = $fileData;
 
     if ($mysqlConnected && $conn) {
         $result = $conn->query("SELECT `store_key`, `store_value` FROM `salma_app_store`");
+        $mysqlKeys = [];
         if ($result && $result->num_rows > 0) {
             while ($row = $result->fetch_assoc()) {
+                $k = $row['store_key'];
                 $decoded = json_decode($row['store_value'], true);
-                $data[$row['store_key']] = ($decoded !== null) ? $decoded : $row['store_value'];
+                $mysqlVal = ($decoded !== null) ? $decoded : $row['store_value'];
+                $mysqlKeys[$k] = true;
+
+                // যদি ফাইল ব্যাকআপে ডাটা থাকে কিন্তু MySQL-এ খালি থাকে, তবে ফাইল ব্যাকআপের ডাটা অগ্রাধিকার পাবে এবং MySQL আপডেট করবে
+                if (!isNonEmptyVal($mysqlVal) && isset($fileData[$k]) && isNonEmptyVal($fileData[$k])) {
+                    $vJson = is_string($fileData[$k]) ? $fileData[$k] : json_encode($fileData[$k], JSON_UNESCAPED_UNICODE);
+                    syncKeyToRelationalTables($conn, $k, $vJson);
+                } else {
+                    $data[$k] = $mysqlVal;
+                }
             }
-        } elseif (!empty($data)) {
-            // যদি ফাইলে ডাটা থাকে কিন্তু MySQL খালি থাকে, তবে স্বয়ংক্রিয়ভাবে MySQL টেবিলে পুশ করবে
-            foreach ($data as $k => $v) {
+        }
+
+        // যে কী-গুলো ফাইলে আছে কিন্তু এখনো MySQL-এ নেই সেগুলো স্বয়ংক্রিয়ভাবে MySQL টেবিলে সিঙ্ক করা
+        foreach ($fileData as $k => $v) {
+            if (!isset($mysqlKeys[$k]) && isNonEmptyVal($v)) {
                 $vJson = is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE);
                 syncKeyToRelationalTables($conn, $k, $vJson);
             }
@@ -493,12 +570,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
 // ২. সার্ভারে ও phpMyAdmin টেবিলে ডাটা সেভ করা (POST /api.php?action=save)
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $raw = file_get_contents('php://input');
-    $payload = json_decode($raw, true);
+    $payload = is_array($jsonPayload) ? $jsonPayload : [];
 
     if (!$payload || !isset($payload['key'])) {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'Invalid payload']);
+        if ($conn) $conn->close();
         exit;
     }
 
@@ -506,10 +583,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $valJson = is_string($payload['value']) ? $payload['value'] : json_encode($payload['value'], JSON_UNESCAPED_UNICODE);
     $parsed = json_decode($valJson, true);
 
-    // ১) সার্ভার ফাইলে সেভ
-    $serverData = readServerDbFile($serverDbFile);
+    // ১) সার্ভার ফাইলে সেভ (public_html এবং parent ফোল্ডারে ব্যাকআপ)
+    $serverData = readServerDbFile($serverDbFile, $serverDbFileBackup);
     $serverData[$rawKey] = ($parsed !== null) ? $parsed : $valJson;
-    writeServerDbFile($serverDbFile, $serverData);
+    writeServerDbFile($serverDbFile, $serverData, $serverDbFileBackup);
 
     // ২) MySQL কানেক্টেড থাকলে phpMyAdmin এর সকল টেবিলে রিয়েল-টাইম সেভ
     $sqlErr = null;
@@ -523,7 +600,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'mysqlConnected' => $mysqlConnected,
         'sqlError' => $sqlErr,
         'key' => $rawKey
-    ]);
+    ], JSON_UNESCAPED_UNICODE);
     if ($conn) $conn->close();
     exit;
 }

@@ -4,6 +4,7 @@
 
   # api.php এবং uploads/ ফোল্ডারের ছবি সরাসরি সার্ভ করবে (কখনোই index.html এ যাবে না)
   RewriteRule ^api\.php$ - [L]
+  RewriteRule ^(?:.*/)?api\.php$ api.php [QSA,L]
   RewriteRule ^uploads/ - [L]
 
   # /admin এ গেলে সরাসরি admin.html ওপেন হবে

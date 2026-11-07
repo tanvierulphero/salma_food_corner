@@ -377,28 +377,27 @@ export default function App() {
 
     if (editingFoodId) {
       // Edit mode
-      setMenuItems(prev => {
-        const updated = prev.map(item => {
-          if (item.id === editingFoodId) {
-            return {
-              ...item,
-              nameBn: foodForm.nameBn.trim(),
-              nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
-              category: foodForm.category,
-              price: priceNum,
-              originalPrice: originalPriceNum,
-              image: foodForm.image.trim() || fallbackImg,
-              descriptionBn: foodForm.descriptionBn.trim(),
-              descriptionEn: foodForm.descriptionEn.trim(),
-              spicyLevel: foodForm.spicyLevel,
-              isVeg: foodForm.isVeg
-            };
-          }
-          return item;
-        });
-        saveToCpanelDb('salma_menu_items', updated);
-        return updated;
+      const updated = menuItems.map(item => {
+        if (item.id === editingFoodId) {
+          return {
+            ...item,
+            nameBn: foodForm.nameBn.trim(),
+            nameEn: foodForm.nameEn.trim() || foodForm.nameBn.trim(),
+            category: foodForm.category,
+            price: priceNum,
+            originalPrice: originalPriceNum,
+            image: foodForm.image.trim() || fallbackImg,
+            descriptionBn: foodForm.descriptionBn.trim(),
+            descriptionEn: foodForm.descriptionEn.trim(),
+            spicyLevel: foodForm.spicyLevel,
+            isVeg: foodForm.isVeg
+          };
+        }
+        return item;
       });
+      saveToCpanelDb('salma_menu_items', updated);
+      setMenuItems(updated);
+      setFoodModalOpen(false);
       alert(`খাবার '${foodForm.nameBn}' সফলভাবে এডিট/আপডেট করা হয়েছে!`);
     } else {
       // Add mode
@@ -417,20 +416,20 @@ export default function App() {
         spicyLevel: foodForm.spicyLevel,
         isVeg: foodForm.isVeg
       };
-      setMenuItems(prev => {
-        const updated = [newItem, ...prev];
-        saveToCpanelDb('salma_menu_items', updated);
-        return updated;
-      });
+      const updated = [newItem, ...menuItems];
+      saveToCpanelDb('salma_menu_items', updated);
+      setMenuItems(updated);
+      setFoodModalOpen(false);
       alert(`নতুন খাবার '${newItem.nameBn}' সফলভাবে মেনুতে সংযোজন করা হয়েছে!`);
     }
-    setFoodModalOpen(false);
   };
 
   // Delete Food Item (বিয়োজন)
   const handleDeleteFoodItem = (id: string, nameBn: string) => {
     if (confirm(`আপনি কি সত্যিই '${nameBn}' মেনু থেকে মুছে (বিয়োজন) ফেলতে চান?`)) {
-      setMenuItems(prev => prev.filter(item => item.id !== id));
+      const updated = menuItems.filter(item => item.id !== id);
+      saveToCpanelDb('salma_menu_items', updated);
+      setMenuItems(updated);
       // Also remove from cart if present
       setCart(prev => prev.filter(item => item.id !== id));
       alert(`'${nameBn}' সফলভাবে মেনু থেকে মুছে ফেলা হয়েছে।`);

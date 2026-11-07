@@ -1,7 +1,8 @@
 /**
  * cPanel Server & MySQL (phpMyAdmin) Database Engine
  * - Intercepts Storage.prototype so all localStorage.getItem / setItem calls use the cPanel server DB
- * - Provides direct MySQL configuration & status helpers for AdminApp
+ * - Keeps native localStorage as an instant local backup so data is never lost
+ * - Protects in-flight & recent saves from being overwritten by background polling
  */
 
 const SYNCED_KEYS = new Set([
@@ -16,9 +17,23 @@ const SYNCED_KEYS = new Set([
   'salma_active_offer'
 ]);
 
+const SESSION_KEYS = new Set(['salma_logged_customer', 'salma_admin_auth']);
+
 const memoryStore = new Map<string, string>();
 let isRemoteApplying = false;
+let isInternalDispatching = false;
 let isInitialized = false;
+
+// Native browser storage references (kept before patching Storage.prototype)
+let nativeGetItem: ((key: string) => string | null) | null = null;
+let nativeSetItem: ((key: string, val: string) => void) | null = null;
+let nativeRemoveItem: ((key: string) => void) | null = null;
+
+// Track in-flight POST saves and recent local save timestamps to prevent pullFromServer race conditions
+const inFlightSaves = new Map<string, number>();
+const lastLocalSaveTime = new Map<string, number>();
+const lastSentPayload = new Map<string, string>();
+let lastGlobalSaveTime = 0;
 
 let dbStatusInfo: {
   mysqlConnected: boolean;
@@ -48,30 +63,110 @@ function notifyStatusListeners() {
 }
 
 function getApiUrl(action: string): string {
+  if (typeof window !== 'undefined') {
+    const path = window.location.pathname || '/';
+    // If URL is /admin/ with trailing slash, step up one level so we always hit root api.php
+    if (/\/admin\/$/i.test(path)) {
+      return `../api.php?action=${action}&_t=${Date.now()}`;
+    }
+  }
   return `./api.php?action=${action}&_t=${Date.now()}`;
+}
+
+function persistToNativeStorage(key: string, strValue: string) {
+  try {
+    if (nativeSetItem) {
+      nativeSetItem(key, strValue);
+    }
+    if (SESSION_KEYS.has(key) && typeof window !== 'undefined') {
+      window.sessionStorage.setItem(key, strValue);
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function dispatchLocalSyncEvent(key: string, strValue: string) {
+  if (typeof window === 'undefined' || isInternalDispatching) return;
+  isInternalDispatching = true;
+  try {
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key,
+        newValue: strValue
+      })
+    );
+  } catch {
+    // Ignore
+  } finally {
+    isInternalDispatching = false;
+  }
+}
+
+async function sendSaveRequest(key: string, strValue: string, force = false): Promise<boolean> {
+  if (!force && lastSentPayload.get(key) === strValue && (inFlightSaves.get(key) || 0) > 0) {
+    return true;
+  }
+
+  lastSentPayload.set(key, strValue);
+  lastLocalSaveTime.set(key, Date.now());
+  lastGlobalSaveTime = Date.now();
+  inFlightSaves.set(key, (inFlightSaves.get(key) || 0) + 1);
+
+  try {
+    const res = await fetch(getApiUrl('save'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        action: 'save',
+        key,
+        value: strValue
+      })
+    });
+
+    const data = await res.json().catch(() => null);
+    lastLocalSaveTime.set(key, Date.now());
+    lastGlobalSaveTime = Date.now();
+
+    if (data && typeof data.mysqlConnected === 'boolean') {
+      dbStatusInfo = {
+        ...dbStatusInfo,
+        mysqlConnected: data.mysqlConnected,
+        mysqlError: data.sqlError || null
+      };
+      notifyStatusListeners();
+    }
+    return Boolean(res.ok && data && data.status === 'ok');
+  } catch (err) {
+    console.error('cPanel DB Save Error:', err);
+    return false;
+  } finally {
+    const count = (inFlightSaves.get(key) || 1) - 1;
+    if (count <= 0) {
+      inFlightSaves.delete(key);
+    } else {
+      inFlightSaves.set(key, count);
+    }
+  }
 }
 
 export async function saveToCpanelDb(key: string, value: any): Promise<void> {
   const strValue = typeof value === 'string' ? value : JSON.stringify(value);
+  const prevValue = memoryStore.get(key);
+
   memoryStore.set(key, strValue);
-  try {
-    const res = await fetch(getApiUrl('save'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, value: strValue }),
-      keepalive: true
-    });
-    const data = await res.json().catch(() => null);
-    if (data && typeof data.mysqlConnected === 'boolean') {
-      dbStatusInfo = {
-        ...dbStatusInfo,
-        mysqlConnected: data.mysqlConnected
-      };
-      notifyStatusListeners();
-    }
-  } catch (err) {
-    console.error('cPanel DB Save Error:', err);
+  persistToNativeStorage(key, strValue);
+  lastLocalSaveTime.set(key, Date.now());
+  lastGlobalSaveTime = Date.now();
+
+  if (prevValue !== strValue) {
+    dispatchLocalSyncEvent(key, strValue);
   }
+
+  await sendSaveRequest(key, strValue, true);
 }
 
 export async function syncAllToMysqlNow(): Promise<boolean> {
@@ -79,14 +174,10 @@ export async function syncAllToMysqlNow(): Promise<boolean> {
     for (const key of SYNCED_KEYS) {
       if (memoryStore.has(key)) {
         const val = memoryStore.get(key)!;
-        await fetch(getApiUrl('save'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key, value: val })
-        });
+        await sendSaveRequest(key, val, true);
       }
     }
-    await pullFromServer();
+    await pullFromServer(true);
     return true;
   } catch {
     return false;
@@ -154,6 +245,7 @@ export async function uploadFoodImageToCpanel(file: File): Promise<{
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        action: 'upload_image',
         fileName: file.name,
         imageBase64: compressedDataUrl
       })
@@ -166,7 +258,6 @@ export async function uploadFoodImageToCpanel(file: File): Promise<{
         message: data.message || 'ছবিটি সফলভাবে cPanel সার্ভারে সেভ হয়েছে!'
       };
     }
-    // Fallback to compressed data URL so image still saves in cPanel MySQL database
     return {
       ok: true,
       imageUrl: compressedDataUrl,
@@ -211,6 +302,7 @@ export async function setupMysqlDatabase(config: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        action: 'setup_db',
         ...config,
         currentData
       })
@@ -243,7 +335,20 @@ export async function setupMysqlDatabase(config: {
   }
 }
 
-export async function pullFromServer(): Promise<void> {
+function isNonEmptySerializedData(strVal: string | undefined): boolean {
+  if (!strVal) return false;
+  const trimmed = strVal.trim();
+  return trimmed !== '' && trimmed !== '[]' && trimmed !== '{}' && trimmed !== 'null';
+}
+
+export async function pullFromServer(isInitialBoot = false): Promise<void> {
+  // Do not pull while any save request is in flight or within 6 seconds of a local save
+  if (!isInitialBoot) {
+    if (inFlightSaves.size > 0 || Date.now() - lastGlobalSaveTime < 6000) {
+      return;
+    }
+  }
+
   try {
     const res = await fetch(getApiUrl('load'), {
       method: 'GET',
@@ -267,25 +372,44 @@ export async function pullFromServer(): Promise<void> {
     };
     notifyStatusListeners();
 
-    if (!result.data || typeof result.data !== 'object') return;
+    const serverData: Record<string, any> =
+      result.data && typeof result.data === 'object' ? result.data : {};
 
     isRemoteApplying = true;
     try {
-      Object.entries(result.data).forEach(([key, val]) => {
-        if (val !== undefined && val !== null) {
-          const strVal = typeof val === 'string' ? val : JSON.stringify(val);
-          const prevVal = memoryStore.get(key);
-          if (prevVal !== strVal) {
-            memoryStore.set(key, strVal);
-            window.dispatchEvent(
-              new StorageEvent('storage', {
-                key,
-                newValue: strVal
-              })
-            );
-          }
+      Object.entries(serverData).forEach(([key, val]) => {
+        if (val === undefined || val === null) return;
+
+        // Never overwrite a key that has an active save or was modified locally in the last 8 seconds
+        if ((inFlightSaves.get(key) || 0) > 0) return;
+        const lastKeySave = lastLocalSaveTime.get(key) || 0;
+        if (!isInitialBoot && Date.now() - lastKeySave < 8000) return;
+
+        const strVal = typeof val === 'string' ? val : JSON.stringify(val);
+        const prevVal = memoryStore.get(key);
+
+        // If server returned empty [] or {} for a key, but local memoryStore has real data, push local data to server instead of wiping it!
+        if (!isNonEmptySerializedData(strVal) && isNonEmptySerializedData(prevVal)) {
+          sendSaveRequest(key, prevVal!, true);
+          return;
+        }
+
+        if (prevVal !== strVal) {
+          memoryStore.set(key, strVal);
+          persistToNativeStorage(key, strVal);
+          dispatchLocalSyncEvent(key, strVal);
         }
       });
+
+      // On initial boot, if local storage has keys that don't exist on the server yet, push them to the server
+      if (isInitialBoot) {
+        for (const key of SYNCED_KEYS) {
+          const localVal = memoryStore.get(key);
+          if (isNonEmptySerializedData(localVal) && !(key in serverData)) {
+            sendSaveRequest(key, localVal!, true);
+          }
+        }
+      }
     } finally {
       isRemoteApplying = false;
     }
@@ -441,32 +565,50 @@ export function getCustomerDueOrAdvanceBalance(
   };
 }
 
-const SESSION_KEYS = new Set(['salma_logged_customer', 'salma_admin_auth']);
-
 export async function initSqlDatabaseSync(): Promise<void> {
   if (typeof window === 'undefined' || isInitialized) return;
   isInitialized = true;
 
-  // Clear native browser localStorage completely before overriding
+  // Bind native browser localStorage methods before patching Storage.prototype
   try {
-    Storage.prototype.clear.call(window.localStorage);
-  } catch {
-    // Ignore
-  }
+    nativeGetItem = Storage.prototype.getItem.bind(window.localStorage);
+    nativeSetItem = Storage.prototype.setItem.bind(window.localStorage);
+    nativeRemoveItem = Storage.prototype.removeItem.bind(window.localStorage);
 
-  // Restore active login session from sessionStorage if present
-  try {
-    SESSION_KEYS.forEach((sKey) => {
-      const val = window.sessionStorage.getItem(sKey);
-      if (val) memoryStore.set(sKey, val);
-    });
+    // Preload existing local data into memoryStore so nothing is lost on refresh
+    for (const key of SYNCED_KEYS) {
+      const existingVal = nativeGetItem(key);
+      if (existingVal !== null) {
+        memoryStore.set(key, existingVal);
+      }
+    }
+    for (const sKey of SESSION_KEYS) {
+      const sVal = window.sessionStorage.getItem(sKey) || nativeGetItem(sKey);
+      if (sVal !== null) {
+        memoryStore.set(sKey, sVal);
+      }
+    }
   } catch {
     // Ignore
   }
 
   // Patch Storage.prototype so ALL calls to localStorage.getItem / setItem across all modules use memoryStore + cPanel API
   Storage.prototype.getItem = function (key: string): string | null {
-    return memoryStore.has(key) ? memoryStore.get(key)! : null;
+    if (memoryStore.has(key)) {
+      return memoryStore.get(key)!;
+    }
+    if (nativeGetItem) {
+      try {
+        const val = nativeGetItem(key);
+        if (val !== null) {
+          memoryStore.set(key, val);
+          return val;
+        }
+      } catch {
+        // Ignore
+      }
+    }
+    return null;
   };
 
   Storage.prototype.setItem = function (key: string, value: string): void {
@@ -477,41 +619,36 @@ export async function initSqlDatabaseSync(): Promise<void> {
       return;
     }
 
-    memoryStore.set(key, strValue);
-
-    if (SESSION_KEYS.has(key)) {
-      try {
-        window.sessionStorage.setItem(key, strValue);
-      } catch {
-        // Ignore
-      }
-    }
-
-    // Skip initial mount empty default array/object so page load never overwrites server DB
-    if (previousValue === undefined && (strValue === '[]' || strValue === '{}')) {
+    // Skip initial mount empty default array/object if we don't have previous data yet so page load never overwrites server DB
+    if (
+      previousValue === undefined &&
+      (strValue === '[]' || strValue === '{}') &&
+      SYNCED_KEYS.has(key)
+    ) {
+      memoryStore.set(key, strValue);
       return;
     }
 
+    memoryStore.set(key, strValue);
+    persistToNativeStorage(key, strValue);
+
     if (!isRemoteApplying && SYNCED_KEYS.has(key)) {
-      fetch(getApiUrl('save'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key, value: strValue }),
-        keepalive: true
-      }).catch((err) => {
-        console.error('cPanel DB Save Error:', err);
-      });
+      lastLocalSaveTime.set(key, Date.now());
+      lastGlobalSaveTime = Date.now();
+      dispatchLocalSyncEvent(key, strValue);
+      sendSaveRequest(key, strValue, false);
     }
   };
 
   Storage.prototype.removeItem = function (key: string): void {
     memoryStore.delete(key);
-    if (SESSION_KEYS.has(key)) {
-      try {
+    try {
+      if (nativeRemoveItem) nativeRemoveItem(key);
+      if (SESSION_KEYS.has(key)) {
         window.sessionStorage.removeItem(key);
-      } catch {
-        // Ignore
       }
+    } catch {
+      // Ignore
     }
   };
 
@@ -520,14 +657,13 @@ export async function initSqlDatabaseSync(): Promise<void> {
   };
 
   // Load initial database state from cPanel server BEFORE mounting React app
-  await pullFromServer();
+  await pullFromServer(true);
 
-  // Keep all tabs/devices synced with cPanel server
+  // Keep all tabs/devices synced with cPanel server (guarded against overwriting recent saves)
   window.addEventListener('focus', () => {
-    pullFromServer();
+    pullFromServer(false);
   });
   setInterval(() => {
-    pullFromServer();
-  }, 5000);
+    pullFromServer(false);
+  }, 6000);
 }
-

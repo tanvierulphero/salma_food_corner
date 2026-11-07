@@ -15,6 +15,7 @@ interface DueLedgerManagerProps {
   orders: Order[];
   setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
   customers: Record<string, CustomerProfile>;
+  setCustomers?: React.Dispatch<React.SetStateAction<Record<string, CustomerProfile>>>;
   soundOn: boolean;
 }
 
@@ -27,6 +28,7 @@ export default function DueLedgerManager({
   orders,
   setOrders,
   customers,
+  setCustomers,
   soundOn
 }: DueLedgerManagerProps) {
   const todayStr = new Date().toISOString().split('T')[0];
@@ -37,7 +39,7 @@ export default function DueLedgerManager({
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
         console.error(e);
       }
@@ -45,12 +47,30 @@ export default function DueLedgerManager({
     return DEFAULT_DUE_DATA;
   });
 
+  // Listen to storage events so remote/cross-tab changes to salma_due_ledger sync immediately
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'salma_due_ledger' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) {
+            setDueList(parsed);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
   // Sync to localStorage
   useEffect(() => {
     localStorage.setItem('salma_due_ledger', JSON.stringify(dueList));
   }, [dueList]);
 
-  // Build unified list of customers from customers DB, dueList, and orders
+  // Build unified list of customers from customers DB, localStorage, dueList, and orders
   const allCustomersList: CustomerProfile[] = React.useMemo(() => {
     const map = new Map<string, CustomerProfile>();
     Object.values(customers || {}).forEach(c => {
@@ -58,6 +78,23 @@ export default function DueLedgerManager({
       const key = normalizeBdPhone(c.phone) || c.name.trim();
       if (key) map.set(key, { ...c, phone: normalizeBdPhone(c.phone) || c.phone });
     });
+    try {
+      const storedRaw = localStorage.getItem('salma_customers');
+      if (storedRaw) {
+        const storedMap = JSON.parse(storedRaw);
+        if (storedMap && typeof storedMap === 'object') {
+          Object.values(storedMap as Record<string, CustomerProfile>).forEach(c => {
+            if (!c) return;
+            const key = normalizeBdPhone(c.phone) || c.name.trim();
+            if (key && !map.has(key)) {
+              map.set(key, { ...c, phone: normalizeBdPhone(c.phone) || c.phone });
+            }
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
     dueList.forEach(d => {
       const key = normalizeBdPhone(d.customerPhone) || d.customerName.trim();
       if (key && !map.has(key)) {
@@ -109,7 +146,7 @@ export default function DueLedgerManager({
     return getCustomerDueOrAdvanceBalance(selectedCustomerObj.phone, selectedCustomerObj.name, dueList);
   }, [selectedCustomerObj, dueList]);
 
-  // Helper to ensure customer is saved in salma_customers DB
+  // Helper to ensure customer is saved in salma_customers DB & parent state immediately
   const ensureCustomerInDb = (name: string, phone: string, address?: string) => {
     const cleanPhone = normalizeBdPhone(phone) || phone.trim();
     if (!cleanPhone || !name.trim()) return;
@@ -130,6 +167,9 @@ export default function DueLedgerManager({
           };
       localStorage.setItem('salma_customers', JSON.stringify(currentMap));
       saveToCpanelDb('salma_customers', currentMap);
+      if (setCustomers) {
+        setCustomers(currentMap);
+      }
     } catch {
       // ignore
     }
@@ -235,36 +275,30 @@ export default function DueLedgerManager({
 
     let voucherUsed = `DEP-${Math.floor(100 + Math.random() * 900)}`;
 
-    setDueList(prev => {
-      // Find all entries belonging to this customer
-      const custEntries = prev.filter(
-        d => (normalizeBdPhone(d.customerPhone) || d.customerName.trim()) === (custPhone || custName.trim())
-      );
+    const custEntries = dueList.filter(
+      d => (normalizeBdPhone(d.customerPhone) || d.customerName.trim()) === (custPhone || custName.trim())
+    );
 
-      if (custEntries.length === 0) {
-        // Customer has no due entry yet -> Create an Advance Deposit entry (totalAmount: 0, paidAmount: payAmount)
-        const advEntry: DueEntry = {
-          id: `due-${Date.now()}`,
-          voucherNo: voucherUsed,
-          customerName: custName,
-          customerPhone: custPhone,
-          totalAmount: 0,
-          paidAmount: payAmount,
-          dueAmount: 0,
-          date: todayStr,
-          itemsDescription: paymentData.note.trim() || 'অগ্রীম জমা (Advance Deposit)',
-          status: 'paid',
-          payments: [newPaymentRecord],
-          note: paymentData.note.trim() || `অগ্রীম জমা ৳${payAmount}`
-        };
-        const updated = [advEntry, ...prev];
-        saveToCpanelDb('salma_due_ledger', updated);
-        return updated;
-      }
+    let updatedDueList: DueEntry[];
 
-      // Distribute payment across customer's unpaid due entries first; any leftover goes to their most recent entry
+    if (custEntries.length === 0) {
+      const advEntry: DueEntry = {
+        id: `due-${Date.now()}`,
+        voucherNo: voucherUsed,
+        customerName: custName,
+        customerPhone: custPhone,
+        totalAmount: 0,
+        paidAmount: payAmount,
+        dueAmount: 0,
+        date: todayStr,
+        itemsDescription: paymentData.note.trim() || 'অগ্রীম জমা (Advance Deposit)',
+        status: 'paid',
+        payments: [newPaymentRecord],
+        note: paymentData.note.trim() || `অগ্রীম জমা ৳${payAmount}`
+      };
+      updatedDueList = [advEntry, ...dueList];
+    } else {
       let remainingToAllocate = payAmount;
-      // Find first unpaid/partial entry or fallback to the latest entry for this customer
       const targetIdsOrder = [
         ...custEntries.filter(d => d.dueAmount > 0).map(d => d.id),
         ...custEntries.filter(d => d.dueAmount <= 0).map(d => d.id)
@@ -272,11 +306,10 @@ export default function DueLedgerManager({
       const primaryTargetId = targetIdsOrder[0];
       voucherUsed = custEntries.find(d => d.id === primaryTargetId)?.voucherNo || voucherUsed;
 
-      const updated = prev.map(item => {
+      updatedDueList = dueList.map(item => {
         const isThisCust = (normalizeBdPhone(item.customerPhone) || item.customerName.trim()) === (custPhone || custName.trim());
         if (!isThisCust || remainingToAllocate <= 0) return item;
 
-        // If this entry has due > 0, or if it's the last/only target entry to hold excess advance deposit
         const isLastTarget = item.id === targetIdsOrder[targetIdsOrder.length - 1];
         const currentDue = Math.max(0, item.totalAmount - item.paidAmount);
 
@@ -309,10 +342,10 @@ export default function DueLedgerManager({
           ]
         };
       });
+    }
 
-      saveToCpanelDb('salma_due_ledger', updated);
-      return updated;
-    });
+    saveToCpanelDb('salma_due_ledger', updatedDueList);
+    setDueList(updatedDueList);
 
     if (paymentData.addToPosLedger) {
       const posEntry: LedgerEntry = {
@@ -325,11 +358,9 @@ export default function DueLedgerManager({
         paymentMethod: paymentData.paymentMethod,
         note: `${custName} (${custPhone}) থেকে জমা আদায় (${paymentData.note.trim() || voucherUsed})`
       };
-      setLedger(prev => {
-        const updatedLedger = [posEntry, ...prev];
-        saveToCpanelDb('salma_ledger', updatedLedger);
-        return updatedLedger;
-      });
+      const updatedLedger = [posEntry, ...ledger];
+      saveToCpanelDb('salma_ledger', updatedLedger);
+      setLedger(updatedLedger);
     }
 
     if (soundOn) playOrderSuccessSound();
@@ -410,27 +441,25 @@ export default function DueLedgerManager({
     const status: DueEntry['status'] = dueAmount === 0 ? 'paid' : (initialPaid > 0 ? 'partial' : 'unpaid');
 
     if (editingDueId) {
-      setDueList(prev => {
-        const updated = prev.map(item => {
-          if (item.id === editingDueId) {
-            return {
-              ...item,
-              customerName: custName,
-              customerPhone: custPhone,
-              totalAmount: total,
-              paidAmount: initialPaid,
-              dueAmount,
-              dueDate: formData.dueDate || undefined,
-              itemsDescription: formData.itemsDescription.trim() || 'খাবারের বিল',
-              status,
-              note: formData.note.trim()
-            };
-          }
-          return item;
-        });
-        saveToCpanelDb('salma_due_ledger', updated);
-        return updated;
+      const updated = dueList.map(item => {
+        if (item.id === editingDueId) {
+          return {
+            ...item,
+            customerName: custName,
+            customerPhone: custPhone,
+            totalAmount: total,
+            paidAmount: initialPaid,
+            dueAmount,
+            dueDate: formData.dueDate || undefined,
+            itemsDescription: formData.itemsDescription.trim() || 'খাবারের বিল',
+            status,
+            note: formData.note.trim()
+          };
+        }
+        return item;
       });
+      saveToCpanelDb('salma_due_ledger', updated);
+      setDueList(updated);
       if (soundOn) playAddToCartSound();
       setIsAddModalOpen(false);
       setEditingDueId(null);
@@ -464,11 +493,9 @@ export default function DueLedgerManager({
       note: formData.note.trim()
     };
 
-    setDueList(prev => {
-      const updated = [newEntry, ...prev];
-      saveToCpanelDb('salma_due_ledger', updated);
-      return updated;
-    });
+    const updatedDue = [newEntry, ...dueList];
+    saveToCpanelDb('salma_due_ledger', updatedDue);
+    setDueList(updatedDue);
 
     // If initial paid was given, record in POS Ledger as income
     if (initialPaid > 0) {
@@ -482,11 +509,9 @@ export default function DueLedgerManager({
         paymentMethod: formData.paymentMethod,
         note: `${custName} এর জমা (${newVoucher})`
       };
-      setLedger(prev => {
-        const updatedLedger = [posEntry, ...prev];
-        saveToCpanelDb('salma_ledger', updatedLedger);
-        return updatedLedger;
-      });
+      const updatedLedger = [posEntry, ...ledger];
+      saveToCpanelDb('salma_ledger', updatedLedger);
+      setLedger(updatedLedger);
     }
 
     if (soundOn) playAddToCartSound();
@@ -540,22 +565,20 @@ export default function DueLedgerManager({
       note: paymentData.note.trim() || (newPaidAmount > selectedDue.totalAmount ? 'বাকি পরিশোধ ও অগ্রীম জমা' : 'বাকি আদায়')
     };
 
-    setDueList(prev => {
-      const updated = prev.map(item => {
-        if (item.id === selectedDue.id) {
-          return {
-            ...item,
-            paidAmount: newPaidAmount,
-            dueAmount: newDueAmount,
-            status: newStatus,
-            payments: [...(item.payments || []), newPaymentRecord]
-          };
-        }
-        return item;
-      });
-      saveToCpanelDb('salma_due_ledger', updated);
-      return updated;
+    const updatedDue = dueList.map(item => {
+      if (item.id === selectedDue.id) {
+        return {
+          ...item,
+          paidAmount: newPaidAmount,
+          dueAmount: newDueAmount,
+          status: newStatus,
+          payments: [...(item.payments || []), newPaymentRecord]
+        };
+      }
+      return item;
     });
+    saveToCpanelDb('salma_due_ledger', updatedDue);
+    setDueList(updatedDue);
 
     // Add to POS ledger if checked
     if (paymentData.addToPosLedger) {
@@ -569,11 +592,9 @@ export default function DueLedgerManager({
         paymentMethod: paymentData.paymentMethod,
         note: `${selectedDue.customerName} থেকে জমা আদায় (${selectedDue.voucherNo})`
       };
-      setLedger(prev => {
-        const updatedLedger = [posEntry, ...prev];
-        saveToCpanelDb('salma_ledger', updatedLedger);
-        return updatedLedger;
-      });
+      const updatedLedger = [posEntry, ...ledger];
+      saveToCpanelDb('salma_ledger', updatedLedger);
+      setLedger(updatedLedger);
     }
 
     if (soundOn) playOrderSuccessSound();
@@ -584,35 +605,31 @@ export default function DueLedgerManager({
   // Handler: Delete Due Entry
   const handleDeleteDue = (id: string, voucherNo: string) => {
     if (confirm(`আপনি কি সত্যিই বাকি রেকর্ড ${voucherNo} মুছে ফেলতে চান?`)) {
-      setDueList(prev => {
-        const updated = prev.filter(d => d.id !== id);
-        saveToCpanelDb('salma_due_ledger', updated);
-        return updated;
-      });
+      const updated = dueList.filter(d => d.id !== id);
+      saveToCpanelDb('salma_due_ledger', updated);
+      setDueList(updated);
     }
   };
 
   // Handler: Delete Individual Payment Installment inside a Due Record
   const handleDeletePaymentInstallment = (dueId: string, paymentId: string, payAmount: number) => {
     if (confirm(`আপনি কি এই ৳${payAmount} জমার এন্ট্রিটি মুছে ফেলতে চান?`)) {
-      setDueList(prev => {
-        const updated = prev.map(d => {
-          if (d.id !== dueId) return d;
-          const nextPayments = (d.payments || []).filter(p => p.id !== paymentId);
-          const nextPaid = Math.max(0, d.paidAmount - payAmount);
-          const nextDue = Math.max(0, d.totalAmount - nextPaid);
-          const nextStatus: DueEntry['status'] = nextDue === 0 ? 'paid' : (nextPaid > 0 ? 'partial' : 'unpaid');
-          return {
-            ...d,
-            paidAmount: nextPaid,
-            dueAmount: nextDue,
-            status: nextStatus,
-            payments: nextPayments
-          };
-        });
-        saveToCpanelDb('salma_due_ledger', updated);
-        return updated;
+      const updated = dueList.map(d => {
+        if (d.id !== dueId) return d;
+        const nextPayments = (d.payments || []).filter(p => p.id !== paymentId);
+        const nextPaid = Math.max(0, d.paidAmount - payAmount);
+        const nextDue = Math.max(0, d.totalAmount - nextPaid);
+        const nextStatus: DueEntry['status'] = nextDue === 0 ? 'paid' : (nextPaid > 0 ? 'partial' : 'unpaid');
+        return {
+          ...d,
+          paidAmount: nextPaid,
+          dueAmount: nextDue,
+          status: nextStatus,
+          payments: nextPayments
+        };
       });
+      saveToCpanelDb('salma_due_ledger', updated);
+      setDueList(updated);
     }
   };
 
@@ -620,17 +637,19 @@ export default function DueLedgerManager({
   const handleSettleOrderDue = (order: Order) => {
     if (confirm(`অর্ডার #${order.id} এর অবশিষ্ট ডেলিভারি বাকি ৳${order.dueAmount} নগদ আদায় করে 'Delivered' হিসেবে চিহ্নিত করবেন?`)) {
       const collected = order.dueAmount;
-      setOrders(prev => prev.map(o => {
+      const updatedOrders = orders.map(o => {
         if (o.id === order.id) {
           return {
             ...o,
             dueAmount: 0,
-            paymentStatus: 'Fully Paid (100%)',
-            status: 'Delivered'
+            paymentStatus: 'Fully Paid (100%)' as const,
+            status: 'Delivered' as const
           };
         }
         return o;
-      }));
+      });
+      saveToCpanelDb('salma_orders', updatedOrders);
+      setOrders(updatedOrders);
 
       // Add to POS Ledger
       const posEntry: LedgerEntry = {
@@ -643,7 +662,9 @@ export default function DueLedgerManager({
         paymentMethod: 'Cash',
         note: `অর্ডার #${order.id} ডেলিভারি বাকি আদায় (${order.customerName})`
       };
-      setLedger(prev => [posEntry, ...prev]);
+      const updatedLedger = [posEntry, ...ledger];
+      saveToCpanelDb('salma_ledger', updatedLedger);
+      setLedger(updatedLedger);
 
       if (soundOn) playOrderSuccessSound();
       alert(`অর্ডার #${order.id} এর ৳${collected} বাকি সফলভাবে আদায় হয়েছে!`);
