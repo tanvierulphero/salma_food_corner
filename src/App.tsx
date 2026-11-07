@@ -25,7 +25,7 @@ import {
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION } from './types';
-import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer, getCustomerDueOrAdvanceBalance } from './utils/sqlSync';
+import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer, getCustomerDueOrAdvanceBalance, getCustomerTransactions } from './utils/sqlSync';
 
 // Types
 interface FoodItem {
@@ -2015,11 +2015,78 @@ export default function App() {
                       </div>
                       <button 
                         type="submit"
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs shadow"
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs shadow cursor-pointer"
                       >
                         প্রোফাইল সংরক্ষণ করুন
                       </button>
                     </form>
+
+                    {/* Customer Ledger & All Transactions Section */}
+                    {(() => {
+                      const { vouchers, payments } = getCustomerTransactions(currentCustomer.phone, currentCustomer.name);
+                      if (vouchers.length === 0 && payments.length === 0) return null;
+
+                      return (
+                        <div className="border-t border-gray-100 pt-5 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-bold text-sm text-gray-900 flex items-center gap-1.5">
+                              <Receipt className="w-4 h-4 text-red-600" />
+                              <span>আপনার সকল বাকি ও লেনদেনের ইতিহাস</span>
+                            </h4>
+                            <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                              মোট {vouchers.length}টি ভাউচার
+                            </span>
+                          </div>
+
+                          {/* Vouchers List */}
+                          <div className="space-y-2">
+                            {vouchers.map(v => (
+                              <div key={v.id} className="bg-amber-50/40 border border-amber-200/70 rounded-xl p-3 text-xs space-y-1">
+                                <div className="flex justify-between items-center">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-gray-200 text-[10px]">
+                                      {v.voucherNo}
+                                    </span>
+                                    <span className="text-gray-500 text-[10px]">{v.date}</span>
+                                  </div>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    v.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'
+                                  }`}>
+                                    {v.status === 'paid' ? 'পরিশোধিত' : `বাকি: ৳${v.dueAmount}`}
+                                  </span>
+                                </div>
+                                <p className="text-gray-700 text-[11px] pt-0.5">বিবরণ: {v.itemsDescription}</p>
+                                <div className="flex justify-between pt-1 border-t border-amber-200/50 text-[10px] text-gray-600 font-semibold">
+                                  <span>মোট বিল: ৳{v.totalAmount}</span>
+                                  <span className="text-emerald-700">জমা: ৳{v.paidAmount}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Payments List */}
+                          {payments.length > 0 && (
+                            <div className="space-y-2 pt-1">
+                              <p className="text-xs font-bold text-emerald-900 flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>আদায় ও জমার ইতিহাস ({payments.length}টি কিস্তি):</span>
+                              </p>
+                              <div className="bg-emerald-50/50 rounded-xl border border-emerald-100 divide-y divide-emerald-100/70 overflow-hidden text-xs">
+                                {payments.map((p: any) => (
+                                  <div key={p.id} className="p-2 flex items-center justify-between">
+                                    <div>
+                                      <span className="font-bold text-emerald-800">৳{p.amount}</span>
+                                      <span className="text-[10px] text-gray-500 ml-1.5">({p.paymentMethod}) • {p.date}</span>
+                                    </div>
+                                    <span className="text-[10px] text-gray-500 font-mono">{p.voucherNo}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   );
                 })() : (

@@ -3,7 +3,7 @@ import {
   BookOpen, Plus, Search, Filter, Phone, MessageSquare, CheckCircle2, 
   AlertCircle, Clock, Calendar, DollarSign, ArrowUpRight, Check, X, 
   Trash2, Edit3, Printer, Share2, UserCheck, RefreshCw, AlertTriangle,
-  Receipt, ArrowDownRight, Wallet, ShoppingBag, Users
+  Receipt, ArrowDownRight, Wallet, ShoppingBag, Users, ChevronDown, ChevronUp, FileText, User, MapPin
 } from 'lucide-react';
 import { DueEntry, LedgerEntry, Order, CustomerProfile } from '../types';
 import { playAddToCartSound, playOrderSuccessSound } from '../utils/audioFeedback';
@@ -17,6 +17,29 @@ interface DueLedgerManagerProps {
   customers: Record<string, CustomerProfile>;
   setCustomers?: React.Dispatch<React.SetStateAction<Record<string, CustomerProfile>>>;
   soundOn: boolean;
+}
+
+export interface CustomerLedgerGroup {
+  customerKey: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress?: string;
+  dueEntries: DueEntry[];
+  orders: Order[];
+  totalBill: number;
+  totalPaid: number;
+  remainingDue: number;
+  advanceDeposit: number;
+  allPayments: Array<{
+    id: string;
+    voucherNo: string;
+    dueId: string;
+    date: string;
+    time?: string;
+    amount: number;
+    paymentMethod: string;
+    note?: string;
+  }>;
 }
 
 const DEFAULT_DUE_DATA: DueEntry[] = [];
@@ -179,12 +202,20 @@ export default function DueLedgerManager({
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'due' | 'unpaid' | 'partial' | 'paid' | 'orders'>('all');
 
+  // Customer Groups Expansion State (Expanded by default; users can collapse if desired)
+  const [collapsedCustomers, setCollapsedCustomers] = useState<Record<string, boolean>>({});
+
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingDueId, setEditingDueId] = useState<string | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [selectedDue, setSelectedDue] = useState<DueEntry | null>(null);
+
+  // Customer-level Statement & Deposit Modals
+  const [isCustomerStatementOpen, setIsCustomerStatementOpen] = useState(false);
+  const [statementCustomer, setStatementCustomer] = useState<any | null>(null);
+  const [customerDepositModalGroup, setCustomerDepositModalGroup] = useState<any | null>(null);
 
   // Form State: Add / Edit Due
   const [formData, setFormData] = useState({
@@ -387,23 +418,196 @@ export default function DueLedgerManager({
   const orderDuesList = orders.filter(o => o.dueAmount > 0 && o.status !== 'Delivered' && o.status !== 'Cancelled');
   const totalOrderDue = orderDuesList.reduce((sum, o) => sum + o.dueAmount, 0);
 
-  // Filter Logic
-  const filteredDueList = dueList.filter(entry => {
-    const matchSearch = 
-      entry.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.customerPhone.includes(searchTerm) ||
-      entry.voucherNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.itemsDescription.toLowerCase().includes(searchTerm.toLowerCase());
+  // Customer-First Ledger Grouping (কাষ্টমার প্রোফাইলের ভিতরে সকল লেনদেন)
+  const customerLedgerGroups: CustomerLedgerGroup[] = React.useMemo(() => {
+    const groupMap = new Map<string, CustomerLedgerGroup>();
 
-    if (!matchSearch) return false;
+    // 1. Seed from allCustomersList
+    allCustomersList.forEach(c => {
+      const key = normalizeBdPhone(c.phone) || c.name.trim();
+      if (!key) return;
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          customerKey: key,
+          customerName: c.name,
+          customerPhone: normalizeBdPhone(c.phone) || c.phone,
+          customerAddress: c.address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+          dueEntries: [],
+          orders: [],
+          totalBill: 0,
+          totalPaid: 0,
+          remainingDue: 0,
+          advanceDeposit: 0,
+          allPayments: []
+        });
+      }
+    });
 
-    if (activeFilter === 'all') return true;
-    if (activeFilter === 'due') return entry.status === 'unpaid' || entry.status === 'partial';
-    if (activeFilter === 'unpaid') return entry.status === 'unpaid';
-    if (activeFilter === 'partial') return entry.status === 'partial';
-    if (activeFilter === 'paid') return entry.status === 'paid';
-    return true;
+    // 2. Map every dueList entry to its respective customer profile
+    dueList.forEach(d => {
+      const key = normalizeBdPhone(d.customerPhone) || d.customerName.trim();
+      let grp = groupMap.get(key);
+      if (!grp) {
+        grp = {
+          customerKey: key,
+          customerName: d.customerName || 'সম্মানিত গ্রাহক',
+          customerPhone: normalizeBdPhone(d.customerPhone) || d.customerPhone,
+          customerAddress: 'চান্দনা চৌরাস্তা, গাজীপুর',
+          dueEntries: [],
+          orders: [],
+          totalBill: 0,
+          totalPaid: 0,
+          remainingDue: 0,
+          advanceDeposit: 0,
+          allPayments: []
+        };
+        groupMap.set(key, grp);
+      }
+      if (d.customerName && (!grp.customerName || grp.customerName === 'সাধারণ খদ্দের' || grp.customerName === 'সম্মানিত গ্রাহক')) {
+        grp.customerName = d.customerName;
+      }
+      grp.dueEntries.push(d);
+      grp.totalBill += Number(d.totalAmount) || 0;
+      grp.totalPaid += Number(d.paidAmount) || 0;
+
+      (d.payments || []).forEach(p => {
+        grp!.allPayments.push({
+          id: p.id,
+          voucherNo: d.voucherNo,
+          dueId: d.id,
+          date: p.date,
+          time: p.time,
+          amount: Number(p.amount) || 0,
+          paymentMethod: p.paymentMethod,
+          note: p.note
+        });
+      });
+    });
+
+    // 3. Map online orders
+    orders.forEach(o => {
+      const key = normalizeBdPhone(o.phone) || o.customerName.trim();
+      let grp = groupMap.get(key);
+      if (!grp) {
+        grp = {
+          customerKey: key,
+          customerName: o.customerName,
+          customerPhone: normalizeBdPhone(o.phone) || o.phone,
+          customerAddress: o.address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+          dueEntries: [],
+          orders: [],
+          totalBill: 0,
+          totalPaid: 0,
+          remainingDue: 0,
+          advanceDeposit: 0,
+          allPayments: []
+        };
+        groupMap.set(key, grp);
+      }
+      grp.orders.push(o);
+    });
+
+    // 4. Calculate net remainingDue & advanceDeposit
+    const list = Array.from(groupMap.values()).map(g => {
+      const diff = g.totalBill - g.totalPaid;
+      return {
+        ...g,
+        remainingDue: diff > 0 ? diff : 0,
+        advanceDeposit: diff < 0 ? Math.abs(diff) : 0
+      };
+    });
+
+    // Sort by remaining due (highest due first), then advance deposit, then customer name
+    list.sort((a, b) => {
+      if (a.remainingDue !== b.remainingDue) return b.remainingDue - a.remainingDue;
+      if (a.advanceDeposit !== b.advanceDeposit) return b.advanceDeposit - a.advanceDeposit;
+      return a.customerName.localeCompare(b.customerName, 'bn');
+    });
+
+    return list;
+  }, [allCustomersList, dueList, orders]);
+
+  // Filter Logic across Customer Profiles
+  const filteredCustomerGroups = customerLedgerGroups.filter(grp => {
+    const hasTransactions = grp.dueEntries.length > 0 || grp.orders.length > 0;
+
+    if (activeFilter === 'due' && grp.remainingDue <= 0) return false;
+    if (activeFilter === 'unpaid' && (grp.remainingDue <= 0 || grp.totalPaid > 0)) return false;
+    if (activeFilter === 'partial' && (grp.remainingDue <= 0 || grp.totalPaid === 0)) return false;
+    if (activeFilter === 'paid' && grp.remainingDue > 0) return false;
+
+    if (!searchTerm.trim()) return hasTransactions || grp.remainingDue > 0 || grp.advanceDeposit > 0;
+
+    const q = searchTerm.toLowerCase().trim();
+    const matchCustomer =
+      grp.customerName.toLowerCase().includes(q) ||
+      grp.customerPhone.includes(q) ||
+      (grp.customerAddress && grp.customerAddress.toLowerCase().includes(q));
+    if (matchCustomer) return true;
+
+    const matchVoucher = grp.dueEntries.some(
+      d =>
+        d.voucherNo.toLowerCase().includes(q) ||
+        d.itemsDescription.toLowerCase().includes(q) ||
+        (d.note && d.note.toLowerCase().includes(q))
+    );
+    if (matchVoucher) return true;
+
+    const matchOrder = grp.orders.some(
+      o => o.id.toLowerCase().includes(q) || o.items.some(i => i.nameBn.toLowerCase().includes(q))
+    );
+    return matchOrder;
   });
+
+  const isCustomerExpanded = (key: string) => {
+    return collapsedCustomers[key] !== true; // Expanded by default!
+  };
+
+  const toggleCustomerExpanded = (key: string) => {
+    setCollapsedCustomers(prev => ({ ...prev, [key]: !isCustomerExpanded(key) }));
+  };
+
+  const handleOpenAddDueForCustomer = (grp: CustomerLedgerGroup) => {
+    setSelectedCustomerKey(grp.customerKey);
+    setEditingDueId(null);
+    setFormData({
+      customerName: grp.customerName,
+      customerPhone: grp.customerPhone,
+      totalAmount: '',
+      initialPaid: '',
+      itemsDescription: '',
+      dueDate: '',
+      note: '',
+      paymentMethod: 'Cash'
+    });
+    setIsAddModalOpen(true);
+  };
+
+  const handleOpenPaymentForCustomer = (grp: CustomerLedgerGroup) => {
+    setCustomerDepositModalGroup(grp);
+    setPaymentData({
+      amount: grp.remainingDue > 0 ? String(grp.remainingDue) : '',
+      paymentMethod: 'Cash',
+      addToPosLedger: true,
+      note: grp.remainingDue > 0 ? 'বাকি পরিশোধ' : 'অগ্রীম জমা'
+    });
+  };
+
+  const handleSendCustomerSmsReminder = (customerName: string, phone: string, amount: number) => {
+    const text = encodeURIComponent(
+      `আসসালামু আলাইকুম ${customerName} সাহেব, সালমা ফুড কর্ণার (চান্দনা চৌরাস্তা, গাজীপুর) থেকে বিনীতভাবে জানানো যাচ্ছে যে আপনার মোট বকেয়া বাকি ৳${amount} টাকা পরিশোধের জন্য অনুরোধ করা হচ্ছে। ধন্যবাদ!`
+    );
+    window.open(`sms:${phone}?body=${text}`, '_blank');
+  };
+
+  const handleSendCustomerWhatsAppReminder = (customerName: string, phone: string, amount: number) => {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const intlPhone = cleanPhone.startsWith('0') ? '88' + cleanPhone : cleanPhone;
+    const text = encodeURIComponent(
+      `আসসালামু আলাইকুম ${customerName} সাহেব, সালমা ফুড কর্ণার (চান্দনা চৌরাস্তা, গাজীপুর) থেকে বিনীতভাবে জানানো যাচ্ছে যে আপনার মোট বকেয়া বাকি ৳${amount} টাকা পরিশোধের জন্য অনুরোধ করা হচ্ছে। ধন্যবাদ!`
+    );
+    window.open(`https://wa.me/${intlPhone}?text=${text}`, '_blank');
+  };
 
   // Handler: Open Edit Due Modal
   const handleOpenEditDue = (due: DueEntry) => {
@@ -686,6 +890,161 @@ export default function DueLedgerManager({
     const intlPhone = cleanPhone.startsWith('0') ? '88' + cleanPhone : cleanPhone;
     const text = encodeURIComponent(getReminderText(due));
     window.open(`https://wa.me/${intlPhone}?text=${text}`, '_blank');
+  };
+
+  // Handler: Customer-Level Deposit Submit (deposits to customer balance and settles dues)
+  const handleCustomerDepositSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customerDepositModalGroup) return;
+
+    const depositAmount = parseFloat(paymentData.amount) || 0;
+    if (depositAmount <= 0) {
+      alert('অনুগ্রহ করে সঠিক জমার পরিমাণ লিখুন');
+      return;
+    }
+
+    const grp = customerDepositModalGroup;
+    let remainingToDistribute = depositAmount;
+    const nowTimeStr = new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
+    const noteText = paymentData.note.trim() || (grp.remainingDue > 0 ? 'গ্রাহক একাউন্টে জমা' : 'অগ্রীম জমা');
+
+    let updatedDueList = [...dueList];
+
+    // Find all vouchers for this customer
+    const customerVouchers = updatedDueList.filter(d => {
+      const key = normalizeBdPhone(d.customerPhone) || d.customerName.trim();
+      return key === grp.customerKey;
+    });
+
+    if (customerVouchers.length > 0) {
+      // Sort vouchers: unpaid/partial first (chronological), then paid
+      customerVouchers.sort((a, b) => {
+        if (a.dueAmount > 0 && b.dueAmount <= 0) return -1;
+        if (a.dueAmount <= 0 && b.dueAmount > 0) return 1;
+        return a.date.localeCompare(b.date);
+      });
+
+      // Distribute payment across vouchers
+      for (const v of customerVouchers) {
+        if (remainingToDistribute <= 0) break;
+
+        const targetDue = updatedDueList.find(item => item.id === v.id);
+        if (!targetDue) continue;
+
+        let payForThis = 0;
+        if (targetDue.dueAmount > 0) {
+          payForThis = Math.min(remainingToDistribute, targetDue.dueAmount);
+        } else if (v === customerVouchers[customerVouchers.length - 1] && remainingToDistribute > 0) {
+          payForThis = remainingToDistribute;
+        }
+
+        if (payForThis > 0) {
+          remainingToDistribute -= payForThis;
+          const nextPaid = targetDue.paidAmount + payForThis;
+          const nextDue = Math.max(0, targetDue.totalAmount - nextPaid);
+          const nextStatus: DueEntry['status'] = nextDue === 0 ? 'paid' : 'partial';
+
+          const newPaymentRecord = {
+            id: `pay-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            date: todayStr,
+            time: nowTimeStr,
+            amount: payForThis,
+            paymentMethod: paymentData.paymentMethod,
+            note: noteText
+          };
+
+          updatedDueList = updatedDueList.map(item => {
+            if (item.id === targetDue.id) {
+              return {
+                ...item,
+                paidAmount: nextPaid,
+                dueAmount: nextDue,
+                status: nextStatus,
+                payments: [...(item.payments || []), newPaymentRecord]
+              };
+            }
+            return item;
+          });
+        }
+      }
+
+      // If any excess remaining, attach to the last voucher
+      if (remainingToDistribute > 0 && customerVouchers.length > 0) {
+        const lastVoucherId = customerVouchers[customerVouchers.length - 1].id;
+        const targetDue = updatedDueList.find(item => item.id === lastVoucherId);
+        if (targetDue) {
+          const nextPaid = targetDue.paidAmount + remainingToDistribute;
+          const newPaymentRecord = {
+            id: `pay-${Date.now()}-adv`,
+            date: todayStr,
+            time: nowTimeStr,
+            amount: remainingToDistribute,
+            paymentMethod: paymentData.paymentMethod,
+            note: 'অগ্রীম জমা (Advance Deposit)'
+          };
+          updatedDueList = updatedDueList.map(item => {
+            if (item.id === targetDue.id) {
+              return {
+                ...item,
+                paidAmount: nextPaid,
+                payments: [...(item.payments || []), newPaymentRecord]
+              };
+            }
+            return item;
+          });
+        }
+      }
+    } else {
+      // Create new advance voucher for this customer
+      const advanceVoucher: DueEntry = {
+        id: `due-${Date.now()}`,
+        voucherNo: `ADV-${Math.floor(100 + Math.random() * 900)}`,
+        customerName: grp.customerName,
+        customerPhone: grp.customerPhone,
+        totalAmount: 0,
+        paidAmount: depositAmount,
+        dueAmount: 0,
+        itemsDescription: 'অগ্রীম ব্যালেন্স জমা (Advance Credit Deposit)',
+        date: todayStr,
+        status: 'paid',
+        note: noteText,
+        payments: [
+          {
+            id: `pay-${Date.now()}`,
+            date: todayStr,
+            time: nowTimeStr,
+            amount: depositAmount,
+            paymentMethod: paymentData.paymentMethod,
+            note: noteText
+          }
+        ]
+      };
+      updatedDueList = [advanceVoucher, ...updatedDueList];
+    }
+
+    saveToCpanelDb('salma_due_ledger', updatedDueList);
+    setDueList(updatedDueList);
+
+    // Add to POS ledger if checked
+    if (paymentData.addToPosLedger) {
+      const posEntry: LedgerEntry = {
+        id: `pos-${Date.now()}`,
+        voucherNo: `DEP-${Math.floor(100 + Math.random() * 900)}`,
+        type: 'income',
+        category: 'গ্রাহক জমা ও বকেয়া আদায়',
+        amount: depositAmount,
+        date: todayStr,
+        paymentMethod: paymentData.paymentMethod,
+        note: `${grp.customerName} (${grp.customerPhone}) থেকে জমা আদায়`
+      };
+      const updatedLedger = [posEntry, ...ledger];
+      saveToCpanelDb('salma_ledger', updatedLedger);
+      setLedger(updatedLedger);
+    }
+
+    if (soundOn) playOrderSuccessSound();
+    setCustomerDepositModalGroup(null);
+    alert(`${grp.customerName}-এর অনুকূলে ৳${depositAmount} সফলভাবে জমা এন্ট্রি হয়েছে!`);
   };
 
   return (
@@ -1193,12 +1552,12 @@ export default function DueLedgerManager({
         {/* Filter Pills */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-[11px] font-bold">
           {[
-            { id: 'all', label: `সব লেনদেন (${dueList.length})` },
-            { id: 'due', label: `বকেয়া আছে (${activeDues.length})` },
-            { id: 'unpaid', label: `সম্পূর্ণ বাকি (${dueList.filter(d => d.status === 'unpaid').length})` },
-            { id: 'partial', label: `আংশিক আদায় (${dueList.filter(d => d.status === 'partial').length})` },
-            { id: 'paid', label: `পরিশোধিত / অগ্রীম (${dueList.filter(d => d.status === 'paid').length})` },
-            { id: 'orders', label: `অর্ডার বকেয়া (${orderDuesList.length})` }
+            { id: 'all', label: `সব গ্রাহক (${customerLedgerGroups.length})` },
+            { id: 'due', label: `বকেয়া আছে (${customerLedgerGroups.filter(g => g.remainingDue > 0).length})` },
+            { id: 'unpaid', label: `সম্পূর্ণ বাকি (${customerLedgerGroups.filter(g => g.remainingDue > 0 && g.totalPaid === 0).length})` },
+            { id: 'partial', label: `আংশিক আদায় (${customerLedgerGroups.filter(g => g.remainingDue > 0 && g.totalPaid > 0).length})` },
+            { id: 'paid', label: `পরিশোধিত / অগ্রীম (${customerLedgerGroups.filter(g => g.remainingDue === 0).length})` },
+            { id: 'orders', label: `অনলাইন অর্ডার বাকি (${orderDuesList.length})` }
           ].map(tab => (
             <button
               key={tab.id}
@@ -1295,237 +1654,432 @@ export default function DueLedgerManager({
         </div>
       ) : (
         /* ============================================================== */
-        /* SECTION: REGULAR CUSTOMER DUE LEDGER CARDS                    */
+        /* SECTION: CUSTOMER-PROFILE CENTRIC DUE LEDGER                  */
+        /* (গ্রাহক প্রোফাইলের ভেতরে সকল ভাউচার, লেনদেন ও জমার খতিয়ান)     */
         /* ============================================================== */
-        <div className="space-y-3">
-          {filteredDueList.length === 0 ? (
+        <div className="space-y-3.5">
+          {filteredCustomerGroups.length === 0 ? (
             <div className="bg-white rounded-3xl p-8 text-center text-gray-500 border border-gray-200 space-y-2">
               <BookOpen className="w-10 h-10 text-gray-300 mx-auto" />
-              <p className="text-sm font-bold text-gray-800">কোনো বাকি হিসাব পাওয়া যায়নি</p>
+              <p className="text-sm font-bold text-gray-800">কোনো গ্রাহকের হিসাব পাওয়া যায়নি</p>
               <p className="text-xs text-gray-500">উপরে কাস্টমারের নাম সিলেক্ট করে নতুন বাকি বা জমা এন্ট্রি করুন।</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3">
-              {filteredDueList.map(due => {
-                const isPaid = due.status === 'paid';
-                const isPartial = due.status === 'partial';
-                const custOverallBal = getCustomerDueOrAdvanceBalance(due.customerPhone, due.customerName, dueList);
-                const itemAdvance = Math.max(0, due.paidAmount - due.totalAmount);
+            filteredCustomerGroups.map(grp => {
+              const hasDue = grp.remainingDue > 0;
+              const hasAdvance = grp.advanceDeposit > 0;
+              const isExpanded = isCustomerExpanded(grp.customerKey);
+              const totalTransactions = grp.dueEntries.length + grp.orders.length;
 
-                return (
-                  <div 
-                    key={due.id} 
-                    className={`bg-white rounded-3xl border p-4 shadow-2xs space-y-3 transition ${
-                      isPaid 
-                        ? 'border-emerald-200 bg-gradient-to-br from-emerald-50/20 to-white' 
-                        : isPartial
-                        ? 'border-amber-200 bg-gradient-to-br from-amber-50/20 to-white'
-                        : 'border-red-200 bg-gradient-to-br from-red-50/15 to-white'
-                    }`}
-                  >
-                    {/* Header Row */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-mono text-[10px] font-bold bg-gray-100 text-gray-700 px-2 py-0.5 rounded-md">
-                            {due.voucherNo}
-                          </span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                            isPaid 
-                              ? 'bg-emerald-100 text-emerald-800' 
-                              : isPartial 
-                              ? 'bg-amber-100 text-amber-800' 
-                              : 'bg-red-100 text-red-800'
-                          }`}>
-                            {isPaid ? (
-                              <>
-                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                <span>{itemAdvance > 0 ? `অগ্রীম জমা (+৳${itemAdvance})` : 'সম্পূর্ণ পরিশোধিত'}</span>
-                              </>
-                            ) : isPartial ? (
-                              <>
-                                <Clock className="w-3 h-3 text-amber-600" />
-                                <span>আংশিক বাকি</span>
-                              </>
+              return (
+                <div
+                  key={grp.customerKey}
+                  className={`bg-white rounded-3xl border shadow-2xs overflow-hidden transition ${
+                    hasDue
+                      ? 'border-red-200/90 ring-1 ring-red-100'
+                      : hasAdvance
+                      ? 'border-emerald-200/90 ring-1 ring-emerald-100'
+                      : 'border-gray-200'
+                  }`}
+                >
+                  {/* Customer Profile Header Card */}
+                  <div className={`p-4 ${
+                    hasDue
+                      ? 'bg-gradient-to-r from-red-50/70 via-rose-50/40 to-white'
+                      : hasAdvance
+                      ? 'bg-gradient-to-r from-emerald-50/70 via-teal-50/40 to-white'
+                      : 'bg-gradient-to-r from-gray-50 to-white'
+                  }`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      {/* Left: Customer Info & Name & Net Balance Badge */}
+                      <div className="flex items-start gap-3">
+                        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black text-sm shrink-0 shadow-2xs ${
+                          hasDue
+                            ? 'bg-red-600 text-white'
+                            : hasAdvance
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-gray-200 text-gray-700'
+                        }`}>
+                          {grp.customerName.charAt(0) || 'ক'}
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-base font-black text-gray-900 tracking-tight">
+                              {grp.customerName}
+                            </h3>
+                            {/* Profile Net Balance Badge Right Next to Name */}
+                            {hasDue ? (
+                              <span className="bg-red-600 text-white text-[11px] font-black px-2.5 py-0.5 rounded-full shadow-2xs flex items-center gap-1 animate-pulse">
+                                <AlertTriangle className="w-3 h-3" />
+                                <span>অবশিষ্ট বাকি: ৳{grp.remainingDue}</span>
+                              </span>
+                            ) : hasAdvance ? (
+                              <span className="bg-emerald-600 text-white text-[11px] font-black px-2.5 py-0.5 rounded-full shadow-2xs flex items-center gap-1">
+                                <Wallet className="w-3 h-3" />
+                                <span>অগ্রীম জমা: ৳{grp.advanceDeposit}</span>
+                              </span>
                             ) : (
-                              <>
-                                <AlertTriangle className="w-3 h-3 text-red-600" />
-                                <span>বকেয়া রয়েছে</span>
-                              </>
+                              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>হিসাব পরিশোধিত (৳০)</span>
+                              </span>
                             )}
+                          </div>
+
+                          <div className="flex items-center gap-3 text-xs text-gray-600 flex-wrap">
+                            <a
+                              href={`tel:${grp.customerPhone}`}
+                              className="font-mono font-bold text-gray-800 hover:text-blue-600 flex items-center gap-1"
+                            >
+                              <Phone className="w-3.5 h-3.5 text-gray-400" />
+                              <span>{grp.customerPhone}</span>
+                            </a>
+                            <span className="text-gray-300">•</span>
+                            <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-gray-400" />
+                              <span>{grp.customerAddress}</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: 3 KPI Summary Chips */}
+                      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-center shrink-0">
+                        <div className="bg-white/90 border border-gray-200/80 rounded-xl px-2.5 py-1.5 shadow-2xs">
+                          <span className="text-[9px] font-bold text-gray-500 block">মোট খাবার বিল</span>
+                          <span className="text-xs font-black text-gray-900">৳{grp.totalBill}</span>
+                        </div>
+                        <div className="bg-white/90 border border-emerald-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
+                          <span className="text-[9px] font-bold text-emerald-700 block">মোট জমা</span>
+                          <span className="text-xs font-black text-emerald-700">৳{grp.totalPaid}</span>
+                        </div>
+                        <div className={`rounded-xl px-2.5 py-1.5 shadow-2xs border ${
+                          hasDue
+                            ? 'bg-red-50 border-red-200 text-red-700'
+                            : hasAdvance
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                            : 'bg-gray-50 border-gray-200 text-gray-700'
+                        }`}>
+                          <span className="text-[9px] font-bold block">
+                            {hasDue ? 'নিট বাকি' : hasAdvance ? 'অগ্রীম জমা' : 'ব্যালেন্স'}
+                          </span>
+                          <span className="text-xs font-black">
+                            ৳{hasDue ? grp.remainingDue : hasAdvance ? grp.advanceDeposit : 0}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2 flex-wrap mt-1">
-                          <h3 className="text-sm font-black text-gray-900">{due.customerName}</h3>
-                          {/* Customer Profile Net Balance Badge Next to Name */}
-                          {custOverallBal.remainingDue > 0 ? (
-                            <span className="bg-red-100 text-red-700 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-full">
-                              অবশিষ্ট বাকি: ৳{custOverallBal.remainingDue}
-                            </span>
-                          ) : custOverallBal.advanceDeposit > 0 ? (
-                            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-black px-2 py-0.5 rounded-full">
-                              অগ্রীম জমা: ৳{custOverallBal.advanceDeposit}
-                            </span>
-                          ) : (
-                            <span className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                              বাকি নেই (৳০)
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-gray-600 font-mono flex items-center gap-1">
-                          <Phone className="w-3 h-3 text-gray-400" />
-                          <span>{due.customerPhone}</span>
-                        </p>
-                      </div>
-
-                      {/* Amounts Badge */}
-                      <div className="text-right shrink-0">
-                        <span className="text-[10px] text-gray-400 block font-mono">{due.date}</span>
-                        <div className="mt-0.5">
-                          <span className="text-xs text-gray-500 block">মোট বিল: ৳{due.totalAmount}</span>
-                          {itemAdvance > 0 ? (
-                            <span className="text-base font-black text-emerald-700">
-                              অগ্রীম জমা: ৳{itemAdvance}
-                            </span>
-                          ) : (
-                            <span className={`text-base font-black ${isPaid ? 'text-emerald-700' : 'text-red-600'}`}>
-                              {isPaid ? 'পরিশোধিত' : `বাকি: ৳${due.dueAmount}`}
-                            </span>
-                          )}
-                        </div>
                       </div>
                     </div>
 
-                    {/* Description Box */}
-                    <div className="bg-gray-50/80 p-2.5 rounded-2xl border border-gray-100 space-y-1">
-                      <p className="text-xs font-semibold text-gray-800 flex items-center gap-1">
-                        <Receipt className="w-3.5 h-3.5 text-gray-500" />
-                        <span>খাবার বা বাকির বিবরণ:</span>
-                      </p>
-                      <p className="text-xs text-gray-700 pl-4">{due.itemsDescription}</p>
-
-                      {due.note && (
-                        <p className="text-[11px] text-gray-500 italic pl-4 border-t border-gray-200/60 pt-1 mt-1">
-                          নোট: {due.note}
-                        </p>
-                      )}
-
-                      {due.dueDate && !isPaid && (
-                        <p className="text-[11px] text-amber-800 font-bold pl-4 flex items-center gap-1 mt-1">
-                          <Calendar className="w-3 h-3 text-amber-600" />
-                          <span>সম্ভাব্য পরিশোধের তারিখ: {due.dueDate}</span>
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Payment History (if any) */}
-                    {due.payments && due.payments.length > 0 && (
-                      <div className="bg-emerald-50/60 p-2.5 rounded-2xl border border-emerald-100 text-[11px] space-y-1">
-                        <p className="font-bold text-emerald-950 flex items-center justify-between">
-                          <span>আদায় ও জমার ইতিহাস:</span>
-                          <span className="text-emerald-700">মোট জমা: ৳{due.paidAmount}</span>
-                        </p>
-                        <div className="divide-y divide-emerald-100">
-                          {due.payments.map(p => (
-                            <div key={p.id} className="py-1 flex items-center justify-between text-emerald-900 gap-2">
-                              <div>
-                                <span className="font-semibold">৳{p.amount}</span> ({p.paymentMethod})
-                                <span className="text-[10px] text-gray-500 ml-1.5">{p.date} {p.time}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                {p.note && <span className="text-[10px] text-gray-500 truncate max-w-[110px]">{p.note}</span>}
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeletePaymentInstallment(due.id, p.id, p.amount)}
-                                  className="text-red-500 hover:text-red-700 p-0.5 rounded hover:bg-red-50 cursor-pointer"
-                                  title="এই জমাটি মুছে ফেলুন"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Action Bar */}
-                    <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-gray-100">
-                      {/* Left: Communication */}
-                      <div className="flex items-center gap-1">
+                    {/* Customer Action Bar */}
+                    <div className="flex items-center justify-between gap-1.5 pt-3 mt-3 border-t border-gray-200/70 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Call */}
                         <a
-                          href={`tel:${due.customerPhone}`}
-                          className="p-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                          href={`tel:${grp.customerPhone}`}
+                          className="p-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 transition"
                           title="কল দিন"
                         >
                           <Phone className="w-3.5 h-3.5" />
                         </a>
-                        {!isPaid && (
+
+                        {/* Reminders (if remainingDue > 0) */}
+                        {hasDue && (
                           <>
                             <button
-                              onClick={() => handleSendSmsReminder(due)}
-                              className="px-2 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200 flex items-center gap-1 transition cursor-pointer"
-                              title="এসএমএস তাগাদা"
+                              onClick={() => handleSendCustomerSmsReminder(grp.customerName, grp.customerPhone, grp.remainingDue)}
+                              className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-bold border border-blue-200 flex items-center gap-1 transition cursor-pointer"
+                              title="গ্রাহকের সম্পূর্ণ বকেয়া বাকির SMS তাগাদা পাঠান"
                             >
-                              <MessageSquare className="w-3 h-3" />
+                              <MessageSquare className="w-3.5 h-3.5" />
                               <span>SMS তাগাদা</span>
                             </button>
                             <button
-                              onClick={() => handleSendWhatsAppReminder(due)}
-                              className="px-2 py-1 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-bold border border-emerald-200 flex items-center gap-1 transition cursor-pointer"
-                              title="WhatsApp তাগাদা"
+                              onClick={() => handleSendCustomerWhatsAppReminder(grp.customerName, grp.customerPhone, grp.remainingDue)}
+                              className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-bold border border-emerald-200 flex items-center gap-1 transition cursor-pointer"
+                              title="হোয়াটসঅ্যাপে সম্পূর্ণ বকেয়া বাকির তাগাদা পাঠান"
                             >
-                              <Share2 className="w-3 h-3" />
+                              <Share2 className="w-3.5 h-3.5" />
                               <span>হোয়াটসঅ্যাপ</span>
                             </button>
                           </>
                         )}
-                      </div>
 
-                      {/* Right: Edit, Payment Collection & Delete */}
-                      <div className="flex items-center gap-1.5">
+                        {/* Full Customer Statement Slip */}
                         <button
                           onClick={() => {
-                            setSelectedDue(due);
-                            setIsReceiptModalOpen(true);
+                            setStatementCustomer(grp);
+                            setIsCustomerStatementOpen(true);
                           }}
-                          className="p-1.5 rounded-xl border border-gray-200 hover:bg-gray-100 text-gray-600 transition cursor-pointer"
-                          title="রসিদ স্লিপ দেখুন ও প্রিন্ট"
+                          className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-gray-100 text-gray-700 text-[11px] font-bold border border-gray-200 flex items-center gap-1 transition cursor-pointer"
+                          title="গ্রাহকের সম্পূর্ণ হিসাবের খতিয়ান স্লিপ প্রিন্ট করুন"
                         >
                           <Printer className="w-3.5 h-3.5" />
+                          <span>স্টেটমেন্ট স্লিপ</span>
                         </button>
+                      </div>
 
+                      <div className="flex items-center gap-1.5">
+                        {/* + Add New Due for this customer */}
                         <button
-                          onClick={() => handleOpenEditDue(due)}
-                          className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                          title="বাকি হিসাব এডিট করুন"
+                          onClick={() => handleOpenAddDueForCustomer(grp)}
+                          className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1 transition active:scale-95 cursor-pointer"
+                          title="এই কাস্টমারের নতুন বাকি এন্ট্রি করুন"
                         >
-                          <Edit3 className="w-3 h-3" />
-                          <span>এডিট</span>
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ নতুন বাকি</span>
                         </button>
 
+                        {/* + Deposit Money for this customer */}
                         <button
-                          onClick={() => handleOpenPayment(due)}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs transition active:scale-95 cursor-pointer"
+                          onClick={() => handleOpenPaymentForCustomer(grp)}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+                          title="এই কাস্টমারের একাউন্টে টাকা জমা নিন"
                         >
                           <Wallet className="w-3.5 h-3.5" />
-                          <span>{isPaid ? '+ অগ্রীম জমা' : 'টাকা জমা'}</span>
+                          <span>+ টাকা জমা</span>
                         </button>
 
+                        {/* Expand / Collapse Toggle */}
                         <button
-                          onClick={() => handleDeleteDue(due.id, due.voucherNo)}
-                          className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                          title="মুছে ফেলুন"
+                          onClick={() => toggleCustomerExpanded(grp.customerKey)}
+                          className="px-2.5 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                          title="লেনদেনের বিবরণ খুলুন বা বন্ধ করুন"
                         >
-                          <Trash2 className="w-3 h-3" />
-                          <span>ডিলেট</span>
+                          <span>{isExpanded ? 'লুকান' : `সকল লেনদেন (${totalTransactions})`}</span>
+                          {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                         </button>
                       </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+
+                  {/* ========================================================== */}
+                  {/* NESTED: "কাষ্টমার প্রোফাইলের ভিতরে সকল লেনদেন"            */}
+                  {/* ========================================================== */}
+                  {isExpanded && (
+                    <div className="p-4 bg-gray-50/60 border-t border-gray-100 space-y-3.5 animate-fadeIn">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-black text-gray-900 flex items-center gap-1.5">
+                          <Receipt className="w-4 h-4 text-red-600" />
+                          <span>{grp.customerName}-এর সকল লেনদেন ও বাকির বিস্তারিত খতিয়ান:</span>
+                        </h4>
+                        <span className="text-[10px] font-bold text-gray-500 bg-white border border-gray-200 px-2 py-0.5 rounded-full">
+                          মোট {totalTransactions} টি ভাউচার/রেকর্ড
+                        </span>
+                      </div>
+
+                      {/* SUB-SECTION 1: FOOD BILLS & DUE VOUCHERS */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-gray-700">
+                          <span className="flex items-center gap-1">
+                            <BookOpen className="w-3.5 h-3.5 text-amber-600" />
+                            <span>১. খাবারের বিল ও বাকি ভাউচারসমূহ ({grp.dueEntries.length}টি)</span>
+                          </span>
+                        </div>
+
+                        {grp.dueEntries.length === 0 ? (
+                          <div className="bg-white p-3 rounded-2xl border border-dashed border-gray-300 text-center text-xs text-gray-400">
+                            কোনো বাকি ভাউচার এন্ট্রি নেই
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {grp.dueEntries.map(due => {
+                              const vPaid = due.status === 'paid';
+                              const vPartial = due.status === 'partial';
+
+                              return (
+                                <div
+                                  key={due.id}
+                                  className={`bg-white rounded-2xl border p-3 shadow-2xs space-y-2 ${
+                                    vPaid
+                                      ? 'border-emerald-200 bg-emerald-50/15'
+                                      : vPartial
+                                      ? 'border-amber-200 bg-amber-50/15'
+                                      : 'border-red-200 bg-red-50/10'
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="space-y-0.5">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="font-mono text-[10px] font-bold bg-gray-100 text-gray-700 px-2 py-0.5 rounded-md">
+                                          {due.voucherNo}
+                                        </span>
+                                        <span className="text-[10px] text-gray-400 font-mono">{due.date}</span>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                          vPaid
+                                            ? 'bg-emerald-100 text-emerald-800'
+                                            : vPartial
+                                            ? 'bg-amber-100 text-amber-800'
+                                            : 'bg-red-100 text-red-800'
+                                        }`}>
+                                          {vPaid ? 'পরিশোধিত' : vPartial ? 'আংশিক বাকি' : 'বকেয়া রয়েছে'}
+                                        </span>
+                                      </div>
+                                      <p className="text-xs font-semibold text-gray-800 pt-0.5">
+                                        <span className="text-gray-500 font-normal">বিবরণ: </span>
+                                        {due.itemsDescription}
+                                      </p>
+                                      {due.note && (
+                                        <p className="text-[10px] text-gray-500 italic">নোট: {due.note}</p>
+                                      )}
+                                      {due.dueDate && !vPaid && (
+                                        <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1">
+                                          <Calendar className="w-3 h-3 text-amber-600" />
+                                          <span>পরিশোধের তারিখ: {due.dueDate}</span>
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    {/* Amounts */}
+                                    <div className="text-right shrink-0">
+                                      <span className="text-[11px] text-gray-500 block">মোট বিল: ৳{due.totalAmount}</span>
+                                      <span className="text-[11px] text-emerald-700 font-semibold block">জমা: ৳{due.paidAmount}</span>
+                                      <span className={`text-xs font-black block ${vPaid ? 'text-emerald-700' : 'text-red-600'}`}>
+                                        {vPaid ? 'পরিশোধিত' : `বাকি: ৳${due.dueAmount}`}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Individual Voucher Actions */}
+                                  <div className="flex items-center justify-end gap-1.5 pt-1.5 border-t border-gray-100">
+                                    <button
+                                      onClick={() => {
+                                        setSelectedDue(due);
+                                        setIsReceiptModalOpen(true);
+                                      }}
+                                      className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-600 transition cursor-pointer"
+                                      title="রসিদ স্লিপ দেখুন ও প্রিন্ট"
+                                    >
+                                      <Printer className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenEditDue(due)}
+                                      className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                                      title="ভাউচার এডিট করুন"
+                                    >
+                                      <Edit3 className="w-3 h-3" />
+                                      <span>এডিট</span>
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenPayment(due)}
+                                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-xs transition active:scale-95 cursor-pointer"
+                                      title="এই ভাউচারে টাকা জমা নিন"
+                                    >
+                                      <Wallet className="w-3 h-3" />
+                                      <span>টাকা জমা</span>
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteDue(due.id, due.voucherNo)}
+                                      className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                                      title="ভাউচার মুছে ফেলুন"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      <span>ডিলেট</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* SUB-SECTION 2: ALL PAYMENTS & DEPOSITS HISTORY */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-gray-700">
+                          <span className="flex items-center gap-1 text-emerald-800">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>২. আদায় ও জমার ইতিহাস ({grp.allPayments.length}টি কিস্তি)</span>
+                          </span>
+                          <span className="text-emerald-700 font-black">সর্বমোট আদায়: ৳{grp.totalPaid}</span>
+                        </div>
+
+                        {grp.allPayments.length === 0 ? (
+                          <div className="bg-white p-3 rounded-2xl border border-dashed border-gray-300 text-center text-xs text-gray-400">
+                            এখনো কোনো জমার রেকর্ড নেই
+                          </div>
+                        ) : (
+                          <div className="bg-white rounded-2xl border border-emerald-100 divide-y divide-emerald-50 overflow-hidden shadow-2xs">
+                            {grp.allPayments.map(p => (
+                              <div key={p.id} className="p-2.5 flex items-center justify-between gap-2 text-xs hover:bg-emerald-50/30 transition">
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-black text-emerald-700 text-sm">৳{p.amount}</span>
+                                    <span className="bg-emerald-100 text-emerald-900 text-[10px] font-bold px-1.5 py-0.2 rounded">
+                                      {p.paymentMethod}
+                                    </span>
+                                    <span className="text-[10px] font-mono text-gray-500 bg-gray-100 px-1.5 py-0.2 rounded">
+                                      {p.voucherNo}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-gray-500 font-mono">
+                                    {p.date} • {p.time} {p.note ? `• ${p.note}` : ''}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePaymentInstallment(p.dueId, p.id, p.amount)}
+                                  className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 cursor-pointer transition"
+                                  title="এই জমার এন্ট্রিটি মুছে ফেলুন"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* SUB-SECTION 3: ONLINE ORDERS (DELIVERY DUES) */}
+                      {grp.orders.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-[11px] font-bold text-blue-900">
+                            <span className="flex items-center gap-1">
+                              <ShoppingBag className="w-3.5 h-3.5 text-blue-700" />
+                              <span>৩. অনলাইন অর্ডার ({grp.orders.length}টি)</span>
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            {grp.orders.map(order => (
+                              <div key={order.id} className="bg-white rounded-2xl border border-blue-200 p-3 shadow-2xs space-y-1.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="bg-blue-100 text-blue-800 text-[10px] font-mono font-bold px-2 py-0.5 rounded">
+                                      #{order.id}
+                                    </span>
+                                    <span className="text-gray-500 text-[10px] font-mono">{order.date}</span>
+                                  </div>
+                                  {order.dueAmount > 0 ? (
+                                    <span className="text-xs font-black text-red-600">ডেলিভারি বাকি: ৳{order.dueAmount}</span>
+                                  ) : (
+                                    <span className="text-xs font-black text-emerald-700">পরিশোধিত</span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-gray-600 truncate">
+                                  {order.items.map(i => `${i.nameBn} x${i.quantity}`).join(', ')}
+                                </p>
+                                <div className="flex items-center justify-between pt-1 text-[10px] text-gray-500">
+                                  <span>মোট বিল: ৳{order.totalAmount} (অগ্রীম ৳{order.advancePaid})</span>
+                                  {order.dueAmount > 0 && (
+                                    <button
+                                      onClick={() => handleSettleOrderDue(order)}
+                                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                      <span>৳{order.dueAmount} আদায় সম্পন্ন</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       )}
@@ -1936,6 +2490,311 @@ export default function DueLedgerManager({
                 বন্ধ করুন
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL 4: CUSTOMER FULL LEDGER STATEMENT SLIP (গ্রাহক খতিয়ান স্লিপ)   */}
+      {/* ============================================================== */}
+      {isCustomerStatementOpen && statementCustomer && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-3 animate-fadeIn">
+          <div className="bg-white w-full max-w-md rounded-3xl p-5 shadow-2xl border border-gray-100 space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-red-100 text-red-700 flex items-center justify-center font-bold">
+                  <Printer className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-gray-900">গ্রাহক খতিয়ান স্টেটমেন্ট</h3>
+                  <p className="text-[10px] text-gray-500">সালমা ফুড কর্ণার • চান্দনা চৌরাস্তা, গাজীপুর</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsCustomerStatementOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Printable Statement Area */}
+            <div id="customer-statement-print" className="bg-amber-50/40 p-4 rounded-2xl border border-amber-200/60 font-mono text-xs space-y-3">
+              <div className="text-center border-b pb-2 space-y-0.5">
+                <h2 className="text-base font-black tracking-tight text-gray-900 font-sans">সালমা ফুড কর্ণার</h2>
+                <p className="text-[10px] text-gray-500">চান্দনা চৌরাস্তা, গাজীপুর সদর-১৭০০ | ০১৭১২-৩৪৫৬৭৮</p>
+                <p className="text-[11px] font-black text-red-700 pt-0.5">গ্রাহক হিসাব ও লেনদেন বিবরণী (Ledger Statement)</p>
+              </div>
+
+              {/* Customer Info */}
+              <div className="text-[11px] space-y-1 bg-white p-2.5 rounded-xl border border-gray-200/80">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">গ্রাহকের নাম:</span>
+                  <span className="font-bold text-gray-900">{statementCustomer.customerName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">মোবাইল নম্বর:</span>
+                  <span className="font-bold">{statementCustomer.customerPhone}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">ঠিকানা:</span>
+                  <span>{statementCustomer.customerAddress}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">স্টেটমেন্ট তারিখ:</span>
+                  <span>{todayStr}</span>
+                </div>
+              </div>
+
+              {/* Vouchers Table */}
+              <div className="space-y-1">
+                <p className="font-bold text-gray-800 text-[11px] font-sans">খাবারের বিল ও বাকি ভাউচার:</p>
+                <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                  <table className="w-full text-[10px] text-left">
+                    <thead className="bg-gray-100 text-gray-700 border-b">
+                      <tr>
+                        <th className="p-1.5">ভাউচার/তারিখ</th>
+                        <th className="p-1.5">বিবরণ</th>
+                        <th className="p-1.5 text-right">বিল</th>
+                        <th className="p-1.5 text-right">বাকি</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {statementCustomer.dueEntries.map((d: any) => (
+                        <tr key={d.id}>
+                          <td className="p-1.5 font-bold">
+                            <div>{d.voucherNo}</div>
+                            <div className="text-[9px] text-gray-400 font-normal">{d.date}</div>
+                          </td>
+                          <td className="p-1.5 max-w-[120px] truncate">{d.itemsDescription}</td>
+                          <td className="p-1.5 text-right font-bold">৳{d.totalAmount}</td>
+                          <td className="p-1.5 text-right font-black text-red-600">৳{d.dueAmount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Payments Table */}
+              {statementCustomer.allPayments.length > 0 && (
+                <div className="space-y-1">
+                  <p className="font-bold text-emerald-800 text-[11px] font-sans">জমা ও পরিশোধের ইতিহাস:</p>
+                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <table className="w-full text-[10px] text-left">
+                      <thead className="bg-emerald-50 text-emerald-900 border-b">
+                        <tr>
+                          <th className="p-1.5">তারিখ</th>
+                          <th className="p-1.5">মাধ্যম</th>
+                          <th className="p-1.5 text-right">জমার পরিমাণ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-emerald-50">
+                        {statementCustomer.allPayments.map((p: any) => (
+                          <tr key={p.id}>
+                            <td className="p-1.5">{p.date}</td>
+                            <td className="p-1.5">{p.paymentMethod}</td>
+                            <td className="p-1.5 text-right font-bold text-emerald-700">৳{p.amount}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Financial Balance Summary */}
+              <div className="bg-white p-3 rounded-xl border border-gray-200 space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">সর্বমোট খাবার বিল:</span>
+                  <span className="font-bold">৳ {statementCustomer.totalBill}</span>
+                </div>
+                <div className="flex justify-between text-emerald-700">
+                  <span>সর্বমোট আদায়কৃত জমা:</span>
+                  <span className="font-bold">- ৳ {statementCustomer.totalPaid}</span>
+                </div>
+                <div className="border-t border-gray-300 pt-1.5 flex justify-between font-black text-sm">
+                  <span>
+                    {statementCustomer.remainingDue > 0
+                      ? 'সর্বমোট অবশিষ্ট বাকি:'
+                      : statementCustomer.advanceDeposit > 0
+                      ? 'অগ্রীম জমা ব্যালেন্স:'
+                      : 'ব্যালেন্স:'}
+                  </span>
+                  <span className={statementCustomer.remainingDue > 0 ? 'text-red-600' : 'text-emerald-700'}>
+                    ৳ {statementCustomer.remainingDue > 0 ? statementCustomer.remainingDue : statementCustomer.advanceDeposit}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[9px] text-center text-gray-400 pt-1">
+                ধন্যবাদ, সালমা ফুড কর্নার সাথে থাকার জন্য!
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => window.print()}
+                className="flex-1 bg-gray-900 hover:bg-black text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Printer className="w-4 h-4" />
+                <span>প্রিন্ট করুন</span>
+              </button>
+              <button
+                onClick={() => setIsCustomerStatementOpen(false)}
+                className="px-4 py-2.5 rounded-xl border border-gray-300 text-xs font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
+              >
+                বন্ধ করুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL 5: CUSTOMER-LEVEL DIRECT DEPOSIT (গ্রাহক একাউন্টে টাকা জমা) */}
+      {/* ============================================================== */}
+      {customerDepositModalGroup && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-3 animate-fadeIn">
+          <div className="bg-white w-full max-w-md rounded-3xl p-5 shadow-2xl border border-gray-100 space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-gray-900">
+                    {customerDepositModalGroup.remainingDue > 0 ? 'গ্রাহকের বাকি টাকা জমা' : 'অগ্রীম জমা এন্ট্রি'}
+                  </h3>
+                  <p className="text-[10px] text-gray-500">
+                    গ্রাহক: {customerDepositModalGroup.customerName} ({customerDepositModalGroup.customerPhone})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCustomerDepositModalGroup(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Current Balance Overview */}
+            <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-gray-600">মোট খাবার বিল:</span>
+                <span className="font-bold">৳ {customerDepositModalGroup.totalBill}</span>
+              </div>
+              <div className="flex justify-between text-emerald-700">
+                <span>পূর্বে জমা দেওয়া হয়েছে:</span>
+                <span className="font-bold">৳ {customerDepositModalGroup.totalPaid}</span>
+              </div>
+              <div className="border-t pt-1 flex justify-between font-black text-sm">
+                <span>
+                  {customerDepositModalGroup.remainingDue > 0 ? 'বর্তমান অবশিষ্ট বাকি:' : 'বর্তমান অগ্রীম জমা:'}
+                </span>
+                <span className={customerDepositModalGroup.remainingDue > 0 ? 'text-red-600' : 'text-emerald-700'}>
+                  ৳ {customerDepositModalGroup.remainingDue > 0 ? customerDepositModalGroup.remainingDue : customerDepositModalGroup.advanceDeposit}
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleCustomerDepositSubmit} className="space-y-3">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-bold text-gray-700">জমার পরিমাণ (৳) * (যেকোনো পরিমাণ)</label>
+                  {customerDepositModalGroup.remainingDue > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPaymentData({ ...paymentData, amount: String(customerDepositModalGroup.remainingDue) })}
+                      className="text-[10px] text-emerald-700 font-bold hover:underline cursor-pointer"
+                    >
+                      সম্পূর্ণ বাকি (৳{customerDepositModalGroup.remainingDue})
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  placeholder="যেকোনো পরিমাণ টাকা লিখুন"
+                  value={paymentData.amount}
+                  onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
+                  className="w-full border-2 border-emerald-500 rounded-2xl px-3.5 py-2.5 text-base font-bold text-gray-900 focus:outline-none"
+                />
+              </div>
+
+              {/* Live Preview */}
+              {Number(paymentData.amount) > 0 && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-xs flex items-center justify-between">
+                  <span className="font-bold text-emerald-900">এই জমার পর নতুন ব্যালেন্স:</span>
+                  {customerDepositModalGroup.totalBill - (customerDepositModalGroup.totalPaid + Number(paymentData.amount)) > 0 ? (
+                    <span className="font-black text-red-600">
+                      অবশিষ্ট বাকি: ৳ {customerDepositModalGroup.totalBill - (customerDepositModalGroup.totalPaid + Number(paymentData.amount))}
+                    </span>
+                  ) : (customerDepositModalGroup.totalPaid + Number(paymentData.amount)) - customerDepositModalGroup.totalBill > 0 ? (
+                    <span className="font-black text-emerald-700">
+                      অগ্রীম জমা থাকবে: ৳ {(customerDepositModalGroup.totalPaid + Number(paymentData.amount)) - customerDepositModalGroup.totalBill}
+                    </span>
+                  ) : (
+                    <span className="font-black text-emerald-700">সম্পূর্ণ পরিশোধিত (৳০)</span>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">পেমেন্ট মাধ্যম</label>
+                  <select
+                    value={paymentData.paymentMethod}
+                    onChange={(e) => setPaymentData({ ...paymentData, paymentMethod: e.target.value as any })}
+                    className="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs"
+                  >
+                    <option value="Cash">নগদ (Cash)</option>
+                    <option value="bKash">বিকাশ (bKash)</option>
+                    <option value="Nagad">নগদ (Nagad)</option>
+                    <option value="Bank">ব্যাংক (Bank)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">নোট / বিবরণ</label>
+                  <input
+                    type="text"
+                    placeholder="যেমন: বাকি পরিশোধ"
+                    value={paymentData.note}
+                    onChange={(e) => setPaymentData({ ...paymentData, note: e.target.value })}
+                    className="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-xs font-bold text-emerald-950 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={paymentData.addToPosLedger}
+                  onChange={(e) => setPaymentData({ ...paymentData, addToPosLedger: e.target.checked })}
+                  className="w-4 h-4 text-emerald-600 rounded"
+                />
+                <span>POS লেজারে আজকের আয়ে (Income) যুক্ত করুন</span>
+              </label>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCustomerDepositModalGroup(null)}
+                  className="w-1/3 border border-gray-300 text-xs font-bold text-gray-700 py-2.5 rounded-xl hover:bg-gray-100 cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="w-2/3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-95 transition"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>জমা নিশ্চিত করুন</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

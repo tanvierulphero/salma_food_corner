@@ -565,6 +565,54 @@ export function getCustomerDueOrAdvanceBalance(
   };
 }
 
+export function getCustomerTransactions(
+  phoneInput: string,
+  customerName?: string
+): {
+  vouchers: Array<any>;
+  payments: Array<any>;
+} {
+  const normPhone = normalizeBdPhone(phoneInput || '');
+  const cleanName = (customerName || '').trim().toLowerCase();
+
+  let list: Array<any> = [];
+  const raw = memoryStore.get('salma_due_ledger') || (typeof window !== 'undefined' ? localStorage.getItem('salma_due_ledger') : null);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) list = parsed;
+    } catch {
+      // ignore
+    }
+  }
+
+  const vouchers: Array<any> = [];
+  const payments: Array<any> = [];
+
+  for (const item of list) {
+    if (!item) continue;
+    const itemPhone = normalizeBdPhone(item.customerPhone || '');
+    const itemName = (item.customerName || '').trim().toLowerCase();
+    const isMatch =
+      (normPhone && itemPhone && normPhone === itemPhone) ||
+      (!normPhone && cleanName && itemName === cleanName);
+
+    if (isMatch) {
+      vouchers.push(item);
+      if (Array.isArray(item.payments)) {
+        item.payments.forEach((p: any) => {
+          payments.push({
+            ...p,
+            voucherNo: item.voucherNo
+          });
+        });
+      }
+    }
+  }
+
+  return { vouchers, payments };
+}
+
 export async function initSqlDatabaseSync(): Promise<void> {
   if (typeof window === 'undefined' || isInitialized) return;
   isInitialized = true;
