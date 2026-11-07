@@ -3,11 +3,11 @@ import {
   BookOpen, Plus, Search, Filter, Phone, MessageSquare, CheckCircle2, 
   AlertCircle, Clock, Calendar, DollarSign, ArrowUpRight, Check, X, 
   Trash2, Edit3, Printer, Share2, UserCheck, RefreshCw, AlertTriangle,
-  Receipt, ArrowDownRight, Wallet, ShoppingBag
+  Receipt, ArrowDownRight, Wallet, ShoppingBag, Users
 } from 'lucide-react';
 import { DueEntry, LedgerEntry, Order, CustomerProfile } from '../types';
 import { playAddToCartSound, playOrderSuccessSound } from '../utils/audioFeedback';
-import { saveToCpanelDb, normalizeBdPhone } from '../utils/sqlSync';
+import { saveToCpanelDb, normalizeBdPhone, getCustomerDueOrAdvanceBalance } from '../utils/sqlSync';
 
 interface DueLedgerManagerProps {
   ledger: LedgerEntry[];
@@ -50,6 +50,91 @@ export default function DueLedgerManager({
     localStorage.setItem('salma_due_ledger', JSON.stringify(dueList));
   }, [dueList]);
 
+  // Build unified list of customers from customers DB, dueList, and orders
+  const allCustomersList: CustomerProfile[] = React.useMemo(() => {
+    const map = new Map<string, CustomerProfile>();
+    Object.values(customers || {}).forEach(c => {
+      if (!c) return;
+      const key = normalizeBdPhone(c.phone) || c.name.trim();
+      if (key) map.set(key, { ...c, phone: normalizeBdPhone(c.phone) || c.phone });
+    });
+    dueList.forEach(d => {
+      const key = normalizeBdPhone(d.customerPhone) || d.customerName.trim();
+      if (key && !map.has(key)) {
+        map.set(key, {
+          phone: normalizeBdPhone(d.customerPhone) || d.customerPhone,
+          name: d.customerName,
+          address: 'চান্দনা চৌরাস্তা, গাজীপুর',
+          loyaltyPoints: 50,
+          registeredAt: d.date || todayStr,
+          totalOrders: 1,
+          totalSpent: d.totalAmount || 0
+        });
+      }
+    });
+    orders.forEach(o => {
+      const key = normalizeBdPhone(o.phone) || o.customerName.trim();
+      if (key && !map.has(key)) {
+        map.set(key, {
+          phone: normalizeBdPhone(o.phone) || o.phone,
+          name: o.customerName,
+          address: o.address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+          loyaltyPoints: 50,
+          registeredAt: o.date || todayStr,
+          totalOrders: 1,
+          totalSpent: o.totalAmount || 0
+        });
+      }
+    });
+    return Array.from(map.values());
+  }, [customers, dueList, orders, todayStr]);
+
+  // Selected Customer for Transaction Entry (কাস্টমারের নাম সিলেক্ট করার পর লেনদেন এন্ট্রি)
+  const [selectedCustomerKey, setSelectedCustomerKey] = useState<string>('');
+  const [customerTxMode, setCustomerTxMode] = useState<'new_due' | 'any_deposit'>('new_due');
+  const [isNewCustomerInline, setIsNewCustomerInline] = useState<boolean>(false);
+  const [inlineNewCustName, setInlineNewCustName] = useState<string>('');
+  const [inlineNewCustPhone, setInlineNewCustPhone] = useState<string>('');
+  const [inlineNewCustAddress, setInlineNewCustAddress] = useState<string>('');
+
+  const selectedCustomerObj = React.useMemo(() => {
+    if (!selectedCustomerKey) return null;
+    return allCustomersList.find(
+      c => (normalizeBdPhone(c.phone) || c.name.trim()) === selectedCustomerKey
+    ) || null;
+  }, [selectedCustomerKey, allCustomersList]);
+
+  const selectedCustomerBalance = React.useMemo(() => {
+    if (!selectedCustomerObj) return { totalBill: 0, totalPaid: 0, remainingDue: 0, advanceDeposit: 0 };
+    return getCustomerDueOrAdvanceBalance(selectedCustomerObj.phone, selectedCustomerObj.name, dueList);
+  }, [selectedCustomerObj, dueList]);
+
+  // Helper to ensure customer is saved in salma_customers DB
+  const ensureCustomerInDb = (name: string, phone: string, address?: string) => {
+    const cleanPhone = normalizeBdPhone(phone) || phone.trim();
+    if (!cleanPhone || !name.trim()) return;
+    try {
+      const raw = localStorage.getItem('salma_customers');
+      const currentMap: Record<string, CustomerProfile> = raw ? JSON.parse(raw) : { ...customers };
+      const existing = currentMap[cleanPhone];
+      currentMap[cleanPhone] = existing
+        ? { ...existing, name: name.trim(), address: address || existing.address }
+        : {
+            phone: cleanPhone,
+            name: name.trim(),
+            address: address || 'চান্দনা চৌরাস্তা, গাজীপুর',
+            loyaltyPoints: 50,
+            registeredAt: todayStr,
+            totalOrders: 0,
+            totalSpent: 0
+          };
+      localStorage.setItem('salma_customers', JSON.stringify(currentMap));
+      saveToCpanelDb('salma_customers', currentMap);
+    } catch {
+      // ignore
+    }
+  };
+
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'due' | 'unpaid' | 'partial' | 'paid' | 'orders'>('all');
@@ -73,7 +158,7 @@ export default function DueLedgerManager({
     paymentMethod: 'Cash' as 'Cash' | 'bKash' | 'Nagad'
   });
 
-  // Form State: Collect Payment
+  // Form State: Collect Payment (Any Amount Deposit)
   const [paymentData, setPaymentData] = useState({
     amount: '',
     paymentMethod: 'Cash' as 'Cash' | 'bKash' | 'Nagad' | 'Bank',
@@ -81,11 +166,191 @@ export default function DueLedgerManager({
     note: ''
   });
 
-  // KPI Calculations
-  const activeDues = dueList.filter(d => d.status !== 'paid');
-  const totalOutstandingDue = activeDues.reduce((sum, d) => sum + d.dueAmount, 0);
+  // When a customer is selected in the top selector, sync formData customerName & customerPhone
+  const handleSelectCustomerFromDropdown = (key: string) => {
+    if (key === '__NEW__') {
+      setIsNewCustomerInline(true);
+      setSelectedCustomerKey('');
+      return;
+    }
+    setIsNewCustomerInline(false);
+    setSelectedCustomerKey(key);
+    const found = allCustomersList.find(c => (normalizeBdPhone(c.phone) || c.name.trim()) === key);
+    if (found) {
+      setFormData(prev => ({
+        ...prev,
+        customerName: found.name,
+        customerPhone: found.phone
+      }));
+    }
+  };
+
+  const handleCreateAndSelectInlineCustomer = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPhone = normalizeBdPhone(inlineNewCustPhone);
+    const cleanName = inlineNewCustName.trim();
+    if (!cleanName || cleanPhone.length !== 11) {
+      alert('অনুগ্রহ করে কাস্টমারের নাম এবং ১১ ডিজিটের মোবাইল নম্বর (01XXXXXXXXX) দিন।');
+      return;
+    }
+    ensureCustomerInDb(cleanName, cleanPhone, inlineNewCustAddress.trim() || 'চান্দনা চৌরাস্তা, গাজীপুর');
+    setSelectedCustomerKey(cleanPhone);
+    setFormData(prev => ({
+      ...prev,
+      customerName: cleanName,
+      customerPhone: cleanPhone
+    }));
+    setIsNewCustomerInline(false);
+    setInlineNewCustName('');
+    setInlineNewCustPhone('');
+    setInlineNewCustAddress('');
+    if (soundOn) playAddToCartSound();
+  };
+
+  // Handler: Direct Any-Amount Deposit for Selected Customer (যেকোনো পরিমাণ জমা / অগ্রীম জমা)
+  const handleDirectCustomerDeposit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCustomerObj) {
+      alert('প্রথমে কাস্টমারের নাম সিলেক্ট করুন!');
+      return;
+    }
+    const payAmount = parseFloat(paymentData.amount);
+    if (!payAmount || payAmount <= 0) {
+      alert('সঠিক জমার পরিমাণ (৳) লিখুন!');
+      return;
+    }
+
+    const custPhone = normalizeBdPhone(selectedCustomerObj.phone) || selectedCustomerObj.phone;
+    const custName = selectedCustomerObj.name;
+    ensureCustomerInDb(custName, custPhone, selectedCustomerObj.address);
+
+    const newPaymentRecord = {
+      id: `pay-${Date.now()}`,
+      date: todayStr,
+      time: new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+      amount: payAmount,
+      paymentMethod: paymentData.paymentMethod,
+      note: paymentData.note.trim() || 'কাস্টমার জমা / অগ্রীম জমা'
+    };
+
+    let voucherUsed = `DEP-${Math.floor(100 + Math.random() * 900)}`;
+
+    setDueList(prev => {
+      // Find all entries belonging to this customer
+      const custEntries = prev.filter(
+        d => (normalizeBdPhone(d.customerPhone) || d.customerName.trim()) === (custPhone || custName.trim())
+      );
+
+      if (custEntries.length === 0) {
+        // Customer has no due entry yet -> Create an Advance Deposit entry (totalAmount: 0, paidAmount: payAmount)
+        const advEntry: DueEntry = {
+          id: `due-${Date.now()}`,
+          voucherNo: voucherUsed,
+          customerName: custName,
+          customerPhone: custPhone,
+          totalAmount: 0,
+          paidAmount: payAmount,
+          dueAmount: 0,
+          date: todayStr,
+          itemsDescription: paymentData.note.trim() || 'অগ্রীম জমা (Advance Deposit)',
+          status: 'paid',
+          payments: [newPaymentRecord],
+          note: paymentData.note.trim() || `অগ্রীম জমা ৳${payAmount}`
+        };
+        const updated = [advEntry, ...prev];
+        saveToCpanelDb('salma_due_ledger', updated);
+        return updated;
+      }
+
+      // Distribute payment across customer's unpaid due entries first; any leftover goes to their most recent entry
+      let remainingToAllocate = payAmount;
+      // Find first unpaid/partial entry or fallback to the latest entry for this customer
+      const targetIdsOrder = [
+        ...custEntries.filter(d => d.dueAmount > 0).map(d => d.id),
+        ...custEntries.filter(d => d.dueAmount <= 0).map(d => d.id)
+      ];
+      const primaryTargetId = targetIdsOrder[0];
+      voucherUsed = custEntries.find(d => d.id === primaryTargetId)?.voucherNo || voucherUsed;
+
+      const updated = prev.map(item => {
+        const isThisCust = (normalizeBdPhone(item.customerPhone) || item.customerName.trim()) === (custPhone || custName.trim());
+        if (!isThisCust || remainingToAllocate <= 0) return item;
+
+        // If this entry has due > 0, or if it's the last/only target entry to hold excess advance deposit
+        const isLastTarget = item.id === targetIdsOrder[targetIdsOrder.length - 1];
+        const currentDue = Math.max(0, item.totalAmount - item.paidAmount);
+
+        let addHere = 0;
+        if (targetIdsOrder.length === 1 || isLastTarget) {
+          addHere = remainingToAllocate;
+        } else if (currentDue > 0) {
+          addHere = Math.min(remainingToAllocate, currentDue);
+        }
+
+        if (addHere <= 0) return item;
+        remainingToAllocate -= addHere;
+
+        const nextPaid = item.paidAmount + addHere;
+        const nextDue = Math.max(0, item.totalAmount - nextPaid);
+        const nextStatus: DueEntry['status'] = nextDue === 0 ? 'paid' : (nextPaid > 0 ? 'partial' : 'unpaid');
+
+        return {
+          ...item,
+          paidAmount: nextPaid,
+          dueAmount: nextDue,
+          status: nextStatus,
+          payments: [
+            ...(item.payments || []),
+            {
+              ...newPaymentRecord,
+              id: `pay-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              amount: addHere
+            }
+          ]
+        };
+      });
+
+      saveToCpanelDb('salma_due_ledger', updated);
+      return updated;
+    });
+
+    if (paymentData.addToPosLedger) {
+      const posEntry: LedgerEntry = {
+        id: `pos-${Date.now()}`,
+        voucherNo: `VCH-${voucherUsed}`,
+        type: 'income',
+        category: 'বাকি আদায় ও অগ্রীম জমা (Due/Advance Collection)',
+        amount: payAmount,
+        date: todayStr,
+        paymentMethod: paymentData.paymentMethod,
+        note: `${custName} (${custPhone}) থেকে জমা আদায় (${paymentData.note.trim() || voucherUsed})`
+      };
+      setLedger(prev => {
+        const updatedLedger = [posEntry, ...prev];
+        saveToCpanelDb('salma_ledger', updatedLedger);
+        return updatedLedger;
+      });
+    }
+
+    if (soundOn) playOrderSuccessSound();
+    setPaymentData({ amount: '', paymentMethod: 'Cash', addToPosLedger: true, note: '' });
+    alert(`গ্রাহক "${custName}"-এর একাউন্টে ৳${payAmount} সফলভাবে জমা হয়েছে!`);
+  };
+
+  // KPI Calculations (Customer-level net balances)
+  const activeDues = dueList.filter(d => d.dueAmount > 0);
+  const totalOutstandingDue = allCustomersList.reduce((sum, c) => {
+    const bal = getCustomerDueOrAdvanceBalance(c.phone, c.name, dueList);
+    return sum + bal.remainingDue;
+  }, 0);
+  const totalAdvanceDeposit = allCustomersList.reduce((sum, c) => {
+    const bal = getCustomerDueOrAdvanceBalance(c.phone, c.name, dueList);
+    return sum + bal.advanceDeposit;
+  }, 0);
   const totalCollectedAmount = dueList.reduce((sum, d) => sum + d.paidAmount, 0);
-  const uniqueDueCustomers = new Set(activeDues.map(d => d.customerPhone)).size;
+  const uniqueDueCustomers = allCustomersList.filter(
+    c => getCustomerDueOrAdvanceBalance(c.phone, c.name, dueList).remainingDue > 0
+  ).length;
 
   // Order Dues (from online orders that have remaining delivery due)
   const orderDuesList = orders.filter(o => o.dueAmount > 0 && o.status !== 'Delivered' && o.status !== 'Cancelled');
@@ -125,19 +390,22 @@ export default function DueLedgerManager({
     setIsAddModalOpen(true);
   };
 
-  // Handler: Add or Update Due
+  // Handler: Add or Update Due (Allows any initialPaid amount; excess becomes Advance Deposit!)
   const handleAddNewDue = (e: React.FormEvent) => {
     e.preventDefault();
-    const total = parseFloat(formData.totalAmount);
-    if (!total || total <= 0) {
-      alert('সঠিক মোট টাকার পরিমাণ দিন');
-      return;
-    }
+    const total = parseFloat(formData.totalAmount) || 0;
     const initialPaid = parseFloat(formData.initialPaid) || 0;
-    if (initialPaid > total) {
-      alert('জমা টাকা মোট টাকার চেয়ে বেশি হতে পারে না');
+    if (total <= 0 && initialPaid <= 0) {
+      alert('অনুগ্রহ করে বাকির পরিমাণ অথবা জমার পরিমাণ লিখুন');
       return;
     }
+
+    const custName = formData.customerName.trim() || selectedCustomerObj?.name || 'সাধারণ খদ্দের';
+    const custPhone = normalizeBdPhone(formData.customerPhone.trim() || selectedCustomerObj?.phone || '') || 'N/A';
+    if (custPhone !== 'N/A') {
+      ensureCustomerInDb(custName, custPhone);
+    }
+
     const dueAmount = Math.max(0, total - initialPaid);
     const status: DueEntry['status'] = dueAmount === 0 ? 'paid' : (initialPaid > 0 ? 'partial' : 'unpaid');
 
@@ -147,8 +415,8 @@ export default function DueLedgerManager({
           if (item.id === editingDueId) {
             return {
               ...item,
-              customerName: formData.customerName.trim() || 'সাধারণ খদ্দের',
-              customerPhone: formData.customerPhone.trim() || 'N/A',
+              customerName: custName,
+              customerPhone: custPhone,
               totalAmount: total,
               paidAmount: initialPaid,
               dueAmount,
@@ -174,8 +442,8 @@ export default function DueLedgerManager({
     const newEntry: DueEntry = {
       id: `due-${Date.now()}`,
       voucherNo: newVoucher,
-      customerName: formData.customerName.trim() || 'সাধারণ খদ্দের',
-      customerPhone: formData.customerPhone.trim() || 'N/A',
+      customerName: custName,
+      customerPhone: custPhone,
       totalAmount: total,
       paidAmount: initialPaid,
       dueAmount: dueAmount,
@@ -190,7 +458,7 @@ export default function DueLedgerManager({
           time: new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
           amount: initialPaid,
           paymentMethod: formData.paymentMethod,
-          note: 'বাকি খোলার সময় প্রাথমিক জমা'
+          note: initialPaid > total ? `প্রাথমিক জমা ও অগ্রীম জমা (+৳${initialPaid - total})` : 'বাকি খোলার সময় প্রাথমিক জমা'
         }
       ] : [],
       note: formData.note.trim()
@@ -202,7 +470,7 @@ export default function DueLedgerManager({
       return updated;
     });
 
-    // If initial paid was given, optionally record in POS Ledger as income
+    // If initial paid was given, record in POS Ledger as income
     if (initialPaid > 0) {
       const posEntry: LedgerEntry = {
         id: `pos-${Date.now()}`,
@@ -212,7 +480,7 @@ export default function DueLedgerManager({
         amount: initialPaid,
         date: todayStr,
         paymentMethod: formData.paymentMethod,
-        note: `${formData.customerName} এর প্রাথমিক জমা (${newVoucher})`
+        note: `${custName} এর জমা (${newVoucher})`
       };
       setLedger(prev => {
         const updatedLedger = [posEntry, ...prev];
@@ -224,32 +492,31 @@ export default function DueLedgerManager({
     if (soundOn) playAddToCartSound();
     setIsAddModalOpen(false);
     setEditingDueId(null);
-    setFormData({
-      customerName: '',
-      customerPhone: '',
+    setFormData(prev => ({
+      ...prev,
       totalAmount: '',
       initialPaid: '',
       itemsDescription: '',
       dueDate: '',
       note: '',
       paymentMethod: 'Cash'
-    });
-    alert(`নতুন বাকি এন্ট্রি #${newVoucher} সফলভাবে যুক্ত হয়েছে!`);
+    }));
+    alert(`নতুন বাকি এন্ট্রি #${newVoucher} (${custName}) সফলভাবে যুক্ত হয়েছে!`);
   };
 
   // Handler: Open Payment Modal
   const handleOpenPayment = (due: DueEntry) => {
     setSelectedDue(due);
     setPaymentData({
-      amount: due.dueAmount.toString(),
+      amount: due.dueAmount > 0 ? due.dueAmount.toString() : '',
       paymentMethod: 'Cash',
       addToPosLedger: true,
-      note: 'বাকি পরিশোধ'
+      note: 'বাকি পরিশোধ / জমা'
     });
     setIsPaymentModalOpen(true);
   };
 
-  // Handler: Submit Payment
+  // Handler: Submit Payment (Allows ANY deposit amount; excess becomes Advance Deposit!)
   const handleSubmitPayment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDue) return;
@@ -260,13 +527,8 @@ export default function DueLedgerManager({
       return;
     }
 
-    if (payAmount > selectedDue.dueAmount) {
-      alert(`জমা টাকা অবশিষ্ট বাকি ৳${selectedDue.dueAmount} এর চেয়ে বেশি হতে পারে না!`);
-      return;
-    }
-
     const newPaidAmount = selectedDue.paidAmount + payAmount;
-    const newDueAmount = selectedDue.totalAmount - newPaidAmount;
+    const newDueAmount = Math.max(0, selectedDue.totalAmount - newPaidAmount);
     const newStatus: DueEntry['status'] = newDueAmount <= 0 ? 'paid' : 'partial';
 
     const newPaymentRecord = {
@@ -275,7 +537,7 @@ export default function DueLedgerManager({
       time: new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
       amount: payAmount,
       paymentMethod: paymentData.paymentMethod,
-      note: paymentData.note.trim() || 'বাকি আদায়'
+      note: paymentData.note.trim() || (newPaidAmount > selectedDue.totalAmount ? 'বাকি পরিশোধ ও অগ্রীম জমা' : 'বাকি আদায়')
     };
 
     setDueList(prev => {
@@ -284,7 +546,7 @@ export default function DueLedgerManager({
           return {
             ...item,
             paidAmount: newPaidAmount,
-            dueAmount: Math.max(0, newDueAmount),
+            dueAmount: newDueAmount,
             status: newStatus,
             payments: [...(item.payments || []), newPaymentRecord]
           };
@@ -301,11 +563,11 @@ export default function DueLedgerManager({
         id: `pos-${Date.now()}`,
         voucherNo: `VCH-${selectedDue.voucherNo}`,
         type: 'income',
-        category: 'বাকি আদায় (Due Collection)',
+        category: 'বাকি আদায় ও অগ্রীম জমা (Due Collection)',
         amount: payAmount,
         date: todayStr,
         paymentMethod: paymentData.paymentMethod,
-        note: `${selectedDue.customerName} থেকে বাকি আদায় (${selectedDue.voucherNo})`
+        note: `${selectedDue.customerName} থেকে জমা আদায় (${selectedDue.voucherNo})`
       };
       setLedger(prev => {
         const updatedLedger = [posEntry, ...prev];
@@ -316,7 +578,7 @@ export default function DueLedgerManager({
 
     if (soundOn) playOrderSuccessSound();
     setIsPaymentModalOpen(false);
-    alert(`৳${payAmount} বাকি সফলভাবে আদায় ও জমা করা হয়েছে!`);
+    alert(`৳${payAmount} সফলভাবে জমা করা হয়েছে!`);
   };
 
   // Handler: Delete Due Entry
@@ -416,15 +678,15 @@ export default function DueLedgerManager({
             </div>
             <div>
               <h2 className="text-base font-black tracking-tight">বাকি খাতা (Due Ledger)</h2>
-              <p className="text-[11px] text-amber-100 font-medium">কাস্টমার বাকি ট্র্যাকিং, দেনা-পাওনা ও আদায় খতিয়ান</p>
+              <p className="text-[11px] text-amber-100 font-medium">কাস্টমার সিলেক্ট করে নতুন বাকি ও যেকোনো পরিমাণ জমা এন্ট্রি</p>
             </div>
           </div>
           <button
             onClick={() => {
               setEditingDueId(null);
               setFormData({
-                customerName: '',
-                customerPhone: '',
+                customerName: selectedCustomerObj?.name || '',
+                customerPhone: selectedCustomerObj?.phone || '',
                 totalAmount: '',
                 initialPaid: '',
                 itemsDescription: '',
@@ -445,29 +707,29 @@ export default function DueLedgerManager({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-gray-900">
           <div className="bg-white/95 backdrop-blur-xs p-2.5 rounded-2xl shadow-2xs border border-white/40">
             <div className="flex items-center justify-between text-[10px] text-red-700 font-bold mb-0.5">
-              <span>মোট বকেয়া বাকি</span>
+              <span>মোট অবশিষ্ট বাকি</span>
               <AlertCircle className="w-3.5 h-3.5 text-red-600" />
             </div>
             <p className="text-base font-black text-red-600">৳ {totalOutstandingDue}</p>
-            <p className="text-[9px] text-gray-500 font-semibold">{activeDues.length} টি বকেয়া এন্ট্রি</p>
+            <p className="text-[9px] text-gray-500 font-semibold">{uniqueDueCustomers} জন কাস্টমারের বকেয়া</p>
           </div>
 
           <div className="bg-white/95 backdrop-blur-xs p-2.5 rounded-2xl shadow-2xs border border-white/40">
             <div className="flex items-center justify-between text-[10px] text-emerald-700 font-bold mb-0.5">
-              <span>মোট আদায়কৃত</span>
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span>মোট অগ্রীম জমা</span>
+              <Wallet className="w-3.5 h-3.5 text-emerald-600" />
             </div>
-            <p className="text-base font-black text-emerald-700">৳ {totalCollectedAmount}</p>
-            <p className="text-[9px] text-gray-500 font-semibold">আদায় সম্পন্ন</p>
+            <p className="text-base font-black text-emerald-700">৳ {totalAdvanceDeposit}</p>
+            <p className="text-[9px] text-gray-500 font-semibold">কাস্টমারদের অগ্রীম ব্যালেন্স</p>
           </div>
 
           <div className="bg-white/95 backdrop-blur-xs p-2.5 rounded-2xl shadow-2xs border border-white/40">
             <div className="flex items-center justify-between text-[10px] text-amber-800 font-bold mb-0.5">
-              <span>বাকিদার খদ্দের</span>
-              <UserCheck className="w-3.5 h-3.5 text-amber-600" />
+              <span>মোট আদায়কৃত জমা</span>
+              <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
             </div>
-            <p className="text-base font-black text-gray-900">{uniqueDueCustomers} জন</p>
-            <p className="text-[9px] text-gray-500 font-semibold">সক্রিয় বাকি রয়েছে</p>
+            <p className="text-base font-black text-gray-900">৳ {totalCollectedAmount}</p>
+            <p className="text-[9px] text-gray-500 font-semibold">সর্বমোট জমা</p>
           </div>
 
           <div className="bg-white/95 backdrop-blur-xs p-2.5 rounded-2xl shadow-2xs border border-white/40">
@@ -479,6 +741,419 @@ export default function DueLedgerManager({
             <p className="text-[9px] text-gray-500 font-semibold">{orderDuesList.length} টি অর্ডার পেন্ডিং</p>
           </div>
         </div>
+      </div>
+
+      {/* ============================================================== */}
+      {/* CUSTOMER SELECTION & TRANSACTION ENTRY PANEL                    */}
+      {/* (কাস্টমারের নাম সিলেক্ট করার পর লেনদেন এন্ট্রি)                  */}
+      {/* ============================================================== */}
+      <div className="bg-white rounded-3xl border-2 border-amber-300 p-4 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-100 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-gray-900">১. কাস্টমারের নাম সিলেক্ট করুন (লেনদেন এন্ট্রি)</h3>
+              <p className="text-[11px] text-gray-500">কাস্টমার সিলেক্ট করার পর নতুন বাকি এন্ট্রি ও যেকোনো পরিমাণ জমা দেওয়া যাবে</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsNewCustomerInline(!isNewCustomerInline)}
+            className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{isNewCustomerInline ? 'তালিকা থেকে সিলেক্ট করুন' : '+ নতুন কাস্টমার যোগ করুন'}</span>
+          </button>
+        </div>
+
+        {/* Inline Add New Customer Form */}
+        {isNewCustomerInline ? (
+          <form onSubmit={handleCreateAndSelectInlineCustomer} className="bg-blue-50/60 border border-blue-200 rounded-2xl p-3.5 space-y-3">
+            <p className="text-xs font-bold text-blue-900">নতুন কাস্টমার তৈরি করে সরাসরি লেনদেন শুরু করুন:</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <input
+                type="text"
+                required
+                placeholder="কাস্টমারের নাম *"
+                value={inlineNewCustName}
+                onChange={(e) => setInlineNewCustName(e.target.value)}
+                className="bg-white border border-blue-200 rounded-xl px-3 py-2 text-xs font-bold"
+              />
+              <input
+                type="tel"
+                maxLength={11}
+                required
+                placeholder="মোবাইল নম্বর (01XXXXXXXXX) *"
+                value={inlineNewCustPhone}
+                onChange={(e) => setInlineNewCustPhone(normalizeBdPhone(e.target.value))}
+                className="bg-white border border-blue-200 rounded-xl px-3 py-2 text-xs font-mono font-bold"
+              />
+              <input
+                type="text"
+                placeholder="ঠিকানা (যেমন: চান্দনা চৌরাস্তা)"
+                value={inlineNewCustAddress}
+                onChange={(e) => setInlineNewCustAddress(e.target.value)}
+                className="bg-white border border-blue-200 rounded-xl px-3 py-2 text-xs"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsNewCustomerInline(false)}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold text-gray-600 hover:bg-gray-100 cursor-pointer"
+              >
+                বাতিল
+              </button>
+              <button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-1.5 rounded-xl shadow-xs cursor-pointer"
+              >
+                সেভ ও সিলেক্ট করুন
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-2.5">
+            <select
+              value={selectedCustomerKey}
+              onChange={(e) => handleSelectCustomerFromDropdown(e.target.value)}
+              className="w-full bg-amber-50/60 border-2 border-amber-300 rounded-2xl px-3.5 py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:border-red-600 cursor-pointer"
+            >
+              <option value="">-- এখানে ক্লিক করে কাস্টমারের নাম সিলেক্ট করুন --</option>
+              {allCustomersList.map(cust => {
+                const key = normalizeBdPhone(cust.phone) || cust.name.trim();
+                const bal = getCustomerDueOrAdvanceBalance(cust.phone, cust.name, dueList);
+                const statusText =
+                  bal.remainingDue > 0
+                    ? `অবশিষ্ট বাকি: ৳${bal.remainingDue}`
+                    : bal.advanceDeposit > 0
+                    ? `অগ্রীম জমা: ৳${bal.advanceDeposit}`
+                    : 'বাকি নেই (৳০)';
+                return (
+                  <option key={key} value={key}>
+                    {cust.name} ({cust.phone}) — [{statusText}]
+                  </option>
+                );
+              })}
+              <option value="__NEW__">+ নতুন কাস্টমার যোগ করুন...</option>
+            </select>
+
+            {/* Quick Select Customer Pills with Balance Badges Next to Name */}
+            {allCustomersList.length > 0 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                {allCustomersList.map(cust => {
+                  const key = normalizeBdPhone(cust.phone) || cust.name.trim();
+                  const isSelected = selectedCustomerKey === key;
+                  const bal = getCustomerDueOrAdvanceBalance(cust.phone, cust.name, dueList);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => handleSelectCustomerFromDropdown(key)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 border transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-gray-900 text-white border-gray-900 shadow-xs'
+                          : 'bg-gray-50 hover:bg-amber-50 text-gray-800 border-gray-200'
+                      }`}
+                    >
+                      <span>{cust.name}</span>
+                      {bal.remainingDue > 0 ? (
+                        <span className="bg-red-100 text-red-700 text-[10px] font-black px-1.5 py-0.5 rounded-md">
+                          বাকি: ৳{bal.remainingDue}
+                        </span>
+                      ) : bal.advanceDeposit > 0 ? (
+                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-1.5 py-0.5 rounded-md">
+                          অগ্রীম: ৳{bal.advanceDeposit}
+                        </span>
+                      ) : (
+                        <span className="bg-gray-200 text-gray-600 text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+                          ৳০
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* STEP 2: TRANSACTION ENTRY AFTER SELECTING CUSTOMER */}
+        {selectedCustomerObj ? (
+          <div className="bg-gradient-to-br from-amber-50/70 via-white to-emerald-50/40 border-2 border-emerald-300 rounded-2xl p-4 space-y-4 animate-fadeIn">
+            {/* Selected Customer Profile Banner with Remaining Due / Advance Deposit Next to Name */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white p-3.5 rounded-2xl border border-gray-200 shadow-2xs">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-red-600 to-amber-500 text-white font-black text-sm flex items-center justify-center shrink-0">
+                  {selectedCustomerObj.name.charAt(0)}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="font-black text-sm text-gray-900">{selectedCustomerObj.name}</h4>
+                    {/* Badge right next to customer name */}
+                    {selectedCustomerBalance.remainingDue > 0 ? (
+                      <span className="bg-red-100 text-red-700 border border-red-300 text-xs font-black px-2.5 py-0.5 rounded-full">
+                        অবশিষ্ট বাকি: ৳ {selectedCustomerBalance.remainingDue}
+                      </span>
+                    ) : selectedCustomerBalance.advanceDeposit > 0 ? (
+                      <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-black px-2.5 py-0.5 rounded-full">
+                        অগ্রীম জমা: ৳ {selectedCustomerBalance.advanceDeposit}
+                      </span>
+                    ) : (
+                      <span className="bg-gray-100 text-gray-700 border border-gray-300 text-xs font-bold px-2.5 py-0.5 rounded-full">
+                        অবশিষ্ট বাকি: ৳ ০
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-500 font-mono mt-0.5">
+                    📱 {selectedCustomerObj.phone} • মোট বিল: ৳{selectedCustomerBalance.totalBill} • মোট জমা: ৳{selectedCustomerBalance.totalPaid}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedCustomerKey('')}
+                className="text-[11px] font-bold text-gray-500 hover:text-red-600 self-end sm:self-center cursor-pointer"
+              >
+                ✕ পরিবর্তন করুন
+              </button>
+            </div>
+
+            {/* Transaction Mode Switcher: New Due vs Any Amount Deposit */}
+            <div className="grid grid-cols-2 gap-2 bg-gray-100 p-1.5 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setCustomerTxMode('new_due')}
+                className={`py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  customerTxMode === 'new_due'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'text-gray-700 hover:bg-white/60'
+                }`}
+              >
+                <Plus className="w-4 h-4" />
+                <span>নতুন বাকি এন্ট্রি</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomerTxMode('any_deposit')}
+                className={`py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  customerTxMode === 'any_deposit'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-gray-700 hover:bg-white/60'
+                }`}
+              >
+                <Wallet className="w-4 h-4" />
+                <span>যেকোনো পরিমাণ জমা / অগ্রীম</span>
+              </button>
+            </div>
+
+            {/* MODE 1: NEW DUE ENTRY FOR SELECTED CUSTOMER */}
+            {customerTxMode === 'new_due' ? (
+              <form onSubmit={handleAddNewDue} className="bg-white p-3.5 rounded-2xl border border-red-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-red-900">
+                    📝 {selectedCustomerObj.name}-এর নামে নতুন বাকি যোগ করুন
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">বাকির পরিমাণ / বিল (৳) *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      placeholder="যেমন: 500"
+                      value={formData.totalAmount}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        customerName: selectedCustomerObj.name,
+                        customerPhone: selectedCustomerObj.phone,
+                        totalAmount: e.target.value
+                      })}
+                      className="w-full border border-red-300 rounded-xl px-3 py-2 text-xs font-black text-red-600 focus:outline-none focus:border-red-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">নগদ / অগ্রীম জমা (যেকোনো পরিমাণ)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="৳ 0 (ঐচ্ছিক)"
+                      value={formData.initialPaid}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        customerName: selectedCustomerObj.name,
+                        customerPhone: selectedCustomerObj.phone,
+                        initialPaid: e.target.value
+                      })}
+                      className="w-full border border-emerald-300 rounded-xl px-3 py-2 text-xs font-black text-emerald-700 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">খাবারের বিবরণ *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="যেমন: কাচ্চি বিরিয়ানি ও রোস্ট"
+                      value={formData.itemsDescription}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        customerName: selectedCustomerObj.name,
+                        customerPhone: selectedCustomerObj.phone,
+                        itemsDescription: e.target.value
+                      })}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:border-red-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">পেমেন্ট মেথড</label>
+                    <select
+                      value={formData.paymentMethod}
+                      onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value as any })}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white font-bold"
+                    >
+                      <option value="Cash">ক্যাশ (Cash)</option>
+                      <option value="bKash">বিকাশ (bKash)</option>
+                      <option value="Nagad">নগদ (Nagad)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">পরিশোধের সম্ভাব্য তারিখ</label>
+                    <input
+                      type="date"
+                      value={formData.dueDate}
+                      onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">মন্তব্য / নোট</label>
+                    <input
+                      type="text"
+                      placeholder="ঐচ্ছিক নোট"
+                      value={formData.note}
+                      onChange={(e) => setFormData({ ...formData, note: e.target.value })}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xs py-2.5 rounded-xl shadow-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{selectedCustomerObj.name}-এর নামে বাকি এন্ট্রি সেভ করুন</span>
+                </button>
+              </form>
+            ) : (
+              /* MODE 2: ANY AMOUNT DEPOSIT / ADVANCE DEPOSIT FOR SELECTED CUSTOMER */
+              <form onSubmit={handleDirectCustomerDeposit} className="bg-white p-3.5 rounded-2xl border border-emerald-300 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <span className="text-xs font-black text-emerald-950">
+                    💰 {selectedCustomerObj.name}-এর একাউন্টে যেকোনো পরিমাণ জমা দিন (বাকি পরিশোধ বা অগ্রীম জমা)
+                  </span>
+                  {selectedCustomerBalance.remainingDue > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPaymentData({ ...paymentData, amount: String(selectedCustomerBalance.remainingDue) })}
+                      className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-lg hover:bg-emerald-200 cursor-pointer"
+                    >
+                      সম্পূর্ণ বকেয়া (৳{selectedCustomerBalance.remainingDue}) বসান
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">জমার পরিমাণ (৳) * (যেকোনো পরিমাণ)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      placeholder="যেমন: 200 বা 1000"
+                      value={paymentData.amount}
+                      onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
+                      className="w-full border-2 border-emerald-400 rounded-xl px-3 py-2 text-sm font-black text-emerald-700 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">জমার মাধ্যম</label>
+                    <select
+                      value={paymentData.paymentMethod}
+                      onChange={(e) => setPaymentData({ ...paymentData, paymentMethod: e.target.value as any })}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white font-bold"
+                    >
+                      <option value="Cash">নগদ ক্যাশ (Cash)</option>
+                      <option value="bKash">বিকাশ (bKash)</option>
+                      <option value="Nagad">নগদ (Nagad)</option>
+                      <option value="Bank">ব্যাংক (Bank)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">নোট / বিবরণ</label>
+                    <input
+                      type="text"
+                      placeholder="যেমন: বাকি পরিশোধ / অগ্রীম জমা"
+                      value={paymentData.note}
+                      onChange={(e) => setPaymentData({ ...paymentData, note: e.target.value })}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Live Preview of Resulting Balance after Deposit */}
+                {Number(paymentData.amount) > 0 && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-xs flex items-center justify-between">
+                    <span className="font-bold text-emerald-900">এই জমার পর কাস্টমারের নতুন ব্যালেন্স হবে:</span>
+                    {selectedCustomerBalance.totalBill - (selectedCustomerBalance.totalPaid + Number(paymentData.amount)) > 0 ? (
+                      <span className="font-black text-red-600">
+                        অবশিষ্ট বাকি: ৳ {selectedCustomerBalance.totalBill - (selectedCustomerBalance.totalPaid + Number(paymentData.amount))}
+                      </span>
+                    ) : selectedCustomerBalance.totalPaid + Number(paymentData.amount) - selectedCustomerBalance.totalBill > 0 ? (
+                      <span className="font-black text-emerald-700">
+                        অগ্রীম জমা থাকবে: ৳ {selectedCustomerBalance.totalPaid + Number(paymentData.amount) - selectedCustomerBalance.totalBill}
+                      </span>
+                    ) : (
+                      <span className="font-black text-emerald-700">সম্পূর্ণ পরিশোধিত (৳০)</span>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+                  <label className="flex items-center gap-2 text-xs font-bold text-emerald-950 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={paymentData.addToPosLedger}
+                      onChange={(e) => setPaymentData({ ...paymentData, addToPosLedger: e.target.checked })}
+                      className="w-4 h-4 text-emerald-600 rounded"
+                    />
+                    <span>POS লেজারে আজকের আয়ে (Income) যুক্ত করুন</span>
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs px-5 py-2.5 rounded-xl shadow-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>জমা নিশ্চিত করুন</span>
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        ) : (
+          <div className="bg-amber-50/60 border border-dashed border-amber-300 rounded-2xl p-3.5 text-center text-xs text-amber-900 font-semibold">
+            👆 নতুন বাকি এন্ট্রি করতে অথবা যেকোনো পরিমাণ টাকা জমা নিতে প্রথমে উপরের তালিকা থেকে <b>কাস্টমারের নাম সিলেক্ট করুন</b>।
+          </div>
+        )}
       </div>
 
       {/* Search & Filter Bar */}
@@ -497,11 +1172,11 @@ export default function DueLedgerManager({
         {/* Filter Pills */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-[11px] font-bold">
           {[
-            { id: 'all', label: `সব বাকি (${dueList.length})` },
+            { id: 'all', label: `সব লেনদেন (${dueList.length})` },
             { id: 'due', label: `বকেয়া আছে (${activeDues.length})` },
             { id: 'unpaid', label: `সম্পূর্ণ বাকি (${dueList.filter(d => d.status === 'unpaid').length})` },
             { id: 'partial', label: `আংশিক আদায় (${dueList.filter(d => d.status === 'partial').length})` },
-            { id: 'paid', label: `পরিশোধিত (${dueList.filter(d => d.status === 'paid').length})` },
+            { id: 'paid', label: `পরিশোধিত / অগ্রীম (${dueList.filter(d => d.status === 'paid').length})` },
             { id: 'orders', label: `অর্ডার বকেয়া (${orderDuesList.length})` }
           ].map(tab => (
             <button
@@ -606,20 +1281,15 @@ export default function DueLedgerManager({
             <div className="bg-white rounded-3xl p-8 text-center text-gray-500 border border-gray-200 space-y-2">
               <BookOpen className="w-10 h-10 text-gray-300 mx-auto" />
               <p className="text-sm font-bold text-gray-800">কোনো বাকি হিসাব পাওয়া যায়নি</p>
-              <p className="text-xs text-gray-500">নতুন বাকি এন্ট্রি করতে উপরের 'নতুন বাকি' বাটনে চাপ দিন।</p>
-              <button
-                onClick={() => setIsAddModalOpen(true)}
-                className="mt-2 bg-red-600 text-white text-xs font-bold px-4 py-2 rounded-xl inline-flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ নতুন বাকি রেকর্ড করুন</span>
-              </button>
+              <p className="text-xs text-gray-500">উপরে কাস্টমারের নাম সিলেক্ট করে নতুন বাকি বা জমা এন্ট্রি করুন।</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3">
               {filteredDueList.map(due => {
                 const isPaid = due.status === 'paid';
                 const isPartial = due.status === 'partial';
+                const custOverallBal = getCustomerDueOrAdvanceBalance(due.customerPhone, due.customerName, dueList);
+                const itemAdvance = Math.max(0, due.paidAmount - due.totalAmount);
 
                 return (
                   <div 
@@ -649,7 +1319,7 @@ export default function DueLedgerManager({
                             {isPaid ? (
                               <>
                                 <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                <span>সম্পূর্ণ পরিশোধিত</span>
+                                <span>{itemAdvance > 0 ? `অগ্রীম জমা (+৳${itemAdvance})` : 'সম্পূর্ণ পরিশোধিত'}</span>
                               </>
                             ) : isPartial ? (
                               <>
@@ -664,7 +1334,23 @@ export default function DueLedgerManager({
                             )}
                           </span>
                         </div>
-                        <h3 className="text-sm font-black text-gray-900 mt-1">{due.customerName}</h3>
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          <h3 className="text-sm font-black text-gray-900">{due.customerName}</h3>
+                          {/* Customer Profile Net Balance Badge Next to Name */}
+                          {custOverallBal.remainingDue > 0 ? (
+                            <span className="bg-red-100 text-red-700 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-full">
+                              অবশিষ্ট বাকি: ৳{custOverallBal.remainingDue}
+                            </span>
+                          ) : custOverallBal.advanceDeposit > 0 ? (
+                            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-black px-2 py-0.5 rounded-full">
+                              অগ্রীম জমা: ৳{custOverallBal.advanceDeposit}
+                            </span>
+                          ) : (
+                            <span className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                              বাকি নেই (৳০)
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-gray-600 font-mono flex items-center gap-1">
                           <Phone className="w-3 h-3 text-gray-400" />
                           <span>{due.customerPhone}</span>
@@ -675,10 +1361,16 @@ export default function DueLedgerManager({
                       <div className="text-right shrink-0">
                         <span className="text-[10px] text-gray-400 block font-mono">{due.date}</span>
                         <div className="mt-0.5">
-                          <span className="text-xs text-gray-500 block">মোট: ৳{due.totalAmount}</span>
-                          <span className={`text-base font-black ${isPaid ? 'text-emerald-700' : 'text-red-600'}`}>
-                            {isPaid ? 'পরিশোধিত' : `বাকি: ৳${due.dueAmount}`}
-                          </span>
+                          <span className="text-xs text-gray-500 block">মোট বিল: ৳{due.totalAmount}</span>
+                          {itemAdvance > 0 ? (
+                            <span className="text-base font-black text-emerald-700">
+                              অগ্রীম জমা: ৳{itemAdvance}
+                            </span>
+                          ) : (
+                            <span className={`text-base font-black ${isPaid ? 'text-emerald-700' : 'text-red-600'}`}>
+                              {isPaid ? 'পরিশোধিত' : `বাকি: ৳${due.dueAmount}`}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -791,15 +1483,13 @@ export default function DueLedgerManager({
                           <span>এডিট</span>
                         </button>
 
-                        {!isPaid && (
-                          <button
-                            onClick={() => handleOpenPayment(due)}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs transition active:scale-95 cursor-pointer"
-                          >
-                            <Wallet className="w-3.5 h-3.5" />
-                            <span>টাকা আদায়</span>
-                          </button>
-                        )}
+                        <button
+                          onClick={() => handleOpenPayment(due)}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs transition active:scale-95 cursor-pointer"
+                        >
+                          <Wallet className="w-3.5 h-3.5" />
+                          <span>{isPaid ? '+ অগ্রীম জমা' : 'টাকা জমা'}</span>
+                        </button>
 
                         <button
                           onClick={() => handleDeleteDue(due.id, due.voucherNo)}
@@ -834,7 +1524,7 @@ export default function DueLedgerManager({
                   <h3 className="font-black text-sm text-gray-900">
                     {editingDueId ? '✏️ বাকি হিসাবের তথ্য এডিট করুন' : 'নতুন বাকি এন্ট্রি করুন'}
                   </h3>
-                  <p className="text-[10px] text-gray-500">গ্রাহকের বাকির তথ্য ও হিসাব যুক্ত বা পরিবর্তন করুন</p>
+                  <p className="text-[10px] text-gray-500">কাস্টমার সিলেক্ট করে বাকির তথ্য ও জমা যুক্ত করুন</p>
                 </div>
               </div>
               <button
@@ -849,6 +1539,38 @@ export default function DueLedgerManager({
             </div>
 
             <form onSubmit={handleAddNewDue} className="space-y-3">
+              {/* Quick Customer Select inside Modal */}
+              {!editingDueId && allCustomersList.length > 0 && (
+                <div>
+                  <label className="block text-xs font-bold text-amber-900 mb-1">তালিকা থেকে কাস্টমার সিলেক্ট করুন</label>
+                  <select
+                    value={allCustomersList.find(c => c.phone === formData.customerPhone)?.phone || ''}
+                    onChange={(e) => {
+                      const found = allCustomersList.find(c => (normalizeBdPhone(c.phone) || c.name) === e.target.value);
+                      if (found) {
+                        setFormData({
+                          ...formData,
+                          customerName: found.name,
+                          customerPhone: found.phone
+                        });
+                      }
+                    }}
+                    className="w-full bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 text-xs font-bold text-gray-900"
+                  >
+                    <option value="">-- কাস্টমার সিলেক্ট করুন (অথবা নিচে লিখুন) --</option>
+                    {allCustomersList.map(c => {
+                      const key = normalizeBdPhone(c.phone) || c.name;
+                      const bal = getCustomerDueOrAdvanceBalance(c.phone, c.name, dueList);
+                      return (
+                        <option key={key} value={key}>
+                          {c.name} ({c.phone}) {bal.remainingDue > 0 ? `[বাকি: ৳${bal.remainingDue}]` : bal.advanceDeposit > 0 ? `[অগ্রীম: ৳${bal.advanceDeposit}]` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+
               {/* Customer Name */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">গ্রাহকের নাম *</label>
@@ -883,7 +1605,7 @@ export default function DueLedgerManager({
                   <input
                     type="number"
                     required
-                    min="1"
+                    min="0"
                     placeholder="৳ 0"
                     value={formData.totalAmount}
                     onChange={(e) => setFormData({ ...formData, totalAmount: e.target.value })}
@@ -891,7 +1613,7 @@ export default function DueLedgerManager({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">প্রাথমিক জমা (ঐচ্ছিক)</label>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">জমা (যেকোনো পরিমাণ)</label>
                   <input
                     type="number"
                     min="0"
@@ -977,7 +1699,7 @@ export default function DueLedgerManager({
       )}
 
       {/* ============================================================== */}
-      {/* MODAL 2: COLLECT DUE PAYMENT (টাকা আদায় ও জমা)                 */}
+      {/* MODAL 2: COLLECT DUE PAYMENT (যেকোনো পরিমাণ টাকা আদায় ও জমা)  */}
       {/* ============================================================== */}
       {isPaymentModalOpen && selectedDue && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-3 animate-fadeIn">
@@ -988,7 +1710,7 @@ export default function DueLedgerManager({
                   <Wallet className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-black text-sm text-gray-900">বাকি টাকা আদায় ও জমা</h3>
+                  <h3 className="font-black text-sm text-gray-900">যেকোনো পরিমাণ জমা ও বাকি আদায়</h3>
                   <p className="text-[10px] text-gray-500">ভাউচার: {selectedDue.voucherNo}</p>
                 </div>
               </div>
@@ -1010,30 +1732,39 @@ export default function DueLedgerManager({
                 <span>মোট বিল: ৳{selectedDue.totalAmount}</span>
                 <span>এ পর্যন্ত জমা: ৳{selectedDue.paidAmount}</span>
               </div>
-              <div className="flex justify-between items-center text-sm font-black pt-1 border-t border-gray-200 text-red-600">
-                <span>অবশিষ্ট বাকি:</span>
-                <span>৳ {selectedDue.dueAmount}</span>
-              </div>
+              {selectedDue.dueAmount > 0 ? (
+                <div className="flex justify-between items-center text-sm font-black pt-1 border-t border-gray-200 text-red-600">
+                  <span>অবশিষ্ট বাকি:</span>
+                  <span>৳ {selectedDue.dueAmount}</span>
+                </div>
+              ) : (
+                <div className="flex justify-between items-center text-sm font-black pt-1 border-t border-gray-200 text-emerald-700">
+                  <span>অগ্রীম জমা:</span>
+                  <span>৳ {Math.max(0, selectedDue.paidAmount - selectedDue.totalAmount)}</span>
+                </div>
+              )}
             </div>
 
             <form onSubmit={handleSubmitPayment} className="space-y-3">
-              {/* Payment Amount */}
+              {/* Payment Amount (No Max Restriction!) */}
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold text-gray-700">জমার পরিমাণ (৳) *</label>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentData({ ...paymentData, amount: selectedDue.dueAmount.toString() })}
-                    className="text-[10px] text-emerald-700 font-bold hover:underline cursor-pointer"
-                  >
-                    সম্পূর্ণ টাকা (৳{selectedDue.dueAmount})
-                  </button>
+                  <label className="text-xs font-bold text-gray-700">জমার পরিমাণ (৳) * (যেকোনো পরিমাণ)</label>
+                  {selectedDue.dueAmount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPaymentData({ ...paymentData, amount: selectedDue.dueAmount.toString() })}
+                      className="text-[10px] text-emerald-700 font-bold hover:underline cursor-pointer"
+                    >
+                      সম্পূর্ণ বাকি (৳{selectedDue.dueAmount})
+                    </button>
+                  )}
                 </div>
                 <input
                   type="number"
                   required
                   min="1"
-                  max={selectedDue.dueAmount}
+                  placeholder="যেকোনো পরিমাণ টাকা লিখুন"
                   value={paymentData.amount}
                   onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
                   className="w-full border border-emerald-300 rounded-xl px-3 py-2 text-sm font-black text-emerald-700 focus:outline-none focus:border-emerald-600"

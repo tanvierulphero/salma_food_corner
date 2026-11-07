@@ -25,7 +25,7 @@ import {
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION } from './types';
-import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer } from './utils/sqlSync';
+import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer, getCustomerDueOrAdvanceBalance } from './utils/sqlSync';
 
 // Types
 interface FoodItem {
@@ -1912,16 +1912,33 @@ export default function App() {
             {/* TAB 3: CUSTOMER PROFILE & LOYALTY (PASSWORDLESS) */}
             {publicTab === 'profile' && (
               <div className="max-w-2xl mx-auto space-y-6">
-                {currentCustomer ? (
+                {currentCustomer ? (() => {
+                  const custDueBal = getCustomerDueOrAdvanceBalance(currentCustomer.phone, currentCustomer.name);
+                  return (
                   <div className="bg-white rounded-2xl p-6 sm:p-8 shadow-md border border-amber-200 space-y-6">
                     <div className="flex justify-between items-center border-b pb-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-amber-500 text-white flex items-center justify-center font-extrabold text-xl shadow">
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-amber-500 text-white flex items-center justify-center font-extrabold text-xl shadow shrink-0">
                           {currentCustomer.name.charAt(0)}
                         </div>
                         <div>
-                          <h2 className="text-xl font-bold text-gray-900">{currentCustomer.name}</h2>
-                          <p className="text-xs text-gray-500 font-mono">📱 {currentCustomer.phone} (পাসওয়ার্ড ছাড়া সুরক্ষিত প্রোফাইল)</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h2 className="text-xl font-bold text-gray-900">{currentCustomer.name}</h2>
+                            {custDueBal.remainingDue > 0 ? (
+                              <span className="bg-red-100 text-red-700 border border-red-300 text-xs font-black px-2.5 py-0.5 rounded-full">
+                                অবশিষ্ট বাকি: ৳ {custDueBal.remainingDue}
+                              </span>
+                            ) : custDueBal.advanceDeposit > 0 ? (
+                              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-black px-2.5 py-0.5 rounded-full">
+                                অগ্রীম জমা: ৳ {custDueBal.advanceDeposit}
+                              </span>
+                            ) : (
+                              <span className="bg-gray-100 text-gray-700 border border-gray-300 text-xs font-bold px-2.5 py-0.5 rounded-full">
+                                অবশিষ্ট বাকি: ৳ ০
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-500 font-mono mt-0.5">📱 {currentCustomer.phone} (পাসওয়ার্ড ছাড়া সুরক্ষিত প্রোফাইল)</p>
                         </div>
                       </div>
                       <button 
@@ -1944,15 +1961,26 @@ export default function App() {
                     </div>
 
                     {/* Stats */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-center">
-                        <p className="text-xs text-gray-500">মোট অর্ডার সংখ্যা</p>
-                        <p className="text-xl font-extrabold text-gray-900">{currentCustomer.totalOrders} টি</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200 text-center">
+                        <p className="text-[11px] text-gray-500">মোট অর্ডার</p>
+                        <p className="text-lg font-extrabold text-gray-900">{currentCustomer.totalOrders} টি</p>
                       </div>
-                      <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 text-center">
-                        <p className="text-xs text-gray-500">মোট ব্যয়</p>
-                        <p className="text-xl font-extrabold text-emerald-700">৳ {currentCustomer.totalSpent}</p>
+                      <div className="bg-emerald-50 p-3.5 rounded-xl border border-emerald-200 text-center">
+                        <p className="text-[11px] text-gray-500">মোট ব্যয়</p>
+                        <p className="text-lg font-extrabold text-emerald-700">৳ {currentCustomer.totalSpent}</p>
                       </div>
+                      {custDueBal.advanceDeposit > 0 ? (
+                        <div className="bg-emerald-50 p-3.5 rounded-xl border border-emerald-300 text-center">
+                          <p className="text-[11px] text-emerald-800 font-bold">অগ্রীম জমা</p>
+                          <p className="text-lg font-extrabold text-emerald-700">৳ {custDueBal.advanceDeposit}</p>
+                        </div>
+                      ) : (
+                        <div className="bg-red-50 p-3.5 rounded-xl border border-red-200 text-center">
+                          <p className="text-[11px] text-red-700 font-bold">অবশিষ্ট বাকি</p>
+                          <p className="text-lg font-extrabold text-red-600">৳ {custDueBal.remainingDue}</p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Edit Profile Form (No Password Needed!) */}
@@ -1994,7 +2022,8 @@ export default function App() {
                       </button>
                     </form>
                   </div>
-                ) : (
+                  );
+                })() : (
                   <div className="bg-white rounded-2xl p-8 shadow-md border border-amber-200 text-center space-y-4">
                     <User className="w-16 h-16 text-amber-500 mx-auto" />
                     <h3 className="text-lg font-bold">লগইন করা নেই</h3>
@@ -2616,10 +2645,27 @@ export default function App() {
                 </div>
 
                 <div className="space-y-2.5">
-                  {Object.values(customers).map(cust => (
+                  {Object.values(customers).map(cust => {
+                    const dueBal = getCustomerDueOrAdvanceBalance(cust.phone, cust.name);
+                    return (
                     <div key={cust.phone} className="p-3 rounded-xl border border-amber-100 bg-amber-50/30 flex items-center justify-between gap-2 text-xs">
                       <div className="min-w-0">
-                        <p className="font-bold text-emerald-900 truncate">{cust.name}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-bold text-emerald-900 truncate">{cust.name}</p>
+                          {dueBal.remainingDue > 0 ? (
+                            <span className="bg-red-100 text-red-700 border border-red-200 text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                              অবশিষ্ট বাকি: ৳{dueBal.remainingDue}
+                            </span>
+                          ) : dueBal.advanceDeposit > 0 ? (
+                            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                              অগ্রীম জমা: ৳{dueBal.advanceDeposit}
+                            </span>
+                          ) : (
+                            <span className="bg-gray-100 text-gray-600 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                              বাকি: ৳০
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[11px] font-mono text-gray-600">📱 {cust.phone}</p>
                         <p className="text-[10px] text-gray-500 truncate">📍 {cust.address}</p>
                       </div>
@@ -2643,7 +2689,8 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

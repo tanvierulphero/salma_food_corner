@@ -388,6 +388,59 @@ export function findCustomerByPhone(
   return null;
 }
 
+/**
+ * Computes a customer's net Remaining Due (অবশিষ্ট বাকি) or Advance Deposit (অগ্রীম জমা)
+ * from the Due Ledger ('salma_due_ledger').
+ */
+export function getCustomerDueOrAdvanceBalance(
+  phoneInput: string,
+  customerName?: string,
+  dueListOverride?: Array<any>
+): { totalBill: number; totalPaid: number; remainingDue: number; advanceDeposit: number } {
+  const normPhone = normalizeBdPhone(phoneInput || '');
+  const cleanName = (customerName || '').trim().toLowerCase();
+
+  let list: Array<any> = [];
+  if (Array.isArray(dueListOverride)) {
+    list = dueListOverride;
+  } else {
+    const raw = memoryStore.get('salma_due_ledger');
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) list = parsed;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  let totalBill = 0;
+  let totalPaid = 0;
+
+  for (const item of list) {
+    if (!item) continue;
+    const itemPhone = normalizeBdPhone(item.customerPhone || '');
+    const itemName = (item.customerName || '').trim().toLowerCase();
+    const isMatch =
+      (normPhone && itemPhone && normPhone === itemPhone) ||
+      (!normPhone && cleanName && itemName === cleanName);
+
+    if (isMatch) {
+      totalBill += Number(item.totalAmount) || 0;
+      totalPaid += Number(item.paidAmount) || 0;
+    }
+  }
+
+  const diff = totalBill - totalPaid;
+  return {
+    totalBill,
+    totalPaid,
+    remainingDue: diff > 0 ? diff : 0,
+    advanceDeposit: diff < 0 ? Math.abs(diff) : 0
+  };
+}
+
 const SESSION_KEYS = new Set(['salma_logged_customer', 'salma_admin_auth']);
 
 export async function initSqlDatabaseSync(): Promise<void> {

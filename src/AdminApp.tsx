@@ -28,7 +28,8 @@ import {
   syncAllToMysqlNow,
   saveToCpanelDb,
   uploadFoodImageToCpanel,
-  normalizeBdPhone
+  normalizeBdPhone,
+  getCustomerDueOrAdvanceBalance
 } from './utils/sqlSync';
 
 const ADMIN_PIN_DEFAULT = '1234';
@@ -1926,57 +1927,84 @@ export default function AdminApp() {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3">
-                {Object.values(customers).map(cust => (
-                  <div key={cust.phone} className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-amber-500 text-white flex items-center justify-center font-black text-base shadow-sm shrink-0">
-                          {cust.name.charAt(0)}
+                {Object.values(customers).map(cust => {
+                  const dueBal = getCustomerDueOrAdvanceBalance(cust.phone, cust.name);
+                  return (
+                    <div key={cust.phone} className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-amber-500 text-white flex items-center justify-center font-black text-base shadow-sm shrink-0">
+                            {cust.name.charAt(0)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-bold text-gray-900 text-sm truncate">{cust.name}</h4>
+                              {/* Remaining Due or Advance Deposit Badge next to Customer Name */}
+                              {dueBal.remainingDue > 0 ? (
+                                <span className="bg-red-100 text-red-700 border border-red-300 text-[10px] font-black px-2 py-0.5 rounded-full">
+                                  অবশিষ্ট বাকি: ৳{dueBal.remainingDue}
+                                </span>
+                              ) : dueBal.advanceDeposit > 0 ? (
+                                <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-black px-2 py-0.5 rounded-full">
+                                  অগ্রীম জমা: ৳{dueBal.advanceDeposit}
+                                </span>
+                              ) : (
+                                <span className="bg-gray-100 text-gray-600 border border-gray-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                  অবশিষ্ট বাকি: ৳০
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500 font-mono">📱 {cust.phone}</p>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <h4 className="font-bold text-gray-900 text-sm truncate">{cust.name}</h4>
-                          <p className="text-xs text-gray-500 font-mono">📱 {cust.phone}</p>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditCustomer(cust)}
+                            className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                            <span>এডিট</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCustomer(cust.phone, cust.name)}
+                            className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>ডিলেট</span>
+                          </button>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditCustomer(cust)}
-                          className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                        >
-                          <Edit3 className="w-3 h-3" />
-                          <span>এডিট</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteCustomer(cust.phone, cust.name)}
-                          className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          <span>ডিলেট</span>
-                        </button>
+                      <p className="text-xs text-gray-600">📍 {cust.address}</p>
+
+                      <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200 grid grid-cols-4 gap-2 items-center text-xs">
+                        <div>
+                          <span className="text-gray-500 text-[10px] block">লয়্যালটি পয়েন্ট</span>
+                          <span className="font-black text-amber-700">🎁 {cust.loyaltyPoints} Pts</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500 text-[10px] block">মোট অর্ডার</span>
+                          <span className="font-black text-gray-800">{cust.totalOrders} টি</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500 text-[10px] block">মোট খরচ</span>
+                          <span className="font-black text-emerald-700">৳ {cust.totalSpent}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500 text-[10px] block">
+                            {dueBal.advanceDeposit > 0 ? 'অগ্রীম জমা' : 'অবশিষ্ট বাকি'}
+                          </span>
+                          <span className={`font-black ${dueBal.remainingDue > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                            ৳ {dueBal.advanceDeposit > 0 ? dueBal.advanceDeposit : dueBal.remainingDue}
+                          </span>
+                        </div>
                       </div>
                     </div>
-
-                    <p className="text-xs text-gray-600">📍 {cust.address}</p>
-
-                    <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200 flex justify-between items-center text-xs">
-                      <div>
-                        <span className="text-gray-500 text-[10px] block">লয়্যালটি পয়েন্ট</span>
-                        <span className="font-black text-amber-700">🎁 {cust.loyaltyPoints} Pts</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 text-[10px] block">মোট অর্ডার</span>
-                        <span className="font-black text-gray-800">{cust.totalOrders} টি</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 text-[10px] block">মোট খরচ</span>
-                        <span className="font-black text-emerald-700">৳ {cust.totalSpent}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
