@@ -27,6 +27,7 @@ import ShopLocationManager from './components/ShopLocationManager';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION, MenuCategory, DEFAULT_MENU_CATEGORIES } from './types';
 import CategoryManagerModal from './components/CategoryManagerModal';
 import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer, getCustomerDueOrAdvanceBalance, getCustomerTransactions } from './utils/sqlSync';
+import { formatDateDMY } from './utils/dateFormatter';
 
 // Types
 interface FoodItem {
@@ -1875,7 +1876,7 @@ export default function App() {
                                   ✓ সম্পূর্ণ পরিশোধিত
                                 </div>
                               )}
-                              <p className="text-[10px] text-gray-400">তারিখ: {order.date} • {order.createdAt}</p>
+                              <p className="text-[10px] text-gray-400">তারিখ: <span className="font-mono">{formatDateDMY(order.date)}</span> • {order.createdAt}</p>
                             </div>
                           </div>
 
@@ -2093,7 +2094,7 @@ export default function App() {
                                     <span className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-gray-200 text-[10px]">
                                       {v.voucherNo}
                                     </span>
-                                    <span className="text-gray-500 text-[10px]">{v.date}</span>
+                                    <span className="text-gray-500 text-[10px] font-mono">{formatDateDMY(v.date)}</span>
                                   </div>
                                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                     v.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'
@@ -2122,7 +2123,7 @@ export default function App() {
                                   <div key={p.id} className="p-2 flex items-center justify-between">
                                     <div>
                                       <span className="font-bold text-emerald-800">৳{p.amount}</span>
-                                      <span className="text-[10px] text-gray-500 ml-1.5">({p.paymentMethod}) • {p.date}</span>
+                                      <span className="text-[10px] text-gray-500 ml-1.5 font-mono">({p.paymentMethod}) • {formatDateDMY(p.date)}</span>
                                     </div>
                                     <span className="text-[10px] text-gray-500 font-mono">{p.voucherNo}</span>
                                   </div>
@@ -2165,7 +2166,7 @@ export default function App() {
                     <div key={rev.id} className="border border-amber-200 rounded-xl p-4 bg-amber-50/30 space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="font-bold text-gray-800 text-sm">{rev.customerName}</span>
-                        <span className="text-xs text-gray-400">{rev.date}</span>
+                        <span className="text-xs text-gray-400 font-mono">{formatDateDMY(rev.date)}</span>
                       </div>
                       <div className="flex text-amber-500">
                         {[...Array(rev.rating)].map((_, i) => <Star key={i} className="w-3.5 h-3.5 fill-amber-500" />)}
@@ -2288,7 +2289,7 @@ export default function App() {
                         </div>
                         <div>
                           <h4 className="font-bold text-gray-900 text-sm">দৈনিক আয় হিসাব (Today's Income)</h4>
-                          <p className="text-[11px] text-emerald-700 font-semibold">{todayStr}</p>
+                          <p className="text-[11px] text-emerald-700 font-semibold font-mono">{formatDateDMY(todayStr)}</p>
                         </div>
                       </div>
                       <span className="text-xl font-extrabold text-emerald-700">৳ {todayIncome}</span>
@@ -2352,7 +2353,7 @@ export default function App() {
                         </div>
                         <div>
                           <h4 className="font-bold text-gray-900 text-sm">দৈনিক ব্যয় হিসাব (Today's Expense)</h4>
-                          <p className="text-[11px] text-red-700 font-semibold">{todayStr}</p>
+                          <p className="text-[11px] text-red-700 font-semibold font-mono">{formatDateDMY(todayStr)}</p>
                         </div>
                       </div>
                       <span className="text-xl font-extrabold text-red-700">৳ {todayExpense}</span>
@@ -2614,7 +2615,7 @@ export default function App() {
                         <Calendar className="w-3.5 h-3.5 text-amber-600" />
                         <span>দৈনিক রিপোর্ট (Today)</span>
                       </h4>
-                      <span className="text-[10px] text-gray-500 font-mono">{todayStr}</span>
+                      <span className="text-[10px] text-gray-500 font-mono">{formatDateDMY(todayStr)}</span>
                     </div>
                     <div className="space-y-1 text-xs">
                       <div className="flex justify-between">
@@ -2700,7 +2701,10 @@ export default function App() {
                     <div key={order.id} className="border border-amber-200 rounded-2xl p-3.5 space-y-2.5 bg-amber-50/40">
                       <div className="flex justify-between items-start">
                         <div>
-                          <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded">{order.id}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded font-mono">{order.id}</span>
+                            <span className="text-[10px] text-gray-500 font-mono">{formatDateDMY(order.date)}</span>
+                          </div>
                           <h4 className="font-bold text-xs text-gray-800 mt-1">{order.customerName} ({order.phone})</h4>
                           <p className="text-[11px] text-gray-600">📍 {order.address}</p>
                         </div>

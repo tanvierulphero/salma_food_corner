@@ -23,6 +23,7 @@ import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import DueLedgerManager from './components/DueLedgerManager';
 import CategoryManagerModal from './components/CategoryManagerModal';
+import { formatDateDMY } from './utils/dateFormatter';
 import {
   getMysqlStatus,
   subscribeMysqlStatus,
@@ -1138,7 +1139,7 @@ export default function AdminApp() {
                     </div>
                     <div>
                       <h3 className="font-black text-gray-900 text-sm sm:text-base">দৈনিক আয় কার্ড (Today's Income)</h3>
-                      <p className="text-xs text-emerald-700 font-semibold">{todayStr}</p>
+                      <p className="text-xs text-emerald-700 font-semibold font-mono">{formatDateDMY(todayStr)}</p>
                     </div>
                   </div>
                   <span className="text-2xl font-black text-emerald-700">৳ {todayIncome}</span>
@@ -1212,7 +1213,7 @@ export default function AdminApp() {
                     </div>
                     <div>
                       <h3 className="font-black text-gray-900 text-sm sm:text-base">দৈনিক ব্যয় কার্ড (Today's Expense)</h3>
-                      <p className="text-xs text-red-700 font-semibold">{todayStr}</p>
+                      <p className="text-xs text-red-700 font-semibold font-mono">{formatDateDMY(todayStr)}</p>
                     </div>
                   </div>
                   <span className="text-2xl font-black text-red-600">৳ {todayExpense}</span>
@@ -1607,7 +1608,7 @@ export default function AdminApp() {
                       </div>
                       <p className="text-xs font-bold text-gray-900 truncate">{entry.category}</p>
                       {entry.note && <p className="text-[10px] text-gray-500 line-clamp-1">{entry.note}</p>}
-                      <p className="text-[10px] text-gray-400 font-mono">{entry.date}</p>
+                      <p className="text-[10px] text-gray-400 font-mono">{formatDateDMY(entry.date)}</p>
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -1717,7 +1718,7 @@ export default function AdminApp() {
               <div className="flex justify-between items-center border-b pb-3">
                 <div>
                   <h3 className="font-bold text-gray-900 text-sm">
-                    {reportPeriod === 'daily' ? `দৈনিক রিপোর্ট (${todayStr})` : reportPeriod === 'monthly' ? `মাসিক রিপোর্ট (${currentMonth})` : `বাৎসরিক রিপোর্ট (${currentYear})`}
+                    {reportPeriod === 'daily' ? `দৈনিক রিপোর্ট (${formatDateDMY(todayStr)})` : reportPeriod === 'monthly' ? `মাসিক রিপোর্ট (${currentMonth})` : `বাৎসরিক রিপোর্ট (${currentYear})`}
                   </h3>
                   <p className="text-xs text-gray-500">সালমা ফুড কর্ণার অডিট স্টেটমেন্ট</p>
                 </div>
@@ -1738,7 +1739,7 @@ export default function AdminApp() {
                     <div key={entry.id} className="flex justify-between items-center text-xs py-2 border-b border-gray-100 gap-2">
                       <div className="min-w-0 flex-1">
                         <span className="font-bold text-gray-800 block truncate">{entry.category}</span>
-                        <span className="text-[10px] text-gray-400 block">{entry.date} • {entry.voucherNo} {entry.note ? `• ${entry.note}` : ''}</span>
+                        <span className="text-[10px] text-gray-400 block font-mono">{formatDateDMY(entry.date)} • {entry.voucherNo} {entry.note ? `• ${entry.note}` : ''}</span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className={`font-black ${entry.type === 'income' ? 'text-emerald-700' : 'text-red-600'}`}>
@@ -1815,7 +1816,7 @@ export default function AdminApp() {
                           <span className="bg-red-100 text-red-800 text-xs font-black px-2.5 py-0.5 rounded-lg">
                             {order.id}
                           </span>
-                          <span className="text-xs text-gray-500 font-mono">{order.date} • {order.createdAt}</span>
+                          <span className="text-xs text-gray-500 font-mono">{formatDateDMY(order.date)} • {order.createdAt}</span>
                           {order.isFreeDeliveryWithin1km && (
                             <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
                               ১ কি.মি. ফ্রি ডেলিভারি (৳০)
@@ -1994,7 +1995,9 @@ export default function AdminApp() {
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-gray-500 font-mono">📱 {cust.phone}</p>
+                            <p className="text-xs text-gray-500 font-mono">
+                              📱 {cust.phone} {cust.registeredAt ? `• নিবন্ধন: ${formatDateDMY(cust.registeredAt)}` : ''}
+                            </p>
                           </div>
                         </div>
 
@@ -2418,7 +2421,7 @@ export default function AdminApp() {
             <div className="text-xs space-y-1">
               <p><b>গ্রাহক:</b> {selectedReceiptOrder.customerName} ({selectedReceiptOrder.phone})</p>
               <p><b>ঠিকানা:</b> {selectedReceiptOrder.address}</p>
-              <p><b>তারিখ ও সময়:</b> {selectedReceiptOrder.date} {selectedReceiptOrder.createdAt}</p>
+              <p><b>তারিখ ও সময়:</b> <span className="font-mono">{formatDateDMY(selectedReceiptOrder.date)}</span> {selectedReceiptOrder.createdAt}</p>
               {selectedReceiptOrder.isFreeDeliveryWithin1km && (
                 <p className="text-emerald-700 font-bold">✓ ১ কি.মি. ফ্রি ডেলিভারি জোন</p>
               )}

@@ -8,6 +8,7 @@ import {
 import { DueEntry, LedgerEntry, Order, CustomerProfile } from '../types';
 import { playAddToCartSound, playOrderSuccessSound } from '../utils/audioFeedback';
 import { saveToCpanelDb, normalizeBdPhone, getCustomerDueOrAdvanceBalance } from '../utils/sqlSync';
+import { formatDateDMY } from '../utils/dateFormatter';
 
 interface DueLedgerManagerProps {
   ledger: LedgerEntry[];
@@ -1698,7 +1699,7 @@ export default function DueLedgerManager({
                       <p className="text-[11px] text-gray-500 font-mono mt-0.5">{order.phone} • {order.address}</p>
                     </div>
                     <div className="text-right">
-                      <span className="text-[10px] text-gray-400 block">{order.date}</span>
+                      <span className="text-[10px] text-gray-400 block font-mono">{formatDateDMY(order.date)}</span>
                       <span className="text-sm font-black text-red-600">বাকি: ৳{order.dueAmount}</span>
                     </div>
                   </div>
@@ -1995,7 +1996,7 @@ export default function DueLedgerManager({
                                         <span className="font-mono text-[10px] font-bold bg-gray-100 text-gray-700 px-2 py-0.5 rounded-md">
                                           {due.voucherNo}
                                         </span>
-                                        <span className="text-[10px] text-gray-400 font-mono">{due.date}</span>
+                                        <span className="text-[10px] text-gray-400 font-mono">{formatDateDMY(due.date)}</span>
                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                           vPaid
                                             ? 'bg-emerald-100 text-emerald-800'
@@ -2014,9 +2015,9 @@ export default function DueLedgerManager({
                                         <p className="text-[10px] text-gray-500 italic">নোট: {due.note}</p>
                                       )}
                                       {due.dueDate && !vPaid && (
-                                        <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1">
+                                        <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1 font-mono">
                                           <Calendar className="w-3 h-3 text-amber-600" />
-                                          <span>পরিশোধের তারিখ: {due.dueDate}</span>
+                                          <span>পরিশোধের তারিখ: {formatDateDMY(due.dueDate)}</span>
                                         </p>
                                       )}
                                     </div>
@@ -2104,7 +2105,7 @@ export default function DueLedgerManager({
                                     </span>
                                   </div>
                                   <div className="text-[10px] text-gray-500 font-mono">
-                                    {p.date} • {p.time} {p.note ? `• ${p.note}` : ''}
+                                    {formatDateDMY(p.date)} • {p.time} {p.note ? `• ${p.note}` : ''}
                                   </div>
                                 </div>
                                 <button
@@ -2139,7 +2140,7 @@ export default function DueLedgerManager({
                                     <span className="bg-blue-100 text-blue-800 text-[10px] font-mono font-bold px-2 py-0.5 rounded">
                                       #{order.id}
                                     </span>
-                                    <span className="text-gray-500 text-[10px] font-mono">{order.date}</span>
+                                    <span className="text-gray-500 text-[10px] font-mono">{formatDateDMY(order.date)}</span>
                                   </div>
                                   {order.dueAmount > 0 ? (
                                     <span className="text-xs font-black text-red-600">ডেলিভারি বাকি: ৳{order.dueAmount}</span>
@@ -2530,7 +2531,7 @@ export default function DueLedgerManager({
                 </div>
                 <div className="flex justify-between">
                   <span>তারিখ:</span>
-                  <span>{selectedDue.date}</span>
+                  <span className="font-mono">{formatDateDMY(selectedDue.date)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>গ্রাহক:</span>
@@ -2634,7 +2635,7 @@ export default function DueLedgerManager({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">স্টেটমেন্ট তারিখ:</span>
-                  <span>{todayStr}</span>
+                  <span className="font-mono">{formatDateDMY(todayStr)}</span>
                 </div>
               </div>
 
@@ -2656,7 +2657,7 @@ export default function DueLedgerManager({
                         <tr key={d.id}>
                           <td className="p-1.5 font-bold">
                             <div>{d.voucherNo}</div>
-                            <div className="text-[9px] text-gray-400 font-normal">{d.date}</div>
+                            <div className="text-[9px] text-gray-400 font-normal font-mono">{formatDateDMY(d.date)}</div>
                           </td>
                           <td className="p-1.5 max-w-[120px] truncate">{d.itemsDescription}</td>
                           <td className="p-1.5 text-right font-bold">৳{d.totalAmount}</td>
@@ -2684,7 +2685,7 @@ export default function DueLedgerManager({
                       <tbody className="divide-y divide-emerald-50">
                         {statementCustomer.allPayments.map((p: any) => (
                           <tr key={p.id}>
-                            <td className="p-1.5">{p.date}</td>
+                            <td className="p-1.5 font-mono">{formatDateDMY(p.date)}</td>
                             <td className="p-1.5">{p.paymentMethod}</td>
                             <td className="p-1.5 text-right font-bold text-emerald-700">৳{p.amount}</td>
                           </tr>

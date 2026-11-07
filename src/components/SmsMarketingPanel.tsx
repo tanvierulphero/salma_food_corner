@@ -8,6 +8,7 @@ import {
 import { CustomerProfile, SmsCampaignLog, SmsGatewayConfig } from '../types';
 import { playOrderSuccessSound, playAddToCartSound } from '../utils/audioFeedback';
 import { saveToCpanelDb, normalizeBdPhone } from '../utils/sqlSync';
+import { formatDateDMY } from '../utils/dateFormatter';
 
 interface SmsMarketingPanelProps {
   customers: Record<string, CustomerProfile>;
@@ -891,7 +892,7 @@ export default function SmsMarketingPanel({
                     </p>
 
                     <div className="flex justify-between items-center text-[10px] text-gray-400 pt-1 border-t border-gray-200/50">
-                      <span>{log.date} • {log.time}</span>
+                      <span className="font-mono">{formatDateDMY(log.date)} • {log.time}</span>
                       <span className="font-bold text-gray-700">
                         {log.recipientCount} জন গ্রাহক (৳{log.costEstimate})
                       </span>
