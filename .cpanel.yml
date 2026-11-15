@@ -2,7 +2,14 @@
 deployment:
   tasks:
     - export DEPLOYPATH=/home/$(whoami)/public_html/
+    - export BACKUPROOT=/home/$(whoami)
+    - '[ -f "$DEPLOYPATH/salma_server_db.json" ] && cp -f "$DEPLOYPATH/salma_server_db.json" "$BACKUPROOT/salma_server_db.json" || true'
+    - '[ -f "$DEPLOYPATH/db_config.php" ] && cp -f "$DEPLOYPATH/db_config.php" "$BACKUPROOT/salma_db_config.php" || true'
+    - /bin/rm -f dist/salma_server_db.json dist/db_config.php
     - /bin/cp -Rf dist/* $DEPLOYPATH
     - /bin/cp -f public/api.php $DEPLOYPATH/api.php
     - /bin/cp -f public/database.sql $DEPLOYPATH/database.sql
     - /bin/cp -f public/.htaccess $DEPLOYPATH/.htaccess
+    - '[ ! -f "$DEPLOYPATH/salma_server_db.json" ] && [ -f "$BACKUPROOT/salma_server_db.json" ] && cp -f "$BACKUPROOT/salma_server_db.json" "$DEPLOYPATH/salma_server_db.json" || true'
+    - '[ ! -f "$DEPLOYPATH/db_config.php" ] && [ -f "$BACKUPROOT/salma_db_config.php" ] && cp -f "$BACKUPROOT/salma_db_config.php" "$DEPLOYPATH/db_config.php" || true'
+

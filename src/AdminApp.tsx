@@ -10,7 +10,7 @@ import {
   Search, Lock, Unlock, LogOut, ArrowUpRight, ArrowDownRight, DollarSign, 
   Printer, Volume2, VolumeX, Eye, ArrowLeft, ShieldCheck, Tag, Sparkles,
   ShoppingBag, Calendar, Clock, MapPin, Hash, Check, X, ShieldAlert,
-  BookOpen, Upload, Camera, Image as ImageIcon, Layers, Download, Database, RotateCcw
+  BookOpen, Upload, Camera, Image as ImageIcon, Layers
 } from 'lucide-react';
 import { 
   FoodItem, Order, LedgerEntry, CustomerProfile, INITIAL_MENU_DATA,
@@ -32,11 +32,7 @@ import {
   saveToCpanelDb,
   uploadFoodImageToCpanel,
   normalizeBdPhone,
-  getCustomerDueOrAdvanceBalance,
-  exportAllAppDataJson,
-  importAllAppDataJson,
-  getAutoBackupInfo,
-  restoreFromAutoBackup
+  getCustomerDueOrAdvanceBalance
 } from './utils/sqlSync';
 import {
   countActiveOrders,
@@ -384,53 +380,6 @@ export default function AdminApp() {
   const [dbConnecting, setDbConnecting] = useState(false);
   const [dbNotice, setDbNotice] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [isSyncingNow, setIsSyncingNow] = useState(false);
-  const [autoBackupInfo, setAutoBackupInfo] = useState(() => getAutoBackupInfo());
-  const [backupNotice, setBackupNotice] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
-  const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState(false);
-  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    setAutoBackupInfo(getAutoBackupInfo());
-  }, [orders.length, menuItems.length, ledger.length]);
-
-  const syncReactStatesFromStorage = () => {
-    try {
-      const m = localStorage.getItem('salma_menu_items');
-      if (m) {
-        const parsed = JSON.parse(m);
-        if (Array.isArray(parsed)) setMenuItems(parsed);
-      }
-      const o = localStorage.getItem('salma_orders');
-      if (o) {
-        const parsed = JSON.parse(o);
-        if (Array.isArray(parsed)) {
-          ordersRef.current = parsed;
-          setOrders(parsed);
-        }
-      }
-      const l = localStorage.getItem('salma_ledger');
-      if (l) {
-        const parsed = JSON.parse(l);
-        if (Array.isArray(parsed)) setLedger(parsed);
-      }
-      const c = localStorage.getItem('salma_customers');
-      if (c) {
-        const parsed = JSON.parse(c);
-        if (parsed && typeof parsed === 'object') setCustomers(parsed);
-      }
-      const cats = localStorage.getItem('salma_menu_categories');
-      if (cats) {
-        const parsed = JSON.parse(cats);
-        if (Array.isArray(parsed) && parsed.length > 0) setMenuCategories(parsed);
-      }
-      const offer = localStorage.getItem('salma_active_offer');
-      if (offer) setActiveOffer(offer);
-    } catch {
-      // Ignore parse errors
-    }
-    setAutoBackupInfo(getAutoBackupInfo());
-  };
 
   useEffect(() => {
     return subscribeMysqlStatus(() => {
@@ -457,63 +406,10 @@ export default function AdminApp() {
 
   const handleSyncAllNow = async () => {
     setIsSyncingNow(true);
-    const ok = await syncAllToMysqlNow();
+    await syncAllToMysqlNow();
     setIsSyncingNow(false);
-    syncReactStatesFromStorage();
     if (soundOn) playAddToCartSound();
-    setBackupNotice(
-      ok
-        ? { type: 'ok', text: 'সকল ডাটা সফলভাবে সার্ভার ও ডাটাবেসে সিঙ্ক করা হয়েছে!' }
-        : { type: 'err', text: 'সার্ভারে সিঙ্ক করতে সমস্যা হয়েছে। ইন্টারনেট সংযোগ চেক করুন।' }
-    );
-  };
-
-  const handleDownloadBackup = () => {
-    try {
-      const jsonStr = exportAllAppDataJson();
-      const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `salma-food-backup-${formatDateDMY(todayStr)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      if (soundOn) playAddToCartSound();
-      setBackupNotice({ type: 'ok', text: 'সম্পূর্ণ ডাটার ব্যাকআপ ফাইল (.json) সফলভাবে ডাউনলোড হয়েছে!' });
-    } catch {
-      setBackupNotice({ type: 'err', text: 'ব্যাকআপ ফাইল তৈরি করতে সমস্যা হয়েছে।' });
-    }
-  };
-
-  const handleImportBackupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setIsRestoringBackup(true);
-    setBackupNotice(null);
-    try {
-      const rawText = await file.text();
-      const res = await importAllAppDataJson(rawText);
-      syncReactStatesFromStorage();
-      if (res.ok && soundOn) playOrderSuccessSound();
-      setBackupNotice({ type: res.ok ? 'ok' : 'err', text: res.message });
-    } catch {
-      setBackupNotice({ type: 'err', text: 'ব্যাকআপ ফাইলটি পড়া সম্ভব হয়নি।' });
-    } finally {
-      setIsRestoringBackup(false);
-    }
-  };
-
-  const handleRestoreAutoBackup = async () => {
-    setIsRestoringBackup(true);
-    setBackupNotice(null);
-    const res = await restoreFromAutoBackup();
-    setIsRestoringBackup(false);
-    syncReactStatesFromStorage();
-    if (res.ok && soundOn) playOrderSuccessSound();
-    setBackupNotice({ type: res.ok ? 'ok' : 'err', text: res.message });
+    alert('সকল ডাটা সফলভাবে cPanel সার্ভার ও MySQL ডাটাবেসে সিঙ্ক করা হয়েছে!');
   };
 
   const handleSaveFood = (e: React.FormEvent) => {
@@ -595,24 +491,22 @@ export default function AdminApp() {
     }
   };
 
-  const executeClearAllData = async () => {
-    setClearAllConfirmOpen(false);
-    setMenuItems([]);
-    setOrders([]);
-    setLedger([]);
-    setCustomers({});
-    await saveToCpanelDb('salma_menu_items', []);
-    await saveToCpanelDb('salma_orders', []);
-    await saveToCpanelDb('salma_ledger', []);
-    await saveToCpanelDb('salma_customers', {});
-    await saveToCpanelDb('salma_due_ledger', []);
-    await saveToCpanelDb('salma_sms_logs', []);
-    localStorage.removeItem('salma_logged_customer');
-    if (soundOn) playAddToCartSound();
-    setBackupNotice({
-      type: 'ok',
-      text: 'সকল ডাটা পরিষ্কার করা হয়েছে। পূর্বের ডাটা লাগলে "অটো-ব্যাকআপ পুনরুদ্ধার" বা JSON ফাইল ব্যবহার করুন।'
-    });
+  const handleClearAllData = () => {
+    if (confirm('আপনি কি সমস্ত ডাটা (মেনু, অর্ডার, লেজার, বাকি খাতা ও কাস্টমার তালিকা) সম্পূর্ণ পরিষ্কার করে নতুন করে শুরু করতে চান?')) {
+      setMenuItems([]);
+      setOrders([]);
+      setLedger([]);
+      setCustomers({});
+      localStorage.setItem('salma_menu_items', JSON.stringify([]));
+      localStorage.setItem('salma_orders', JSON.stringify([]));
+      localStorage.setItem('salma_ledger', JSON.stringify([]));
+      localStorage.setItem('salma_customers', JSON.stringify({}));
+      localStorage.setItem('salma_due_ledger', JSON.stringify([]));
+      localStorage.setItem('salma_sms_logs', JSON.stringify([]));
+      localStorage.removeItem('salma_logged_customer');
+      if (soundOn) playAddToCartSound();
+      alert('সকল ডাটা সফলভাবে মুছে ফেলা হয়েছে! এখন আপনি নতুন ফ্রেশ ডাটা এন্ট্রি করতে পারেন।');
+    }
   };
 
   // Customer Add / Edit Modal State
@@ -1478,133 +1372,6 @@ export default function AdminApp() {
                 >
                   <MapPin className="w-3.5 h-3.5" />
                   <span>দোকানের অবস্থান (GPS)</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Data Protection, Backup & Recovery Section */}
-            <div className="bg-white p-4 rounded-3xl border border-emerald-200 shadow-xs space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-                    <ShieldCheck className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs sm:text-sm font-black text-gray-900">
-                      ডাটা সুরক্ষা, ব্যাকআপ ও পুনরুদ্ধার
-                    </h3>
-                    <p className="text-[10px] text-gray-500">
-                      সব অর্ডার, মেনু, কাস্টমার ও বাকি খাতার নিরাপদ ব্যাকআপ রাখুন এবং প্রয়োজনে রিস্টোর করুন
-                    </p>
-                  </div>
-                </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg shrink-0 ${
-                  mysqlStatus.mysqlConnected
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-amber-100 text-amber-800'
-                }`}>
-                  {mysqlStatus.mysqlConnected ? 'MySQL যুক্ত' : 'সার্ভার সিঙ্ক'}
-                </span>
-              </div>
-
-              {backupNotice && (
-                <div
-                  role="status"
-                  className={`p-2.5 rounded-xl text-xs font-bold border flex items-center justify-between gap-2 ${
-                    backupNotice.type === 'ok'
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                      : 'bg-red-50 border-red-200 text-red-700'
-                  }`}
-                >
-                  <span>{backupNotice.text}</span>
-                  <button
-                    type="button"
-                    onClick={() => setBackupNotice(null)}
-                    aria-label="বার্তা বন্ধ করুন"
-                    className="p-0.5 text-gray-400 hover:text-gray-700 cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={handleDownloadBackup}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>ব্যাকআপ ডাউনলোড (JSON)</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isRestoringBackup}
-                  onClick={() => backupFileInputRef.current?.click()}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition cursor-pointer disabled:opacity-50"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>{isRestoringBackup ? 'রিস্টোর হচ্ছে...' : 'ব্যাকআপ রিস্টোর (JSON)'}</span>
-                </button>
-                <input
-                  ref={backupFileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleImportBackupFile}
-                  className="hidden"
-                  aria-label="JSON ব্যাকআপ ফাইল নির্বাচন করুন"
-                />
-
-                <button
-                  type="button"
-                  onClick={handleSyncAllNow}
-                  disabled={isSyncingNow}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-2 px-3 rounded-xl text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingNow ? 'animate-spin' : ''}`} />
-                  <span>{isSyncingNow ? 'সিঙ্ক হচ্ছে...' : 'সার্ভারে সিঙ্ক করুন'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setDbModalOpen(true)}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-2 px-3 rounded-xl text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer"
-                >
-                  <Database className="w-3.5 h-3.5" />
-                  <span>cPanel MySQL সেটআপ</span>
-                </button>
-              </div>
-
-              {autoBackupInfo.hasBackup && (
-                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center justify-between gap-2">
-                  <div className="text-[11px] text-amber-950">
-                    <p className="font-bold">অটো-সেভড পূর্বের ডাটা পাওয়া গেছে</p>
-                    <p className="text-[10px] text-amber-800">
-                      মোট {autoBackupInfo.keyCount}টি তালিকা সংরক্ষিত আছে
-                      {autoBackupInfo.savedAt ? ` (${formatDateDMY(autoBackupInfo.savedAt.split('T')[0])})` : ''}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={isRestoringBackup}
-                    onClick={handleRestoreAutoBackup}
-                    className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1 shrink-0 cursor-pointer transition disabled:opacity-50"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>পুনরুদ্ধার করুন</span>
-                  </button>
-                </div>
-              )}
-
-              <div className="pt-1 border-t border-gray-100 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setClearAllConfirmOpen(true)}
-                  className="text-[11px] font-bold text-red-600 hover:text-red-800 flex items-center gap-1 cursor-pointer"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  <span>সব ডাটা রিসেট / পরিষ্কার</span>
                 </button>
               </div>
             </div>
@@ -3327,44 +3094,6 @@ export default function AdminApp() {
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 rounded-xl text-xs shadow cursor-pointer transition"
               >
                 {orderActionConfirm.type === 'delete' ? 'হ্যাঁ, ডিলেট করুন' : 'হ্যাঁ, বাতিল করুন'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* IN-APP CLEAR ALL DATA CONFIRMATION MODAL                       */}
-      {/* ============================================================== */}
-      {clearAllConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-3xl max-w-[380px] w-full p-5 shadow-2xl border border-red-200 space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
-                <ShieldAlert className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-black text-sm text-gray-900">সব ডাটা পরিষ্কার করবেন?</h3>
-                <p className="text-[11px] text-gray-500">মেনু, অর্ডার, লেজার, বাকি খাতা ও গ্রাহক তালিকা</p>
-              </div>
-            </div>
-            <p className="text-xs text-gray-700 bg-amber-50 border border-amber-200 rounded-2xl p-3 leading-relaxed">
-              সতর্কতা: সকল তালিকা খালি হয়ে যাবে। পরিষ্কার করার আগে অবশ্যই উপরে থেকে একটি JSON ব্যাকআপ ডাউনলোড করে রাখুন।
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setClearAllConfirmOpen(false)}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-2.5 rounded-xl text-xs cursor-pointer transition"
-              >
-                বাতিল করুন
-              </button>
-              <button
-                type="button"
-                onClick={executeClearAllData}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 rounded-xl text-xs shadow cursor-pointer transition"
-              >
-                হ্যাঁ, পরিষ্কার করুন
               </button>
             </div>
           </div>

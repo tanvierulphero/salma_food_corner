@@ -913,12 +913,8 @@ export async function initSqlDatabaseSync(): Promise<void> {
       return;
     }
 
-    // Skip initial mount empty default array/object if we don't have previous data yet so page load never overwrites server DB
-    if (
-      previousValue === undefined &&
-      (strValue === '[]' || strValue === '{}') &&
-      SYNCED_KEYS.has(key)
-    ) {
+    // Skip initial mount default state writes when previousValue is undefined so page load never overwrites server DB
+    if (previousValue === undefined && SYNCED_KEYS.has(key)) {
       memoryStore.set(key, strValue);
       return;
     }

@@ -29,8 +29,12 @@ $configFileParent = dirname(__DIR__) . '/salma_db_config.php';
 
 if (file_exists($configFileLocal)) {
     @include $configFileLocal;
+    if (!file_exists($configFileParent)) {
+        @copy($configFileLocal, $configFileParent);
+    }
 } elseif (file_exists($configFileParent)) {
     @include $configFileParent;
+    @copy($configFileParent, $configFileLocal);
 }
 
 // সার্ভারের ফাইল-বেসড ব্যাকআপ ডাটাবেস (public_html এবং parent ফোল্ডারে দ্বৈত ব্যাকআপ)
@@ -84,13 +88,37 @@ function readServerDbFile($localFile, $backupFile = null) {
     $backupData = $backupFile ? readSingleJsonFile($backupFile) : [];
 
     if (empty($localData) && !empty($backupData)) {
+        $encoded = json_encode((object)$backupData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        @file_put_contents($localFile, $encoded, LOCK_EX);
+        @chmod($localFile, 0644);
         return $backupData;
     }
+
     if (!empty($backupData)) {
+        $localMeta = (isset($localData['_salma_meta']) && is_array($localData['_salma_meta'])) ? $localData['_salma_meta'] : [];
+        $backupMeta = (isset($backupData['_salma_meta']) && is_array($backupData['_salma_meta'])) ? $backupData['_salma_meta'] : [];
+        $healed = false;
+
         foreach ($backupData as $k => $v) {
-            if (!array_key_exists($k, $localData)) {
+            if ($k === '_salma_meta') continue;
+            $localTs = isset($localMeta[$k]) ? floatval($localMeta[$k]) : 0;
+            $backupTs = isset($backupMeta[$k]) ? floatval($backupMeta[$k]) : 0;
+
+            if (!array_key_exists($k, $localData) || $backupTs > $localTs) {
                 $localData[$k] = $v;
+                if ($backupTs > 0) {
+                    $localMeta[$k] = $backupTs;
+                }
+                $healed = true;
             }
+        }
+        if (!empty($localMeta)) {
+            $localData['_salma_meta'] = $localMeta;
+        }
+        if ($healed) {
+            $encoded = json_encode((object)$localData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            @file_put_contents($localFile, $encoded, LOCK_EX);
+            @chmod($localFile, 0644);
         }
     }
     return $localData;

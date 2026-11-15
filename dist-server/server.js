@@ -9,7 +9,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json({ limit: '15mb' }));
-const uploadsPath = path.resolve(__dirname, 'public', 'uploads');
+const appRoot = fs.existsSync(path.resolve(__dirname, 'package.json'))
+    ? __dirname
+    : path.resolve(__dirname, '..');
+const uploadsPath = path.resolve(appRoot, 'public', 'uploads');
 if (!fs.existsSync(uploadsPath)) {
     fs.mkdirSync(uploadsPath, { recursive: true });
 }
@@ -91,8 +94,8 @@ app.post('/api/send-sms', async (req, res) => {
         res.status(500).json({ error: error.message || 'SMS send failed' });
     }
 });
-// Server-side persistent database store (mirrors cPanel api.php behavior in preview & Node production)
-const serverDbFilePath = path.resolve(__dirname, 'public', 'salma_server_db.json');
+// Server-side persistent database store (kept outside public/ so builds never ship preview test data)
+const serverDbFilePath = path.resolve(appRoot, '.salma_preview_db.json');
 function loadServerDbFromDisk() {
     try {
         if (fs.existsSync(serverDbFilePath)) {
@@ -104,7 +107,7 @@ function loadServerDbFromDisk() {
         }
     }
     catch (err) {
-        console.error('Failed to read salma_server_db.json:', err);
+        console.error('Failed to read .salma_preview_db.json:', err);
     }
     return {};
 }
@@ -113,7 +116,7 @@ function saveServerDbToDisk(data) {
         fs.writeFileSync(serverDbFilePath, JSON.stringify(data, null, 2), 'utf-8');
     }
     catch (err) {
-        console.error('Failed to write salma_server_db.json:', err);
+        console.error('Failed to write .salma_preview_db.json:', err);
     }
 }
 const serverDbStore = loadServerDbFromDisk();
@@ -121,11 +124,13 @@ app.get('/api.php', (_req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     const latestDiskData = loadServerDbFromDisk();
     Object.assign(serverDbStore, latestDiskData);
+    const { _salma_meta, ...publicData } = serverDbStore;
     res.json({
         status: 'ok',
         connected: true,
         mysqlConnected: false,
-        data: serverDbStore
+        meta: _salma_meta && typeof _salma_meta === 'object' ? _salma_meta : {},
+        data: publicData
     });
 });
 app.post('/api.php', (req, res) => {
@@ -160,7 +165,14 @@ app.post('/api.php', (req, res) => {
     }
     if (action === 'setup_db') {
         if (req.body?.currentData && typeof req.body.currentData === 'object') {
-            Object.assign(serverDbStore, req.body.currentData);
+            if (!serverDbStore._salma_meta || typeof serverDbStore._salma_meta !== 'object') {
+                serverDbStore._salma_meta = {};
+            }
+            const now = Date.now();
+            for (const [k, v] of Object.entries(req.body.currentData)) {
+                serverDbStore[k] = v;
+                serverDbStore._salma_meta[k] = now;
+            }
             saveServerDbToDisk(serverDbStore);
         }
         return res.json({
@@ -179,8 +191,13 @@ app.post('/api.php', (req, res) => {
     catch {
         serverDbStore[key] = value;
     }
+    if (!serverDbStore._salma_meta || typeof serverDbStore._salma_meta !== 'object') {
+        serverDbStore._salma_meta = {};
+    }
+    const updatedAt = Date.now();
+    serverDbStore._salma_meta[key] = updatedAt;
     saveServerDbToDisk(serverDbStore);
-    res.json({ status: 'ok', connected: true, key });
+    res.json({ status: 'ok', connected: true, key, updatedAt });
 });
 // Vite middleware setup for development
 async function setupServer() {
@@ -193,7 +210,7 @@ async function setupServer() {
         app.use(vite.middlewares);
     }
     else {
-        const distPath = path.resolve(__dirname, 'dist');
+        const distPath = path.resolve(appRoot, 'dist');
         app.use(express.static(distPath));
         app.get(['/admin', '/admin.html'], (_req, res) => {
             res.sendFile(path.join(distPath, 'admin.html'));

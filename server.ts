@@ -13,7 +13,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json({ limit: '15mb' }));
 
-const uploadsPath = path.resolve(__dirname, 'public', 'uploads');
+const appRoot = fs.existsSync(path.resolve(__dirname, 'package.json'))
+  ? __dirname
+  : path.resolve(__dirname, '..');
+
+const uploadsPath = path.resolve(appRoot, 'public', 'uploads');
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
 }
@@ -108,7 +112,7 @@ app.post('/api/send-sms', async (req, res) => {
 });
 
 // Server-side persistent database store (kept outside public/ so builds never ship preview test data)
-const serverDbFilePath = path.resolve(__dirname, '.salma_preview_db.json');
+const serverDbFilePath = path.resolve(appRoot, '.salma_preview_db.json');
 
 function loadServerDbFromDisk(): Record<string, any> {
   try {
@@ -224,7 +228,7 @@ async function setupServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
+    const distPath = path.resolve(appRoot, 'dist');
     app.use(express.static(distPath));
     app.get(['/admin', '/admin.html'], (_req, res) => {
       res.sendFile(path.join(distPath, 'admin.html'));

@@ -7,4 +7,11 @@ coverage/
 !.env.example
 .salma_preview_db.json
 .playwright-cli/
+public/salma_server_db.json
+public/db_config.php
+public/salma_db_config.php
+dist/salma_server_db.json
+dist/db_config.php
+public/uploads/food_*
+dist/uploads/food_*
 
