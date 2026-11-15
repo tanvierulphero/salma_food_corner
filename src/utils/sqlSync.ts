@@ -35,6 +35,7 @@ let syncMetaMap: Record<string, number> = {};
 let isRemoteApplying = false;
 let isInternalDispatching = false;
 let isInitialized = false;
+let syncBootDoneAt = 0;
 
 // Native browser storage references (kept before patching Storage.prototype)
 let nativeGetItem: ((key: string) => string | null) | null = null;
@@ -209,7 +210,7 @@ async function sendSaveRequest(key: string, strValue: string, force = false): Pr
       };
       notifyStatusListeners();
     }
-    return Boolean(res.ok && data && data.status === 'ok');
+    return Boolean(res.ok && data && data.status === 'ok' && !data.sqlError);
   } catch (err) {
     console.error('cPanel DB Save Error:', err);
     return false;
@@ -241,14 +242,17 @@ export async function saveToCpanelDb(key: string, value: any): Promise<void> {
 
 export async function syncAllToMysqlNow(): Promise<boolean> {
   try {
+    let allOk = true;
     for (const key of SYNCED_KEYS) {
-      if (memoryStore.has(key)) {
-        const val = memoryStore.get(key)!;
-        await sendSaveRequest(key, val, true);
+      const val = memoryStore.get(key) ?? readNativeRaw(key);
+      if (val !== null && val !== undefined) {
+        memoryStore.set(key, val);
+        const ok = await sendSaveRequest(key, val, true);
+        if (!ok) allOk = false;
       }
     }
     await pullFromServer(true);
-    return true;
+    return allOk;
   } catch {
     return false;
   }
@@ -913,8 +917,12 @@ export async function initSqlDatabaseSync(): Promise<void> {
       return;
     }
 
-    // Skip initial mount default state writes when previousValue is undefined so page load never overwrites server DB
-    if (previousValue === undefined && SYNCED_KEYS.has(key)) {
+    // Skip initial mount default writes (empty [] / {} or first 1200ms after boot) when previousValue is undefined so page load never overwrites server DB
+    if (
+      previousValue === undefined &&
+      SYNCED_KEYS.has(key) &&
+      (strValue === '[]' || strValue === '{}' || (syncBootDoneAt > 0 && Date.now() - syncBootDoneAt < 1200))
+    ) {
       memoryStore.set(key, strValue);
       return;
     }
@@ -958,6 +966,7 @@ export async function initSqlDatabaseSync(): Promise<void> {
 
   // Load initial database state from cPanel server BEFORE mounting React app
   await pullFromServer(true);
+  syncBootDoneAt = Date.now();
 
   // Keep all tabs/devices synced with cPanel server (guarded against overwriting recent saves)
   window.addEventListener('focus', () => {

@@ -759,7 +759,7 @@ export default function SmsMarketingPanel({
               <button 
                 onClick={() => {
                   if (onOfferUpdate) onOfferUpdate(bannerInput);
-                  localStorage.setItem('salma_active_offer', bannerInput);
+                  saveToCpanelDb('salma_active_offer', bannerInput);
                   if (soundOn) playAddToCartSound();
                   alert('অফার ব্যানার সাথে সাথে আপডেট হয়েছে!');
                 }}

@@ -137,12 +137,11 @@ function saveServerDbToDisk(data: Record<string, any>): void {
   }
 }
 
-const serverDbStore: Record<string, any> = loadServerDbFromDisk();
+let serverDbStore: Record<string, any> = loadServerDbFromDisk();
 
 app.get('/api.php', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-  const latestDiskData = loadServerDbFromDisk();
-  Object.assign(serverDbStore, latestDiskData);
+  serverDbStore = loadServerDbFromDisk();
   const { _salma_meta, ...publicData } = serverDbStore;
   res.json({
     status: 'ok',
@@ -154,6 +153,7 @@ app.get('/api.php', (_req, res) => {
 });
 
 app.post('/api.php', (req, res) => {
+  serverDbStore = loadServerDbFromDisk();
   const action = req.query.action || req.body?.action;
   if (action === 'upload_image') {
     const { imageBase64 } = req.body || {};

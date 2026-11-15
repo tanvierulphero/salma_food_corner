@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
-// ডিফল্ট কনফিগারেশন (এডমিন প্যানেল থেকে সেট করলে db_config.php ফাইলে স্থায়ীভাবে সেভ হবে)
+// cPanel MySQL কনফিগারেশন: নিচে সরাসরি আপনার cPanel Database তথ্য বসান অথবা public_html/db_config.php ফাইলে রাখুন
 $DB_HOST = 'localhost';
 $DB_NAME = '';
 $DB_USER = '';
@@ -29,7 +29,7 @@ $configFileParent = dirname(__DIR__) . '/salma_db_config.php';
 
 if (file_exists($configFileLocal)) {
     @include $configFileLocal;
-    if (!file_exists($configFileParent)) {
+    if (!file_exists($configFileParent) || @filemtime($configFileLocal) > @filemtime($configFileParent)) {
         @copy($configFileLocal, $configFileParent);
     }
 } elseif (file_exists($configFileParent)) {
@@ -190,6 +190,7 @@ function initMysqlTables($conn) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 
     @$conn->query("ALTER TABLE `menu_items` MODIFY `image` LONGTEXT;");
+    @$conn->query("ALTER TABLE `menu_items` MODIFY `category` varchar(100) NOT NULL DEFAULT 'popular';");
     ensureColumn($conn, 'menu_items', 'is_bundle', "tinyint(1) DEFAULT 0");
     ensureColumn($conn, 'menu_items', 'bundle_items', "text");
     ensureColumn($conn, 'menu_items', 'bundle_savings', "decimal(10,2) DEFAULT NULL");
@@ -204,12 +205,12 @@ function initMysqlTables($conn) {
       `discount` decimal(10,2) NOT NULL DEFAULT 0.00,
       `advance_paid` decimal(10,2) NOT NULL DEFAULT 0.00,
       `due_amount` decimal(10,2) NOT NULL DEFAULT 0.00,
-      `payment_method` varchar(50) DEFAULT NULL,
-      `advance_payment_method` varchar(30) DEFAULT 'bKash',
+      `payment_method` varchar(100) DEFAULT NULL,
+      `advance_payment_method` varchar(50) DEFAULT 'bKash',
       `transaction_id` varchar(100) DEFAULT NULL,
       `payment_status` varchar(100) DEFAULT NULL,
       `status` varchar(50) NOT NULL DEFAULT 'Placed',
-      `order_date` varchar(20) NOT NULL,
+      `order_date` varchar(30) NOT NULL,
       `created_at_str` varchar(50) DEFAULT NULL,
       `loyalty_points_earned` int(11) DEFAULT 0,
       `delivery_distance_km` decimal(6,2) DEFAULT NULL,
@@ -220,7 +221,9 @@ function initMysqlTables($conn) {
 
     @$conn->query("ALTER TABLE `orders` MODIFY `items_json` LONGTEXT NOT NULL;");
     @$conn->query("ALTER TABLE `orders` MODIFY `status` varchar(50) NOT NULL DEFAULT 'Placed';");
-    ensureColumn($conn, 'orders', 'advance_payment_method', "varchar(30) DEFAULT 'bKash'");
+    @$conn->query("ALTER TABLE `orders` MODIFY `order_date` varchar(30) NOT NULL;");
+    @$conn->query("ALTER TABLE `orders` MODIFY `payment_method` varchar(100) DEFAULT NULL;");
+    ensureColumn($conn, 'orders', 'advance_payment_method', "varchar(50) DEFAULT 'bKash'");
     ensureColumn($conn, 'orders', 'transaction_id', "varchar(100) DEFAULT NULL");
     ensureColumn($conn, 'orders', 'payment_status', "varchar(100) DEFAULT NULL");
     ensureColumn($conn, 'orders', 'created_at_str', "varchar(50) DEFAULT NULL");
@@ -234,12 +237,15 @@ function initMysqlTables($conn) {
       `type` enum('income','expense') NOT NULL,
       `category` varchar(255) NOT NULL,
       `amount` decimal(10,2) NOT NULL DEFAULT 0.00,
-      `entry_date` varchar(20) NOT NULL,
-      `payment_method` varchar(50) NOT NULL DEFAULT 'Cash',
+      `entry_date` varchar(30) NOT NULL,
+      `payment_method` varchar(100) NOT NULL DEFAULT 'Cash',
       `note` text,
       `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (`id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    @$conn->query("ALTER TABLE `ledger_entries` MODIFY `entry_date` varchar(30) NOT NULL;");
+    @$conn->query("ALTER TABLE `ledger_entries` MODIFY `payment_method` varchar(100) NOT NULL DEFAULT 'Cash';");
 
     $conn->query("CREATE TABLE IF NOT EXISTS `due_entries` (
       `id` varchar(64) NOT NULL,
@@ -261,6 +267,8 @@ function initMysqlTables($conn) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 
     @$conn->query("ALTER TABLE `due_entries` MODIFY `payments_json` LONGTEXT;");
+    @$conn->query("ALTER TABLE `due_entries` MODIFY `entry_date` varchar(30) NOT NULL;");
+    @$conn->query("ALTER TABLE `due_entries` MODIFY `due_date` varchar(30) DEFAULT NULL;");
     @$conn->query("ALTER TABLE `due_entries` MODIFY `status` varchar(30) NOT NULL DEFAULT 'unpaid';");
     ensureColumn($conn, 'due_entries', 'order_id', "varchar(64) DEFAULT NULL");
     ensureColumn($conn, 'due_entries', 'due_date', "varchar(20) DEFAULT NULL");
@@ -282,25 +290,32 @@ function initMysqlTables($conn) {
 
 function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
     if (!$conn) return null;
+    $errors = [];
+
+    $execSql = function($sql) use ($conn, &$errors) {
+        if (!$conn->query($sql) && $conn->error) {
+            $errors[] = $conn->error;
+        }
+    };
 
     $key = $conn->real_escape_string($rawKey);
     $valEscaped = $conn->real_escape_string($valJson);
 
-    $conn->query("INSERT INTO `salma_app_store` (`store_key`, `store_value`)
-                  VALUES ('$key', '$valEscaped')
-                  ON DUPLICATE KEY UPDATE `store_value` = '$valEscaped'");
+    $execSql("INSERT INTO `salma_app_store` (`store_key`, `store_value`)
+              VALUES ('$key', '$valEscaped')
+              ON DUPLICATE KEY UPDATE `store_value` = '$valEscaped'");
 
     $parsed = json_decode($valJson, true);
-    if (!is_array($parsed)) return $conn->error ?: null;
+    if (!is_array($parsed)) return !empty($errors) ? implode(' | ', $errors) : null;
 
     if ($rawKey === 'salma_menu_items') {
-        $conn->query("DELETE FROM `menu_items`");
+        $execSql("DELETE FROM `menu_items`");
         foreach ($parsed as $item) {
             if (!is_array($item)) continue;
             $id = $conn->real_escape_string((string)($item['id'] ?? ('food-' . uniqid())));
             $nameBn = $conn->real_escape_string((string)($item['nameBn'] ?? ''));
             $nameEn = $conn->real_escape_string((string)($item['nameEn'] ?? ''));
-            $cat = $conn->real_escape_string((string)($item['category'] ?? 'popular'));
+            $cat = $conn->real_escape_string(mb_substr((string)($item['category'] ?? 'popular'), 0, 95));
             $price = floatval($item['price'] ?? 0);
             $origPrice = isset($item['originalPrice']) && $item['originalPrice'] !== '' ? floatval($item['originalPrice']) : 'NULL';
             $image = $conn->real_escape_string((string)($item['image'] ?? ''));
@@ -314,11 +329,11 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $bundleItems = isset($item['bundleItems']) ? "'" . $conn->real_escape_string(json_encode($item['bundleItems'], JSON_UNESCAPED_UNICODE)) . "'" : 'NULL';
             $bundleSavings = isset($item['bundleSavings']) && $item['bundleSavings'] !== '' ? floatval($item['bundleSavings']) : 'NULL';
 
-            $conn->query("REPLACE INTO `menu_items` (`id`,`name_bn`,`name_en`,`category`,`price`,`original_price`,`image`,`rating`,`reviews_count`,`description_bn`,`description_en`,`spicy_level`,`is_veg`,`is_bundle`,`bundle_items`,`bundle_savings`)
+            $execSql("REPLACE INTO `menu_items` (`id`,`name_bn`,`name_en`,`category`,`price`,`original_price`,`image`,`rating`,`reviews_count`,`description_bn`,`description_en`,`spicy_level`,`is_veg`,`is_bundle`,`bundle_items`,`bundle_savings`)
                 VALUES ('$id','$nameBn','$nameEn','$cat',$price,$origPrice,'$image',$rating,$reviews,'$descBn','$descEn',$spicy,$isVeg,$isBundle,$bundleItems,$bundleSavings)");
         }
     } elseif ($rawKey === 'salma_orders') {
-        $conn->query("DELETE FROM `orders`");
+        $execSql("DELETE FROM `orders`");
         foreach ($parsed as $ord) {
             if (!is_array($ord)) continue;
             $id = $conn->real_escape_string((string)($ord['id'] ?? ('ORD-' . uniqid())));
@@ -330,8 +345,8 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $disc = floatval($ord['discount'] ?? 0);
             $adv = floatval($ord['advancePaid'] ?? 0);
             $due = floatval($ord['dueAmount'] ?? 0);
-            $pm = $conn->real_escape_string((string)($ord['paymentMethod'] ?? ''));
-            $apm = $conn->real_escape_string((string)($ord['advancePaymentMethod'] ?? 'bKash'));
+            $pm = $conn->real_escape_string(mb_substr((string)($ord['paymentMethod'] ?? ''), 0, 95));
+            $apm = $conn->real_escape_string(mb_substr((string)($ord['advancePaymentMethod'] ?? 'bKash'), 0, 45));
             $trx = $conn->real_escape_string((string)($ord['transactionId'] ?? ''));
             $pStat = $conn->real_escape_string((string)($ord['paymentStatus'] ?? ''));
             $stat = $conn->real_escape_string((string)($ord['status'] ?? 'Placed'));
@@ -341,11 +356,11 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $dist = isset($ord['deliveryDistanceKm']) && $ord['deliveryDistanceKm'] !== '' ? floatval($ord['deliveryDistanceKm']) : 'NULL';
             $free = !empty($ord['isFreeDeliveryWithin1km']) ? 1 : 0;
 
-            $conn->query("REPLACE INTO `orders` (`id`,`customer_name`,`phone`,`address`,`items_json`,`total_amount`,`discount`,`advance_paid`,`due_amount`,`payment_method`,`advance_payment_method`,`transaction_id`,`payment_status`,`status`,`order_date`,`created_at_str`,`loyalty_points_earned`,`delivery_distance_km`,`is_free_delivery`)
+            $execSql("REPLACE INTO `orders` (`id`,`customer_name`,`phone`,`address`,`items_json`,`total_amount`,`discount`,`advance_paid`,`due_amount`,`payment_method`,`advance_payment_method`,`transaction_id`,`payment_status`,`status`,`order_date`,`created_at_str`,`loyalty_points_earned`,`delivery_distance_km`,`is_free_delivery`)
                 VALUES ('$id','$cName','$phone','$addr','$itemsJson',$total,$disc,$adv,$due,'$pm','$apm','$trx','$pStat','$stat','$oDate','$cAt',$pts,$dist,$free)");
         }
     } elseif ($rawKey === 'salma_ledger') {
-        $conn->query("DELETE FROM `ledger_entries`");
+        $execSql("DELETE FROM `ledger_entries`");
         foreach ($parsed as $le) {
             if (!is_array($le)) continue;
             $id = $conn->real_escape_string((string)($le['id'] ?? ('led-' . uniqid())));
@@ -354,14 +369,14 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $cat = $conn->real_escape_string((string)($le['category'] ?? ''));
             $amt = floatval($le['amount'] ?? 0);
             $eDate = $conn->real_escape_string((string)($le['date'] ?? date('Y-m-d')));
-            $pm = $conn->real_escape_string((string)($le['paymentMethod'] ?? 'Cash'));
+            $pm = $conn->real_escape_string(mb_substr((string)($le['paymentMethod'] ?? 'Cash'), 0, 95));
             $note = $conn->real_escape_string((string)($le['note'] ?? ''));
 
-            $conn->query("REPLACE INTO `ledger_entries` (`id`,`voucher_no`,`type`,`category`,`amount`,`entry_date`,`payment_method`,`note`)
+            $execSql("REPLACE INTO `ledger_entries` (`id`,`voucher_no`,`type`,`category`,`amount`,`entry_date`,`payment_method`,`note`)
                 VALUES ('$id','$vNo','$type','$cat',$amt,'$eDate','$pm','$note')");
         }
     } elseif ($rawKey === 'salma_due_ledger') {
-        $conn->query("DELETE FROM `due_entries`");
+        $execSql("DELETE FROM `due_entries`");
         foreach ($parsed as $de) {
             if (!is_array($de)) continue;
             $id = $conn->real_escape_string((string)($de['id'] ?? ('due-' . uniqid())));
@@ -379,11 +394,11 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $pJson = $conn->real_escape_string(json_encode($de['payments'] ?? [], JSON_UNESCAPED_UNICODE));
             $note = $conn->real_escape_string((string)($de['note'] ?? ''));
 
-            $conn->query("REPLACE INTO `due_entries` (`id`,`voucher_no`,`customer_name`,`customer_phone`,`order_id`,`total_amount`,`paid_amount`,`due_amount`,`entry_date`,`due_date`,`items_description`,`status`,`payments_json`,`note`)
+            $execSql("REPLACE INTO `due_entries` (`id`,`voucher_no`,`customer_name`,`customer_phone`,`order_id`,`total_amount`,`paid_amount`,`due_amount`,`entry_date`,`due_date`,`items_description`,`status`,`payments_json`,`note`)
                 VALUES ('$id','$vNo','$cName','$cPhone','$ordId',$tot,$paid,$due,'$eDate','$dDate','$desc','$stat','$pJson','$note')");
         }
     } elseif ($rawKey === 'salma_customers') {
-        $conn->query("DELETE FROM `customers`");
+        $execSql("DELETE FROM `customers`");
         foreach ($parsed as $phoneKey => $cust) {
             if (!is_array($cust)) continue;
             $phone = $conn->real_escape_string((string)($cust['phone'] ?? $phoneKey));
@@ -394,12 +409,12 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $tOrd = intval($cust['totalOrders'] ?? 0);
             $tSpent = floatval($cust['totalSpent'] ?? 0);
 
-            $conn->query("REPLACE INTO `customers` (`phone`,`name`,`address`,`loyalty_points`,`registered_at`,`total_orders`,`total_spent`)
+            $execSql("REPLACE INTO `customers` (`phone`,`name`,`address`,`loyalty_points`,`registered_at`,`total_orders`,`total_spent`)
                 VALUES ('$phone','$name','$addr',$pts,'$reg',$tOrd,$tSpent)");
         }
     }
 
-    return $conn->error ?: null;
+    return !empty($errors) ? implode(' | ', array_unique($errors)) : null;
 }
 
 if ($mysqlConnected) {
@@ -570,6 +585,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
 
         // যে কী-গুলো ফাইলে আছে কিন্তু এখনো MySQL-এ নেই সেগুলো স্বয়ংক্রিয়ভাবে MySQL টেবিলে সিঙ্ক করা
         foreach ($fileData as $k => $v) {
+            if ($k === '_salma_meta') continue;
             if (!isset($mysqlKeys[$k]) && isNonEmptyVal($v)) {
                 $vJson = is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE);
                 syncKeyToRelationalTables($conn, $k, $vJson);

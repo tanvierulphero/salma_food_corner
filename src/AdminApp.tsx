@@ -25,10 +25,6 @@ import DueLedgerManager from './components/DueLedgerManager';
 import CategoryManagerModal from './components/CategoryManagerModal';
 import { formatDateDMY } from './utils/dateFormatter';
 import {
-  getMysqlStatus,
-  subscribeMysqlStatus,
-  setupMysqlDatabase,
-  syncAllToMysqlNow,
   saveToCpanelDb,
   uploadFoodImageToCpanel,
   normalizeBdPhone,
@@ -368,50 +364,6 @@ export default function AdminApp() {
     e.target.value = '';
   };
 
-  // cPanel MySQL (phpMyAdmin) Database Connection State
-  const [mysqlStatus, setMysqlStatus] = useState(() => getMysqlStatus());
-  const [dbModalOpen, setDbModalOpen] = useState(false);
-  const [dbForm, setDbForm] = useState({
-    dbHost: 'localhost',
-    dbName: '',
-    dbUser: '',
-    dbPass: ''
-  });
-  const [dbConnecting, setDbConnecting] = useState(false);
-  const [dbNotice, setDbNotice] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-  const [isSyncingNow, setIsSyncingNow] = useState(false);
-
-  useEffect(() => {
-    return subscribeMysqlStatus(() => {
-      setMysqlStatus({ ...getMysqlStatus() });
-    });
-  }, []);
-
-  const handleSaveMysqlConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setDbConnecting(true);
-    setDbNotice(null);
-    const res = await setupMysqlDatabase(dbForm);
-    setDbConnecting(false);
-    if (res.ok) {
-      setDbNotice({ type: 'ok', text: res.message });
-      if (soundOn) playOrderSuccessSound();
-      setTimeout(() => {
-        setDbModalOpen(false);
-      }, 1500);
-    } else {
-      setDbNotice({ type: 'err', text: res.message });
-    }
-  };
-
-  const handleSyncAllNow = async () => {
-    setIsSyncingNow(true);
-    await syncAllToMysqlNow();
-    setIsSyncingNow(false);
-    if (soundOn) playAddToCartSound();
-    alert('সকল ডাটা সফলভাবে cPanel সার্ভার ও MySQL ডাটাবেসে সিঙ্ক করা হয়েছে!');
-  };
-
   const handleSaveFood = (e: React.FormEvent) => {
     e.preventDefault();
     if (!foodForm.nameBn.trim() || !foodForm.price || Number(foodForm.price) <= 0) {
@@ -611,6 +563,13 @@ export default function AdminApp() {
   // -------------------------------------------------------------
   const [quickIncome, setQuickIncome] = useState({ category: 'খাবার বিক্রয় (Food Sales)', amount: '', paymentMethod: 'Cash' as const, note: '' });
   const [quickExpense, setQuickExpense] = useState({ category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: '', paymentMethod: 'Cash' as const, note: '' });
+  const [ledgerNotice, setLedgerNotice] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const showLedgerNotice = (type: 'ok' | 'err', text: string) => {
+    setLedgerNotice({ type, text });
+    window.setTimeout(() => {
+      setLedgerNotice(prev => (prev && prev.text === text ? null : prev));
+    }, 4000);
+  };
 
   // Edit Ledger Modal State
   const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
@@ -644,7 +603,7 @@ export default function AdminApp() {
     if (!editingLedgerId) return;
     const amt = Number(ledgerEditForm.amount);
     if (!amt || amt <= 0) {
-      alert('সঠিক টাকার পরিমাণ দিন।');
+      showLedgerNotice('err', 'সঠিক টাকার পরিমাণ দিন।');
       return;
     }
     const updated = ledger.map(item => {
@@ -667,7 +626,7 @@ export default function AdminApp() {
     setLedgerModalOpen(false);
     setEditingLedgerId(null);
     if (soundOn) playAddToCartSound();
-    alert('হিসাব এন্ট্রিটি সফলভাবে এডিট ও সংরক্ষণ করা হয়েছে!');
+    showLedgerNotice('ok', 'হিসাব এন্ট্রিটি সফলভাবে এডিট ও সংরক্ষণ করা হয়েছে!');
   };
 
   const handleAddIncome = (e: React.FormEvent) => {
@@ -688,7 +647,7 @@ export default function AdminApp() {
     setLedger(updated);
     setQuickIncome({ category: 'খাবার বিক্রয় (Food Sales)', amount: '', paymentMethod: 'Cash', note: '' });
     if (soundOn) playAddToCartSound();
-    alert(`৳${entry.amount} আয় সফলভাবে এন্ট্রি হয়েছে!`);
+    showLedgerNotice('ok', `৳${entry.amount} আয় সফলভাবে এন্ট্রি হয়েছে!`);
   };
 
   const handleAddExpense = (e: React.FormEvent) => {
@@ -709,7 +668,7 @@ export default function AdminApp() {
     setLedger(updated);
     setQuickExpense({ category: 'কাঁচামাল ও বাজার (Raw Materials)', amount: '', paymentMethod: 'Cash', note: '' });
     if (soundOn) playAddToCartSound();
-    alert(`৳${entry.amount} ব্যয় সফলভাবে এন্ট্রি হয়েছে!`);
+    showLedgerNotice('ok', `৳${entry.amount} ব্যয় সফলভাবে এন্ট্রি হয়েছে!`);
   };
 
   const handleDeleteLedger = (id: string) => {
@@ -1012,23 +971,23 @@ export default function AdminApp() {
       {/* Top Native Mobile Status Bar + App Header */}
       <header className="sticky top-0 z-40 bg-gradient-to-r from-red-800 via-red-700 to-emerald-900 text-white shadow-md">
 
-        <div className="px-3.5 py-2.5 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-amber-400 text-red-900 flex items-center justify-center font-black shadow">
-              <ChefHat className="w-5 h-5" />
+        <div className="px-3 py-2.5 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-400 text-red-900 flex items-center justify-center font-black shadow shrink-0">
+              <ChefHat className="w-4 h-4" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="text-sm font-black leading-tight">সালমা ফুড এডমিন (গাজীপুর)</h1>
-                <span className="bg-emerald-500/30 text-emerald-300 border border-emerald-400/30 text-[9px] font-bold px-1.5 py-0.5 rounded-md">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1">
+                <h1 className="text-[13px] font-black leading-tight truncate">সালমা ফুড এডমিন</h1>
+                <span className="bg-emerald-500/30 text-emerald-300 border border-emerald-400/30 text-[9px] font-bold px-1 py-0.5 rounded shrink-0">
                   POS
                 </span>
               </div>
-              <p className="text-[10px] text-amber-200">গাজীপুর রেস্টুরেন্ট ও ডেলিভারি ম্যানেজার</p>
+              <p className="text-[10px] text-amber-200 truncate">গাজীপুর রেস্টুরেন্ট ম্যানেজার</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 shrink-0">
             {/* Audio Toggle */}
             <button 
               onClick={() => {
@@ -1037,29 +996,29 @@ export default function AdminApp() {
                 setSoundEnabled(next);
                 if (next) playAddToCartSound();
               }}
-              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+              className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition cursor-pointer shrink-0"
               title={soundOn ? 'সাউন্ড সক্রিয়' : 'সাউন্ড বন্ধ'}
             >
-              {soundOn ? <Volume2 className="w-4 h-4 text-amber-300" /> : <VolumeX className="w-4 h-4 text-gray-300" />}
+              {soundOn ? <Volume2 className="w-3.5 h-3.5 text-amber-300" /> : <VolumeX className="w-3.5 h-3.5 text-gray-300" />}
             </button>
 
             {/* Switch to Public Mobile App */}
             <a 
               href="/index.html"
-              className="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-full flex items-center gap-1 shadow-xs transition"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold px-2 py-1.5 rounded-full flex items-center gap-1 shadow-xs transition whitespace-nowrap shrink-0"
               title="গ্রাহকদের মোবাইল অ্যাপ দেখুন"
             >
-              <Eye className="w-3.5 h-3.5" />
+              <Eye className="w-3 h-3" />
               <span>গ্রাহক অ্যাপ</span>
             </a>
 
             {/* Logout PIN */}
             <button 
               onClick={handleLogout}
-              className="p-2 rounded-full bg-red-950/60 hover:bg-red-900 text-red-200 transition cursor-pointer"
+              className="p-1.5 rounded-full bg-red-950/60 hover:bg-red-900 text-red-200 transition cursor-pointer shrink-0"
               title="লগআউট"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -1178,6 +1137,19 @@ export default function AdminApp() {
             </div>
 
             {/* THE TWO FUNCTIONAL POS CARDS (Today's Income & Expense Entry - Stacked for Mobile) */}
+            {ledgerNotice && (
+              <div className={`p-3 rounded-2xl text-xs font-bold border flex items-center justify-between gap-2 ${
+                ledgerNotice.type === 'ok'
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                  : 'bg-red-50 border-red-300 text-red-700'
+              }`}>
+                <span>{ledgerNotice.text}</span>
+                <button type="button" onClick={() => setLedgerNotice(null)} className="text-current opacity-70 hover:opacity-100 cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-4">
               
               {/* Card 1: Today's Income Card */}
@@ -1598,7 +1570,19 @@ export default function AdminApp() {
         {/* ============================================================== */}
         {activeTab === 'ledger' && (
           <div className="space-y-4">
-            
+            {ledgerNotice && (
+              <div className={`p-3 rounded-2xl text-xs font-bold border flex items-center justify-between gap-2 ${
+                ledgerNotice.type === 'ok'
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                  : 'bg-red-50 border-red-300 text-red-700'
+              }`}>
+                <span>{ledgerNotice.text}</span>
+                <button type="button" onClick={() => setLedgerNotice(null)} className="text-current opacity-70 hover:opacity-100 cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs space-y-2.5">
               <div>
                 <h2 className="text-sm font-black text-gray-900 flex items-center gap-1.5">
@@ -2940,111 +2924,6 @@ export default function AdminApp() {
                   className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-bold shadow transition active:scale-95 cursor-pointer"
                 >
                   আপডেট সংরক্ষণ করুন
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* MODAL: CPANEL MYSQL (PHPMYADMIN) DATABASE SETUP                 */}
-      {/* ============================================================== */}
-      {dbModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 border border-gray-200">
-            <div className="flex justify-between items-center border-b pb-3">
-              <div>
-                <h3 className="font-black text-gray-900 text-base flex items-center gap-2">
-                  <span>🗄️ cPanel MySQL (phpMyAdmin) সেটআপ</span>
-                </h3>
-                <p className="text-[11px] text-gray-500 mt-0.5">
-                  একবার কানেক্ট করলে সব খাবার, অর্ডার ও হিসাব সরাসরি phpMyAdmin টেবিলে সেভ হবে।
-                </p>
-              </div>
-              <button onClick={() => setDbModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {dbNotice && (
-              <div className={`p-3 rounded-xl text-xs font-bold border ${
-                dbNotice.type === 'ok' 
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900' 
-                  : 'bg-red-50 border-red-300 text-red-700'
-              }`}>
-                {dbNotice.text}
-              </div>
-            )}
-
-            <form onSubmit={handleSaveMysqlConfig} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Database Host</label>
-                <input
-                  type="text"
-                  value={dbForm.dbHost}
-                  onChange={(e) => setDbForm({ ...dbForm, dbHost: e.target.value })}
-                  placeholder="localhost"
-                  className="w-full border border-gray-300 rounded-xl p-2.5 font-mono"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">cPanel Database Name *</label>
-                <input
-                  type="text"
-                  value={dbForm.dbName}
-                  onChange={(e) => setDbForm({ ...dbForm, dbName: e.target.value })}
-                  placeholder="যেমন: cpaneluser_salmafood"
-                  className="w-full border border-gray-300 rounded-xl p-2.5 font-mono font-bold"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">cPanel Database Username *</label>
-                <input
-                  type="text"
-                  value={dbForm.dbUser}
-                  onChange={(e) => setDbForm({ ...dbForm, dbUser: e.target.value })}
-                  placeholder="যেমন: cpaneluser_dbuser"
-                  className="w-full border border-gray-300 rounded-xl p-2.5 font-mono font-bold"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Database User Password *</label>
-                <input
-                  type="password"
-                  value={dbForm.dbPass}
-                  onChange={(e) => setDbForm({ ...dbForm, dbPass: e.target.value })}
-                  placeholder="আপনার ডাটাবেস ইউজারের পাসওয়ার্ড"
-                  className="w-full border border-gray-300 rounded-xl p-2.5 font-mono"
-                  required
-                />
-              </div>
-
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-[11px] text-amber-900 space-y-1">
-                <p className="font-bold">💡 গুরুত্বপূর্ণ টিপস:</p>
-                <p>cPanel ➔ <b>MySQL® Databases</b>-এ গিয়ে আপনার Database User-কে অবশ্যই Database-এর সাথে <b>Add User to Database (ALL PRIVILEGES)</b> করে নেবেন।</p>
-              </div>
-
-              <div className="flex gap-2 pt-2 border-t">
-                <button
-                  type="button"
-                  onClick={() => setDbModalOpen(false)}
-                  className="flex-1 border border-gray-300 py-2.5 rounded-xl font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
-                >
-                  বাতিল
-                </button>
-                <button
-                  type="submit"
-                  disabled={dbConnecting}
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-bold shadow transition active:scale-95 cursor-pointer disabled:opacity-50"
-                >
-                  {dbConnecting ? 'কানেক্ট হচ্ছে...' : 'কানেক্ট ও সেভ করুন'}
                 </button>
               </div>
             </form>

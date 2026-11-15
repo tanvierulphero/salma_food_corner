@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION } from '../types';
 import { playAddToCartSound, playOrderSuccessSound } from '../utils/audioFeedback';
+import { saveToCpanelDb } from '../utils/sqlSync';
 
 export interface PresetHub {
   id: string;
@@ -165,6 +166,7 @@ export default function ShopLocationManager({
     };
 
     localStorage.setItem('salma_shop_location', JSON.stringify(updatedConfig));
+    saveToCpanelDb('salma_shop_location', updatedConfig);
     setConfig(updatedConfig);
 
     // Notify public app via storage event
@@ -238,6 +240,7 @@ export default function ShopLocationManager({
   const savePresetHubs = (newHubs: PresetHub[]) => {
     setPresetHubs(newHubs);
     localStorage.setItem('salma_location_presets', JSON.stringify(newHubs));
+    saveToCpanelDb('salma_location_presets', newHubs);
   };
 
   // Preset modal state
