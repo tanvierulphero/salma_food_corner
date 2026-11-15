@@ -6,11 +6,13 @@
  */
 
 import {
+  countSerializedRecords,
   isNonEmptySerializedValue,
+  parseBackupPayload,
   resolveServerPullAction
 } from './syncReconcile';
 
-const SYNCED_KEYS = new Set([
+export const SYNCED_KEYS = new Set([
   'salma_menu_items',
   'salma_orders',
   'salma_ledger',
@@ -23,9 +25,13 @@ const SYNCED_KEYS = new Set([
   'salma_menu_categories'
 ]);
 
+const SYNC_META_STORAGE_KEY = 'salma_sync_meta_ts';
+const AUTO_BACKUP_STORAGE_KEY = 'salma_auto_backup_v1';
+
 const SESSION_KEYS = new Set(['salma_logged_customer', 'salma_admin_auth']);
 
 const memoryStore = new Map<string, string>();
+let syncMetaMap: Record<string, number> = {};
 let isRemoteApplying = false;
 let isInternalDispatching = false;
 let isInitialized = false;
@@ -40,6 +46,58 @@ const inFlightSaves = new Map<string, number>();
 const lastLocalSaveTime = new Map<string, number>();
 const lastSentPayload = new Map<string, string>();
 let lastGlobalSaveTime = 0;
+
+function readNativeRaw(key: string): string | null {
+  try {
+    if (nativeGetItem) return nativeGetItem(key);
+    if (typeof window !== 'undefined') return window.localStorage.getItem(key);
+  } catch {
+    // Ignore
+  }
+  return null;
+}
+
+function writeNativeRaw(key: string, value: string): void {
+  try {
+    if (nativeSetItem) {
+      nativeSetItem(key, value);
+    } else if (typeof window !== 'undefined') {
+      window.localStorage.setItem(key, value);
+    }
+  } catch {
+    // Ignore quota errors
+  }
+}
+
+function persistSyncMeta(key: string, ts: number): void {
+  if (!ts || !Number.isFinite(ts)) return;
+  syncMetaMap[key] = ts;
+  writeNativeRaw(SYNC_META_STORAGE_KEY, JSON.stringify(syncMetaMap));
+}
+
+function capturePreOverwriteAutoBackup(key: string, prevSerialized: string | undefined | null): void {
+  if (!SYNCED_KEYS.has(key) || !prevSerialized || !isNonEmptySerializedValue(prevSerialized)) {
+    return;
+  }
+  try {
+    const raw = readNativeRaw(AUTO_BACKUP_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const existingKeys: Record<string, string> =
+      parsed && typeof parsed === 'object' && parsed.keys && typeof parsed.keys === 'object'
+        ? { ...parsed.keys }
+        : {};
+    existingKeys[key] = prevSerialized;
+    writeNativeRaw(
+      AUTO_BACKUP_STORAGE_KEY,
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        keys: existingKeys
+      })
+    );
+  } catch {
+    // Ignore backup errors
+  }
+}
 
 let dbStatusInfo: {
   mysqlConnected: boolean;
@@ -139,6 +197,10 @@ async function sendSaveRequest(key: string, strValue: string, force = false): Pr
     lastLocalSaveTime.set(key, Date.now());
     lastGlobalSaveTime = Date.now();
 
+    if (data && typeof data.updatedAt === 'number') {
+      persistSyncMeta(key, data.updatedAt);
+    }
+
     if (data && typeof data.mysqlConnected === 'boolean') {
       dbStatusInfo = {
         ...dbStatusInfo,
@@ -189,6 +251,152 @@ export async function syncAllToMysqlNow(): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+export interface AutoBackupInfo {
+  hasBackup: boolean;
+  savedAt: string | null;
+  keyCount: number;
+  keys: string[];
+  counts: Record<string, number>;
+}
+
+export function getAutoBackupInfo(): AutoBackupInfo {
+  try {
+    const raw = readNativeRaw(AUTO_BACKUP_STORAGE_KEY);
+    if (!raw) {
+      return { hasBackup: false, savedAt: null, keyCount: 0, keys: [], counts: {} };
+    }
+    const parsed = JSON.parse(raw);
+    const savedKeys =
+      parsed && typeof parsed === 'object' && parsed.keys && typeof parsed.keys === 'object'
+        ? (parsed.keys as Record<string, string>)
+        : {};
+    const keys = Object.keys(savedKeys).filter((k) => SYNCED_KEYS.has(k) && isNonEmptySerializedValue(savedKeys[k]));
+    const counts: Record<string, number> = {};
+    for (const k of keys) {
+      counts[k] = countSerializedRecords(savedKeys[k]);
+    }
+    return {
+      hasBackup: keys.length > 0,
+      savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : null,
+      keyCount: keys.length,
+      keys,
+      counts
+    };
+  } catch {
+    return { hasBackup: false, savedAt: null, keyCount: 0, keys: [], counts: {} };
+  }
+}
+
+export function exportAllAppDataJson(): string {
+  const data: Record<string, any> = {};
+  for (const key of SYNCED_KEYS) {
+    const raw = memoryStore.get(key) ?? readNativeRaw(key);
+    if (raw === null || raw === undefined) continue;
+    try {
+      data[key] = JSON.parse(raw);
+    } catch {
+      data[key] = raw;
+    }
+  }
+  return JSON.stringify(
+    {
+      app: 'salma-food-corner',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      data
+    },
+    null,
+    2
+  );
+}
+
+async function applyRestoredEntries(
+  entries: Record<string, string>
+): Promise<{ ok: boolean; restoredKeys: string[] }> {
+  const restoredKeys: string[] = [];
+  isRemoteApplying = true;
+  try {
+    for (const [key, serialized] of Object.entries(entries)) {
+      if (!SYNCED_KEYS.has(key)) continue;
+      const existing = memoryStore.get(key) ?? readNativeRaw(key);
+      if (existing && existing !== serialized && isNonEmptySerializedValue(existing)) {
+        capturePreOverwriteAutoBackup(key, existing);
+      }
+      memoryStore.set(key, serialized);
+      persistToNativeStorage(key, serialized);
+      lastLocalSaveTime.set(key, Date.now());
+      lastGlobalSaveTime = Date.now();
+      dispatchLocalSyncEvent(key, serialized);
+      restoredKeys.push(key);
+    }
+  } finally {
+    isRemoteApplying = false;
+  }
+
+  for (const key of restoredKeys) {
+    const val = memoryStore.get(key);
+    if (val !== undefined) {
+      await sendSaveRequest(key, val, true);
+    }
+  }
+
+  return { ok: restoredKeys.length > 0, restoredKeys };
+}
+
+export async function importAllAppDataJson(
+  rawJson: string
+): Promise<{ ok: boolean; restoredKeys: string[]; message: string }> {
+  const parsed = parseBackupPayload(rawJson, SYNCED_KEYS);
+  if (parsed.ok === false) {
+    return { ok: false, restoredKeys: [], message: parsed.error };
+  }
+  const res = await applyRestoredEntries(parsed.entries);
+  return {
+    ok: res.ok,
+    restoredKeys: res.restoredKeys,
+    message: res.ok
+      ? `সফলভাবে ${res.restoredKeys.length}টি ডাটা সেট রিস্টোর ও ডাটাবেসে সেভ হয়েছে!`
+      : 'কোনো ডাটা রিস্টোর করা যায়নি।'
+  };
+}
+
+export async function restoreFromAutoBackup(): Promise<{
+  ok: boolean;
+  restoredKeys: string[];
+  message: string;
+}> {
+  try {
+    const raw = readNativeRaw(AUTO_BACKUP_STORAGE_KEY);
+    if (!raw) {
+      return { ok: false, restoredKeys: [], message: 'কোনো অটো-ব্যাকআপ পাওয়া যায়নি।' };
+    }
+    const parsed = JSON.parse(raw);
+    const savedKeys: Record<string, string> =
+      parsed && typeof parsed === 'object' && parsed.keys && typeof parsed.keys === 'object'
+        ? parsed.keys
+        : {};
+    const validEntries: Record<string, string> = {};
+    for (const [k, v] of Object.entries(savedKeys)) {
+      if (SYNCED_KEYS.has(k) && typeof v === 'string' && isNonEmptySerializedValue(v)) {
+        validEntries[k] = v;
+      }
+    }
+    if (Object.keys(validEntries).length === 0) {
+      return { ok: false, restoredKeys: [], message: 'অটো-ব্যাকআপে পুনরুদ্ধারযোগ্য কোনো ডাটা নেই।' };
+    }
+    const res = await applyRestoredEntries(validEntries);
+    return {
+      ok: res.ok,
+      restoredKeys: res.restoredKeys,
+      message: res.ok
+        ? `অটো-ব্যাকআপ থেকে ${res.restoredKeys.length}টি ডাটা সেট সফলভাবে পুনরুদ্ধার হয়েছে!`
+        : 'অটো-ব্যাকআপ পুনরুদ্ধার করা যায়নি।'
+    };
+  } catch {
+    return { ok: false, restoredKeys: [], message: 'অটো-ব্যাকআপ ডাটা পড়তে সমস্যা হয়েছে।' };
   }
 }
 
@@ -383,6 +591,8 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
 
     const serverData: Record<string, any> =
       result.data && typeof result.data === 'object' ? result.data : {};
+    const serverMeta: Record<string, number> =
+      result.meta && typeof result.meta === 'object' ? result.meta : {};
 
     const keysToReconcile = new Set<string>([
       ...SYNCED_KEYS,
@@ -405,6 +615,8 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
           : undefined;
         const localSerialized = memoryStore.get(key);
         const lastKeySave = lastLocalSaveTime.get(key) || 0;
+        const serverMetaTs = Number(serverMeta[key]) || 0;
+        const localSyncedMetaTs = Number(syncMetaMap[key]) || 0;
 
         const action = resolveServerPullAction({
           keyPresentInServer,
@@ -414,14 +626,22 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
           inFlightCount: inFlightSaves.get(key) || 0,
           lastLocalSaveMs: lastKeySave,
           pullStartedAt,
-          nowMs
+          nowMs,
+          serverMetaTs,
+          localSyncedMetaTs
         });
 
         if (action === 'push-local' && localSerialized && isNonEmptySerializedValue(localSerialized)) {
           sendSaveRequest(key, localSerialized, true);
         } else if (action === 'apply' && serverSerialized !== undefined) {
+          if (localSerialized && localSerialized !== serverSerialized) {
+            capturePreOverwriteAutoBackup(key, localSerialized);
+          }
           memoryStore.set(key, serverSerialized);
           persistToNativeStorage(key, serverSerialized);
+          if (serverMetaTs > 0) {
+            persistSyncMeta(key, serverMetaTs);
+          }
           dispatchLocalSyncEvent(key, serverSerialized);
         }
       }
@@ -638,7 +858,18 @@ export async function initSqlDatabaseSync(): Promise<void> {
     nativeSetItem = Storage.prototype.setItem.bind(window.localStorage);
     nativeRemoveItem = Storage.prototype.removeItem.bind(window.localStorage);
 
-    // Preload existing local data into memoryStore so nothing is lost on refresh
+    // Preload existing local data and sync meta timestamps into memoryStore so nothing is lost on refresh
+    const rawMeta = nativeGetItem(SYNC_META_STORAGE_KEY);
+    if (rawMeta) {
+      try {
+        const parsedMeta = JSON.parse(rawMeta);
+        if (parsedMeta && typeof parsedMeta === 'object') {
+          syncMetaMap = parsedMeta;
+        }
+      } catch {
+        syncMetaMap = {};
+      }
+    }
     for (const key of SYNCED_KEYS) {
       const existingVal = nativeGetItem(key);
       if (existingVal !== null) {

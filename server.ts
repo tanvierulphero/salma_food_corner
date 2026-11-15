@@ -107,8 +107,8 @@ app.post('/api/send-sms', async (req, res) => {
   }
 });
 
-// Server-side persistent database store (mirrors cPanel api.php behavior in preview & Node production)
-const serverDbFilePath = path.resolve(__dirname, 'public', 'salma_server_db.json');
+// Server-side persistent database store (kept outside public/ so builds never ship preview test data)
+const serverDbFilePath = path.resolve(__dirname, '.salma_preview_db.json');
 
 function loadServerDbFromDisk(): Record<string, any> {
   try {
@@ -120,7 +120,7 @@ function loadServerDbFromDisk(): Record<string, any> {
       }
     }
   } catch (err) {
-    console.error('Failed to read salma_server_db.json:', err);
+    console.error('Failed to read .salma_preview_db.json:', err);
   }
   return {};
 }
@@ -129,7 +129,7 @@ function saveServerDbToDisk(data: Record<string, any>): void {
   try {
     fs.writeFileSync(serverDbFilePath, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err) {
-    console.error('Failed to write salma_server_db.json:', err);
+    console.error('Failed to write .salma_preview_db.json:', err);
   }
 }
 
@@ -139,11 +139,13 @@ app.get('/api.php', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   const latestDiskData = loadServerDbFromDisk();
   Object.assign(serverDbStore, latestDiskData);
+  const { _salma_meta, ...publicData } = serverDbStore;
   res.json({
     status: 'ok',
     connected: true,
     mysqlConnected: false,
-    data: serverDbStore
+    meta: _salma_meta && typeof _salma_meta === 'object' ? _salma_meta : {},
+    data: publicData
   });
 });
 
@@ -178,7 +180,14 @@ app.post('/api.php', (req, res) => {
   }
   if (action === 'setup_db') {
     if (req.body?.currentData && typeof req.body.currentData === 'object') {
-      Object.assign(serverDbStore, req.body.currentData);
+      if (!serverDbStore._salma_meta || typeof serverDbStore._salma_meta !== 'object') {
+        serverDbStore._salma_meta = {};
+      }
+      const now = Date.now();
+      for (const [k, v] of Object.entries(req.body.currentData)) {
+        serverDbStore[k] = v;
+        serverDbStore._salma_meta[k] = now;
+      }
       saveServerDbToDisk(serverDbStore);
     }
     return res.json({
@@ -196,8 +205,13 @@ app.post('/api.php', (req, res) => {
   } catch {
     serverDbStore[key] = value;
   }
+  if (!serverDbStore._salma_meta || typeof serverDbStore._salma_meta !== 'object') {
+    serverDbStore._salma_meta = {};
+  }
+  const updatedAt = Date.now();
+  serverDbStore._salma_meta[key] = updatedAt;
   saveServerDbToDisk(serverDbStore);
-  res.json({ status: 'ok', connected: true, key });
+  res.json({ status: 'ok', connected: true, key, updatedAt });
 });
 
 // Vite middleware setup for development

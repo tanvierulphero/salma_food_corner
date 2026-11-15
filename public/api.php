@@ -549,12 +549,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
         }
     }
 
+    $meta = [];
+    if (isset($data['_salma_meta']) && is_array($data['_salma_meta'])) {
+        $meta = $data['_salma_meta'];
+        unset($data['_salma_meta']);
+    }
+
     echo json_encode([
         'status' => 'ok',
         'connected' => true,
         'mysqlConnected' => $mysqlConnected,
         'dbName' => $mysqlConnected ? $DB_NAME : null,
         'mysqlError' => $mysqlError,
+        'meta' => (object)$meta,
         'data' => (object)$data
     ], JSON_UNESCAPED_UNICODE);
     if ($conn) $conn->close();
@@ -581,12 +588,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ১) সার্ভার ফাইলে সেভ (public_html এবং parent ফোল্ডারে ব্যাকআপ)
     $serverData = readServerDbFile($serverDbFile, $serverDbFileBackup);
     $serverData[$rawKey] = ($parsed !== null) ? $parsed : $valJson;
+    if (!isset($serverData['_salma_meta']) || !is_array($serverData['_salma_meta'])) {
+        $serverData['_salma_meta'] = [];
+    }
+    $updatedAt = round(microtime(true) * 1000);
+    $serverData['_salma_meta'][$rawKey] = $updatedAt;
     writeServerDbFile($serverDbFile, $serverData, $serverDbFileBackup);
 
     // ২) MySQL কানেক্টেড থাকলে phpMyAdmin এর সকল টেবিলে রিয়েল-টাইম সেভ
     $sqlErr = null;
     if ($mysqlConnected && $conn) {
         $sqlErr = syncKeyToRelationalTables($conn, $rawKey, $valJson);
+        $metaJson = $conn->real_escape_string(json_encode($serverData['_salma_meta'], JSON_UNESCAPED_UNICODE));
+        $conn->query("INSERT INTO `salma_app_store` (`store_key`, `store_value`) VALUES ('_salma_meta', '$metaJson') ON DUPLICATE KEY UPDATE `store_value` = '$metaJson'");
     }
 
     echo json_encode([
@@ -594,7 +608,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'connected' => true,
         'mysqlConnected' => $mysqlConnected,
         'sqlError' => $sqlErr,
-        'key' => $rawKey
+        'key' => $rawKey,
+        'updatedAt' => $updatedAt
     ], JSON_UNESCAPED_UNICODE);
     if ($conn) $conn->close();
     exit;
