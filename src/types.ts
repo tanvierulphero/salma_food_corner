@@ -46,12 +46,12 @@ export interface Order {
   items: CartItem[];
   totalAmount: number;
   discount: number;
-  advancePaid: number; // কমপক্ষে ৫০% অগ্রীম
+  advancePaid: number; // কমপক্ষে ৩০% অগ্রীম
   dueAmount: number;   // বাকি টাকা (ডেলিভারির সময় প্রদেয়)
   paymentMethod: string;
   advancePaymentMethod: 'bKash' | 'Nagad' | 'Card';
   transactionId?: string;
-  paymentStatus: '50% Advance Paid (Due on Delivery)' | 'Fully Paid (100%)';
+  paymentStatus: '30% Advance Paid (Due on Delivery)' | '50% Advance Paid (Due on Delivery)' | 'Fully Paid (100%)';
   status: 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled';
   createdAt: string;
   date: string; // YYYY-MM-DD
@@ -148,7 +148,7 @@ export const DEFAULT_SHOP_LOCATION: ShopLocationConfig = {
   lat: 23.9905,
   lng: 90.3875,
   freeRadiusKm: 1.0,
-  standardFee: 60,
+  standardFee: 0,
   phone: '01712-345678',
   landmark: 'চান্দনা চৌরাস্তা ও ভোগড়া বাইপাস সংলগ্ন',
   zoneName: 'গাজীপুর চৌরাস্তা',

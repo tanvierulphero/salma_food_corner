@@ -1670,7 +1670,7 @@ export default function DueLedgerManager({
                 <span>অনলাইন অর্ডারের বাকি তালিকা (Delivery Cash Due)</span>
               </p>
               <p className="text-[11px] text-blue-700 mt-0.5">
-                গ্রাহক ৫০% অগ্রীম পরিশোধ করেছেন, খাবার ডেলিভারির পর বাকি ৫০% টাকা আদায় করুন।
+                গ্রাহক ৩০% অগ্রীম পরিশোধ করেছেন, খাবার ডেলিভারির পর বাকি ৭০% টাকা আদায় করুন।
               </p>
             </div>
             <span className="font-black text-sm text-blue-800 bg-white px-2.5 py-1 rounded-xl border border-blue-200">

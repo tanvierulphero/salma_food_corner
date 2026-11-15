@@ -122,7 +122,7 @@ export default function ShopLocationManager({
       try {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object' && !String(parsed.address || '').includes('ধানমন্ডি')) {
-          return parsed;
+          return { ...DEFAULT_SHOP_LOCATION, ...parsed, standardFee: 0 };
         }
       } catch (e) {
         console.error(e);
@@ -160,6 +160,7 @@ export default function ShopLocationManager({
 
     const updatedConfig: ShopLocationConfig = {
       ...config,
+      standardFee: 0,
       nearbyAreas: areasArray.length > 0 ? areasArray : config.nearbyAreas
     };
 
@@ -419,12 +420,12 @@ export default function ShopLocationManager({
               Shop Location
             </span>
             <span className="bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 text-[10px] font-bold px-2 py-0.5 rounded-full">
-              GPS & ফ্রি ডেলিভারি জোন
+              GPS ও ১ কি.মি. ডেলিভারি এরিয়া
             </span>
           </div>
-          <h2 className="text-base font-black">দোকানের অবস্থান ও ১ কি.মি. ফ্রি ডেলিভারি জোন</h2>
+          <h2 className="text-base font-black">দোকানের অবস্থান ও ১ কি.মি. লোকাল সার্ভিস জোন</h2>
           <p className="text-[11px] text-emerald-100 leading-snug">
-            দোকানের GPS স্থানাঙ্ক সেট করুন। এর ওপর ভিত্তি করে চারপাশের ১ কি.মি. এলাকার গ্রাহকদের স্বয়ংক্রিয়ভাবে ফ্রি ডেলিভারি (৳০) দেওয়া হবে।
+            দোকানের GPS স্থানাঙ্ক সেট করুন। দোকানের চারপাশে ১ কি.মি. পরিধির ভেতর ব্যবসা পরিচালিত হয়।
           </p>
         </div>
 
@@ -722,57 +723,33 @@ export default function ShopLocationManager({
               </div>
             </div>
 
-            {/* Free Radius & Standard Fee Controls */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs font-bold">
-                  <span className="text-gray-700">ফ্রি ডেলিভারি পরিধি:</span>
-                  <span className="text-emerald-700 font-black">{config.freeRadiusKm} কি.মি.</span>
-                </div>
-                <input 
-                  type="range"
-                  min="0.5"
-                  max="5.0"
-                  step="0.5"
-                  value={config.freeRadiusKm}
-                  onChange={(e) => setConfig({ ...config, freeRadiusKm: parseFloat(e.target.value) })}
-                  className="w-full accent-emerald-600 cursor-pointer"
-                />
-                <div className="flex justify-between text-[10px] text-gray-400">
-                  <span>০.৫ কি.মি.</span>
-                  <span>১ কি.মি. (আদর্শ)</span>
-                  <span>৩ কি.মি.</span>
-                  <span>৫ কি.মি.</span>
-                </div>
+            {/* Service Radius Control (No delivery fee displayed) */}
+            <div className="space-y-1.5 pt-2">
+              <div className="flex justify-between text-xs font-bold">
+                <span className="text-gray-700">লোকাল সার্ভিস এরিয়া পরিধি:</span>
+                <span className="text-emerald-700 font-black">{config.freeRadiusKm} কি.মি. (লোকাল সার্ভিস জোন)</span>
               </div>
-
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs font-bold">
-                  <span className="text-gray-700">বহির্ভূত এলাকার ডেলিভারি ফি:</span>
-                  <span className="text-red-600 font-black">৳ {config.standardFee}</span>
-                </div>
-                <input 
-                  type="range"
-                  min="30"
-                  max="150"
-                  step="10"
-                  value={config.standardFee}
-                  onChange={(e) => setConfig({ ...config, standardFee: parseInt(e.target.value) })}
-                  className="w-full accent-red-600 cursor-pointer"
-                />
-                <div className="flex justify-between text-[10px] text-gray-400">
-                  <span>৳৩০</span>
-                  <span>৳৬০ (স্ট্যান্ডার্ড)</span>
-                  <span>৳১০০</span>
-                  <span>৳১৫০</span>
-                </div>
+              <input 
+                type="range"
+                min="0.5"
+                max="5.0"
+                step="0.5"
+                value={config.freeRadiusKm}
+                onChange={(e) => setConfig({ ...config, freeRadiusKm: parseFloat(e.target.value), standardFee: 0 })}
+                className="w-full accent-emerald-600 cursor-pointer"
+              />
+              <div className="flex justify-between text-[10px] text-gray-400">
+                <span>০.৫ কি.মি.</span>
+                <span>১ কি.মি. (আদর্শ)</span>
+                <span>৩ কি.মি.</span>
+                <span>৫ কি.মি.</span>
               </div>
             </div>
 
             {/* Keyword / Area Names string */}
             <div className="text-xs space-y-1">
               <label className="block font-bold text-gray-700">
-                ফ্রি ডেলিভারি এলাকার কী-ওয়ার্ড / গাজীপুরের মহল্লার নাম (কমা দিয়ে লিখুন):
+                সার্ভিস এলাকার কী-ওয়ার্ড / গাজীপুরের মহল্লার নাম (কমা দিয়ে লিখুন):
               </label>
               <textarea 
                 rows={2}
@@ -782,7 +759,7 @@ export default function ShopLocationManager({
                 className="w-full border border-gray-300 rounded-xl p-2.5 text-xs font-sans"
               />
               <p className="text-[10px] text-gray-400">
-                কাস্টমার যখন অর্ডারে এই এলাকাগুলোর নাম লিখবে, সে স্বয়ংক্রিয়ভাবে ফ্রি ডেলিভারি চার্জ পাবে।
+                কাস্টমার যখন অর্ডারে এই এলাকাগুলোর নাম লিখবে, তা স্বয়ংক্রিয়ভাবে ১ কি.মি. সার্ভিস এরিয়া হিসেবে চিহ্নিত হবে।
               </p>
             </div>
 
@@ -829,7 +806,7 @@ export default function ShopLocationManager({
                 style={{ width: `${Math.min(92, config.freeRadiusKm * 50)}%`, height: `${Math.min(92, config.freeRadiusKm * 50)}%` }}
               >
                 <span className="text-[9px] text-emerald-300 font-black tracking-widest uppercase bg-black/60 px-1.5 py-0.5 rounded-full border border-emerald-400/40">
-                  ফ্রি জোন (৳০)
+                  সার্ভিস জোন ({config.freeRadiusKm} km)
                 </span>
               </div>
 
@@ -873,13 +850,13 @@ export default function ShopLocationManager({
             <div className="flex justify-between items-center border-b pb-2">
               <h3 className="font-bold text-gray-900 text-xs flex items-center gap-1.5">
                 <Compass className="w-4 h-4 text-emerald-600" />
-                <span>গ্রাহক দূরত্ব ও ফি সিমুলেটর (Distance Tester)</span>
+                <span>গ্রাহক দূরত্ব ও সার্ভিস এরিয়া পরীক্ষক (Distance Tester)</span>
               </h3>
               <span className="text-[10px] text-gray-400">পরীক্ষা করুন</span>
             </div>
 
             <p className="text-[11px] text-gray-500">
-              যেকোনো সম্ভাব্য গ্রাহকের ঠিকানা বা স্থানাঙ্ক দিয়ে টেস্ট করুন সে ফ্রি ডেলিভারি পাবে কি না:
+              যেকোনো সম্ভাব্য গ্রাহকের ঠিকানা বা স্থানাঙ্ক দিয়ে টেস্ট করুন তিনি {config.freeRadiusKm} কি.মি. এরিয়ায় আছেন কি না:
             </p>
 
             <div className="space-y-2 text-xs">
@@ -920,29 +897,29 @@ export default function ShopLocationManager({
                 className="w-full bg-gray-800 hover:bg-black text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1"
               >
                 <Search className="w-3.5 h-3.5" />
-                <span>দূরত্ব ও ডেলিভারি ফি হিসেব করুন</span>
+                <span>দূরত্ব ও কভারেজ যাচাই করুন</span>
               </button>
 
               {testDistance !== null && (
                 <div className={`p-3 rounded-2xl border text-xs font-bold space-y-1 mt-2 ${
                   testDistance <= config.freeRadiusKm
                     ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                    : 'bg-red-50 border-red-300 text-red-900'
+                    : 'bg-amber-50 border-amber-300 text-amber-900'
                 }`}>
                   <div className="flex justify-between items-center">
                     <span>দোকান থেকে দূরত্ব:</span>
                     <span className="font-mono text-sm">{testDistance} কি.মি.</span>
                   </div>
                   <div className="flex justify-between items-center pt-1 border-t border-black/10">
-                    <span>ডেলিভারি চার্জ:</span>
-                    <span className="text-sm font-black">
-                      {testDistance <= config.freeRadiusKm ? 'সম্পূর্ণ ফ্রি (৳০) ✓' : `৳ ${config.standardFee} (স্ট্যান্ডার্ড)`}
+                    <span>সার্ভিস স্ট্যাটাস:</span>
+                    <span className="text-xs font-black">
+                      {testDistance <= config.freeRadiusKm ? '✓ ১ কি.মি. সার্ভিস এরিয়ার মধ্যে' : '⚠ ১ কি.মি. এরিয়ার বাইরে'}
                     </span>
                   </div>
                   <p className="text-[10px] font-normal mt-1 opacity-80">
                     {testDistance <= config.freeRadiusKm 
-                      ? `✓ গ্রাহক দোকানের ${config.freeRadiusKm} কি.মি. ফ্রি ডেলিভারি পরিধির মধ্যে রয়েছে।`
-                      : `⚠ গ্রাহক ফ্রি জোনের বাইরে অবস্থান করছে, স্ট্যান্ডার্ড ডেলিভারি চার্জ প্রযোজ্য হবে।`}
+                      ? `✓ গ্রাহক দোকানের ${config.freeRadiusKm} কি.মি. লোকাল সার্ভিস পরিধির মধ্যে রয়েছে।`
+                      : `⚠ গ্রাহক দোকানের ${config.freeRadiusKm} কি.মি. পরিধির বাইরে অবস্থান করছেন।`}
                   </p>
                 </div>
               )}
@@ -1054,7 +1031,7 @@ export default function ShopLocationManager({
               </div>
 
               <div>
-                <label className="block font-bold text-gray-700 mb-1">১ কি.মি. ফ্রি ডেলিভারি এলাকা সমূহ (কমা দিয়ে লিখুন)</label>
+                <label className="block font-bold text-gray-700 mb-1">১ কি.মি. লোকাল সার্ভিস এলাকা সমূহ (কমা দিয়ে লিখুন)</label>
                 <textarea
                   rows={2}
                   value={presetForm.nearbyAreasText}

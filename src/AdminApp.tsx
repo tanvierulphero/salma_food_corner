@@ -3,7 +3,7 @@
  * Dedicated for admin.html (Mobile-first, WebView & App wrapping ready)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ChefHat, TrendingUp, Utensils, BarChart2, FileText, Truck, Users, 
   Smartphone, Plus, Edit3, Trash2, CheckCircle2, AlertCircle, RefreshCw, 
@@ -34,6 +34,11 @@ import {
   normalizeBdPhone,
   getCustomerDueOrAdvanceBalance
 } from './utils/sqlSync';
+import {
+  countActiveOrders,
+  removeOrderById,
+  setOrderStatusById
+} from './utils/syncReconcile';
 
 const ADMIN_PIN_DEFAULT = '1234';
 
@@ -120,6 +125,8 @@ export default function AdminApp() {
     }
     return [];
   });
+  const ordersRef = useRef<Order[]>(orders);
+  ordersRef.current = orders;
 
   const [ledger, setLedger] = useState<LedgerEntry[]>(() => {
     const saved = localStorage.getItem('salma_ledger');
@@ -148,15 +155,24 @@ export default function AdminApp() {
   });
 
   const [activeOffer, setActiveOffer] = useState<string>(() => {
-    return localStorage.getItem('salma_active_offer') || '🎉 সুখবর! গাজীপুরে আমাদের দোকানের ১ কি.মি. পরিধিতে ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)!';
+    return localStorage.getItem('salma_active_offer') || '🎉 সুখবর! গাজীপুরে দোকানের ১ কি.মি. পরিধিতে দ্রুত হোম ডেলিভারি ও মাত্র ৩০% অগ্রীমে অর্ডার সুবিধা!';
   });
 
   // Listen to Storage events so changes in index.html sync in real time to admin.html
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'salma_orders' && e.newValue) {
-        setOrders(JSON.parse(e.newValue));
-        if (soundOn) playOrderSuccessSound();
+      if (e.key === 'salma_orders' && e.newValue !== null) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) {
+            const isNewOrderAdded = parsed.length > ordersRef.current.length;
+            ordersRef.current = parsed;
+            setOrders(parsed);
+            if (soundOn && isNewOrderAdded) playOrderSuccessSound();
+          }
+        } catch (err) {
+          console.error(err);
+        }
       }
       if (e.key === 'salma_menu_items' && e.newValue) {
         setMenuItems(JSON.parse(e.newValue));
@@ -714,6 +730,8 @@ export default function AdminApp() {
   // ORDERS MANAGEMENT (স্ট্যাটাস, এডিট ও ডিলেট)
   // -------------------------------------------------------------
   const [orderFilter, setOrderFilter] = useState<'All' | 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled'>('All');
+  const [orderActionConfirm, setOrderActionConfirm] = useState<{ type: 'delete' | 'cancel'; order: Order } | null>(null);
+  const [orderActionNotice, setOrderActionNotice] = useState<string | null>(null);
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
 
   // Order Edit Modal State
@@ -765,7 +783,7 @@ export default function AdminApp() {
           dueAmount: due,
           advancePaymentMethod: orderEditForm.advancePaymentMethod,
           transactionId: orderEditForm.transactionId.trim(),
-          paymentStatus: (due === 0 ? 'Fully Paid (100%)' : '50% Advance Paid (Due on Delivery)') as Order['paymentStatus'],
+          paymentStatus: (due === 0 ? 'Fully Paid (100%)' : '30% Advance Paid (Due on Delivery)') as Order['paymentStatus'],
           status: orderEditForm.status
         };
       }
@@ -804,25 +822,50 @@ export default function AdminApp() {
     setCustomers(nextMap);
   };
 
+  const showOrderNotice = (msg: string) => {
+    setOrderActionNotice(msg);
+    setTimeout(() => {
+      setOrderActionNotice(prev => (prev === msg ? null : prev));
+    }, 3500);
+  };
+
   const handleDeleteOrder = (orderId: string) => {
-    const targetOrder = orders.find(o => o.id === orderId);
-    if (confirm(`আপনি কি সত্যিই অর্ডার #${orderId} ডাটাবেজ থেকে মুছে ফেলতে (ডিলেট) চান? (গ্রাহকের প্রোফাইল সংরক্ষিত থাকবে)`)) {
-      if (targetOrder) {
-        preserveCustomerFromOrder(targetOrder);
-      }
-      const updatedList = orders.filter(o => o.id !== orderId);
-      saveToCpanelDb('salma_orders', updatedList);
+    const targetOrder = ordersRef.current.find(o => o.id === orderId);
+    if (!targetOrder) return;
+    setOrderActionConfirm({ type: 'delete', order: targetOrder });
+  };
+
+  const executeConfirmedOrderAction = async () => {
+    if (!orderActionConfirm) return;
+    const { type, order } = orderActionConfirm;
+    setOrderActionConfirm(null);
+
+    preserveCustomerFromOrder(order);
+
+    if (type === 'delete') {
+      const updatedList = removeOrderById(ordersRef.current, order.id);
+      ordersRef.current = updatedList;
       setOrders(updatedList);
+      await saveToCpanelDb('salma_orders', updatedList);
       if (soundOn) playAddToCartSound();
+      showOrderNotice(`অর্ডার #${order.id} স্থায়ীভাবে ডিলেট করা হয়েছে (গ্রাহক প্রোফাইল সংরক্ষিত আছে)।`);
+    } else {
+      const updatedList = setOrderStatusById(ordersRef.current, order.id, 'Cancelled');
+      ordersRef.current = updatedList;
+      setOrders(updatedList);
+      await saveToCpanelDb('salma_orders', updatedList);
+      if (soundOn) playAddToCartSound();
+      showOrderNotice(`অর্ডার #${order.id} বাতিল (Cancelled) করা হয়েছে।`);
     }
   };
 
-  const handleUpdateOrderStatus = (orderId: string, newStatus: Order['status']) => {
-    const targetOrder = orders.find(o => o.id === orderId);
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: Order['status']) => {
+    const currentList = ordersRef.current;
+    const targetOrder = currentList.find(o => o.id === orderId);
     if (targetOrder) {
       preserveCustomerFromOrder(targetOrder);
     }
-    const updatedList = orders.map(o => {
+    const updatedList = currentList.map(o => {
       if (o.id === orderId) {
         const updated = { ...o, status: newStatus };
         if (o.status === 'Preparing' && newStatus === 'Out for Delivery') {
@@ -832,9 +875,13 @@ export default function AdminApp() {
       }
       return o;
     });
-    saveToCpanelDb('salma_orders', updatedList);
+    ordersRef.current = updatedList;
     setOrders(updatedList);
+    await saveToCpanelDb('salma_orders', updatedList);
     if (soundOn) playAddToCartSound();
+    if (newStatus === 'Cancelled') {
+      showOrderNotice(`অর্ডার #${orderId} বাতিল (Cancelled) হিসেবে আপডেট করা হয়েছে।`);
+    }
   };
 
   const filteredOrders = orders.filter(o => orderFilter === 'All' || o.status === orderFilter);
@@ -1022,7 +1069,7 @@ export default function AdminApp() {
             { id: 'ledger', label: 'POS লেজার', icon: BarChart2 },
             { id: 'due', label: 'বাকি খাতা', icon: BookOpen },
             { id: 'reports', label: 'রিপোর্টস', icon: FileText },
-            { id: 'orders', label: 'লাইভ অর্ডার', icon: Truck, badge: orders.filter(o => o.status !== 'Delivered').length },
+            { id: 'orders', label: 'লাইভ অর্ডার', icon: Truck, badge: countActiveOrders(orders) },
             { id: 'customers', label: 'গ্রাহক', icon: Users, badge: Object.keys(customers).length },
             { id: 'marketing', label: 'বাল্ক এসএমএস', icon: Smartphone },
             { id: 'location', label: 'দোকানের অবস্থান', icon: MapPin }
@@ -1159,7 +1206,6 @@ export default function AdminApp() {
                     >
                       <option value="খাবার বিক্রয় (Food Sales)">খাবার বিক্রয় (Sales)</option>
                       <option value="ক্যাটারিং সার্ভিস (Catering)">ক্যাটারিং সার্ভিস</option>
-                      <option value="হোম ডেলিভারি ফি (Delivery)">হোম ডেলিভারি ফি</option>
                       <option value="অন্যান্য আয় (Other)">অন্যান্য আয়</option>
                     </select>
 
@@ -1770,7 +1816,7 @@ export default function AdminApp() {
         )}
 
         {/* ============================================================== */}
-        {/* TAB 5: LIVE ORDERS & 50% ADVANCE PAYMENT VERIFICATION          */}
+        {/* TAB 5: LIVE ORDERS & 30% ADVANCE PAYMENT VERIFICATION          */}
         {/* ============================================================== */}
         {activeTab === 'orders' && (
           <div className="space-y-4">
@@ -1781,7 +1827,7 @@ export default function AdminApp() {
                   <Truck className="w-5 h-5 text-red-600" />
                   <span>লাইভ অর্ডার তালিকা ({orders.length} টি)</span>
                 </h2>
-                <p className="text-xs text-gray-500">৫০% অগ্রীম পেমেন্ট যাচাই, ট্রানজেকশন আইডি এবং ১ কি.মি. ফ্রি ডেলিভারি তথ্য</p>
+                <p className="text-xs text-gray-500">৩০% অগ্রীম পেমেন্ট যাচাই, ট্রানজেকশন আইডি এবং ১ কি.মি. লোকাল ডেলিভারি তথ্য</p>
               </div>
 
               {/* Status Filter */}
@@ -1800,6 +1846,23 @@ export default function AdminApp() {
               </div>
             </div>
 
+            {orderActionNotice && (
+              <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-between gap-2 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{orderActionNotice}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOrderActionNotice(null)}
+                  className="text-emerald-700 hover:text-emerald-950 p-0.5 cursor-pointer"
+                  aria-label="নোটিশ বন্ধ করুন"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* Orders Cards */}
             {filteredOrders.length === 0 ? (
               <div className="bg-white p-12 rounded-3xl border border-gray-200 text-center text-gray-400 space-y-2">
@@ -1809,17 +1872,38 @@ export default function AdminApp() {
             ) : (
               <div className="space-y-4">
                 {filteredOrders.map(order => (
-                  <div key={order.id} className="bg-white p-5 rounded-3xl border border-gray-200 shadow-xs space-y-4">
+                  <div key={order.id} className={`bg-white p-5 rounded-3xl border shadow-xs space-y-4 ${order.status === 'Cancelled' ? 'border-red-300 bg-red-50/20' : 'border-gray-200'}`}>
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-gray-100 pb-3">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="bg-red-100 text-red-800 text-xs font-black px-2.5 py-0.5 rounded-lg">
                             {order.id}
+                          </span>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                            order.status === 'Cancelled'
+                              ? 'bg-red-100 text-red-700 border-red-300'
+                              : order.status === 'Delivered'
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                : order.status === 'Out for Delivery'
+                                  ? 'bg-blue-100 text-blue-800 border-blue-300'
+                                  : order.status === 'Preparing'
+                                    ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                    : 'bg-gray-100 text-gray-800 border-gray-300'
+                          }`}>
+                            {order.status === 'Cancelled'
+                              ? '✗ বাতিলকৃত (Cancelled)'
+                              : order.status === 'Delivered'
+                                ? '✓ সম্পন্ন'
+                                : order.status === 'Out for Delivery'
+                                  ? 'ডেলিভারিতে'
+                                  : order.status === 'Preparing'
+                                    ? 'রান্না হচ্ছে'
+                                    : 'গৃহীত'}
                           </span>
                           <span className="text-xs text-gray-500 font-mono">{formatDateDMY(order.date)} • {order.createdAt}</span>
                           {order.isFreeDeliveryWithin1km && (
                             <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
-                              ১ কি.মি. ফ্রি ডেলিভারি (৳০)
+                              ১ কি.মি. লোকাল ডেলিভারি
                             </span>
                           )}
                         </div>
@@ -2084,7 +2168,7 @@ export default function AdminApp() {
         {[
           { id: 'dashboard', label: 'হোম', icon: TrendingUp },
           { id: 'menu', label: 'মেনু', icon: Utensils },
-          { id: 'orders', label: 'অর্ডার', icon: Truck, badge: orders.filter(o => o.status !== 'Delivered').length },
+          { id: 'orders', label: 'অর্ডার', icon: Truck, badge: countActiveOrders(orders) },
           { id: 'ledger', label: 'POS হিসাব', icon: BarChart2 },
           { id: 'location', label: 'লোকেশন', icon: MapPin }
         ].map(item => {
@@ -2423,7 +2507,7 @@ export default function AdminApp() {
               <p><b>ঠিকানা:</b> {selectedReceiptOrder.address}</p>
               <p><b>তারিখ ও সময়:</b> <span className="font-mono">{formatDateDMY(selectedReceiptOrder.date)}</span> {selectedReceiptOrder.createdAt}</p>
               {selectedReceiptOrder.isFreeDeliveryWithin1km && (
-                <p className="text-emerald-700 font-bold">✓ ১ কি.মি. ফ্রি ডেলিভারি জোন</p>
+                <p className="text-emerald-700 font-bold">✓ ১ কি.মি. লোকাল সার্ভিস জোন</p>
               )}
             </div>
 
@@ -2961,6 +3045,54 @@ export default function AdminApp() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* IN-APP ORDER DELETE / CANCEL CONFIRMATION MODAL                */}
+      {/* ============================================================== */}
+      {orderActionConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-[380px] w-full p-5 shadow-2xl border border-red-200 space-y-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-gray-900">
+                  {orderActionConfirm.type === 'delete'
+                    ? `অর্ডার #${orderActionConfirm.order.id} ডিলেট করবেন?`
+                    : `অর্ডার #${orderActionConfirm.order.id} বাতিল করবেন?`}
+                </h3>
+                <p className="text-[11px] text-gray-500">
+                  গ্রাহক: {orderActionConfirm.order.customerName} ({orderActionConfirm.order.phone})
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-700 bg-amber-50 border border-amber-200 rounded-2xl p-3 leading-relaxed">
+              {orderActionConfirm.type === 'delete'
+                ? 'অর্ডারটি স্থায়ীভাবে ডাটাবেজ থেকে মুছে যাবে। তবে গ্রাহকের প্রোফাইল ও মোবাইল নম্বর ডাটাবেজে সংরক্ষিত থাকবে।'
+                : 'অর্ডারটির স্ট্যাটাস বাতিল (Cancelled) হিসেবে সংরক্ষিত হবে এবং গ্রাহকের প্রোফাইল সুরক্ষিত থাকবে।'}
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setOrderActionConfirm(null)}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-2.5 rounded-xl text-xs cursor-pointer transition"
+              >
+                না, থাকুক
+              </button>
+              <button
+                type="button"
+                onClick={executeConfirmedOrderAction}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 rounded-xl text-xs shadow cursor-pointer transition"
+              >
+                {orderActionConfirm.type === 'delete' ? 'হ্যাঁ, ডিলেট করুন' : 'হ্যাঁ, বাতিল করুন'}
+              </button>
+            </div>
           </div>
         </div>
       )}

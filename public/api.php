@@ -88,7 +88,7 @@ function readServerDbFile($localFile, $backupFile = null) {
     }
     if (!empty($backupData)) {
         foreach ($backupData as $k => $v) {
-            if (!isset($localData[$k]) || (!isNonEmptyVal($localData[$k]) && isNonEmptyVal($v))) {
+            if (!array_key_exists($k, $localData)) {
                 $localData[$k] = $v;
             }
         }
@@ -535,13 +535,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
                 $mysqlVal = ($decoded !== null) ? $decoded : $row['store_value'];
                 $mysqlKeys[$k] = true;
 
-                // যদি ফাইল ব্যাকআপে ডাটা থাকে কিন্তু MySQL-এ খালি থাকে, তবে ফাইল ব্যাকআপের ডাটা অগ্রাধিকার পাবে এবং MySQL আপডেট করবে
-                if (!isNonEmptyVal($mysqlVal) && isset($fileData[$k]) && isNonEmptyVal($fileData[$k])) {
-                    $vJson = is_string($fileData[$k]) ? $fileData[$k] : json_encode($fileData[$k], JSON_UNESCAPED_UNICODE);
-                    syncKeyToRelationalTables($conn, $k, $vJson);
-                } else {
-                    $data[$k] = $mysqlVal;
-                }
+                // MySQL-এ সংরক্ষিত বর্তমান ডাটা (যেমন সব অর্ডার ডিলেট করলে []) প্রাধান্য পাবে
+                $data[$k] = $mysqlVal;
             }
         }
 

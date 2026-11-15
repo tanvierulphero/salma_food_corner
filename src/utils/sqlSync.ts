@@ -5,6 +5,11 @@
  * - Protects in-flight & recent saves from being overwritten by background polling
  */
 
+import {
+  isNonEmptySerializedValue,
+  resolveServerPullAction
+} from './syncReconcile';
+
 const SYNCED_KEYS = new Set([
   'salma_menu_items',
   'salma_orders',
@@ -115,17 +120,19 @@ async function sendSaveRequest(key: string, strValue: string, force = false): Pr
   inFlightSaves.set(key, (inFlightSaves.get(key) || 0) + 1);
 
   try {
+    const body = JSON.stringify({
+      action: 'save',
+      key,
+      value: strValue
+    });
     const res = await fetch(getApiUrl('save'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: JSON.stringify({
-        action: 'save',
-        key,
-        value: strValue
-      })
+      body,
+      keepalive: body.length < 60000
     });
 
     const data = await res.json().catch(() => null);
@@ -336,12 +343,6 @@ export async function setupMysqlDatabase(config: {
   }
 }
 
-function isNonEmptySerializedData(strVal: string | undefined): boolean {
-  if (!strVal) return false;
-  const trimmed = strVal.trim();
-  return trimmed !== '' && trimmed !== '[]' && trimmed !== '{}' && trimmed !== 'null';
-}
-
 export async function pullFromServer(isInitialBoot = false): Promise<void> {
   // Do not pull while any save request is in flight or within 6 seconds of a local save
   if (!isInitialBoot) {
@@ -349,6 +350,8 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
       return;
     }
   }
+
+  const pullStartedAt = Date.now();
 
   try {
     const res = await fetch(getApiUrl('load'), {
@@ -366,6 +369,11 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
     const result = await res.json();
     if (!result) return;
 
+    // If a save occurred while this load request was in flight, abort applying stale server data
+    if (!isInitialBoot && (inFlightSaves.size > 0 || lastGlobalSaveTime >= pullStartedAt)) {
+      return;
+    }
+
     dbStatusInfo = {
       mysqlConnected: Boolean(result.mysqlConnected),
       dbName: result.dbName || null,
@@ -376,39 +384,45 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
     const serverData: Record<string, any> =
       result.data && typeof result.data === 'object' ? result.data : {};
 
+    const keysToReconcile = new Set<string>([
+      ...SYNCED_KEYS,
+      ...Object.keys(serverData)
+    ]);
+
     isRemoteApplying = true;
     try {
-      Object.entries(serverData).forEach(([key, val]) => {
-        if (val === undefined || val === null) return;
+      const nowMs = Date.now();
+      for (const key of keysToReconcile) {
+        const keyPresentInServer =
+          Object.prototype.hasOwnProperty.call(serverData, key) &&
+          serverData[key] !== undefined &&
+          serverData[key] !== null;
 
-        // Never overwrite a key that has an active save or was modified locally in the last 8 seconds
-        if ((inFlightSaves.get(key) || 0) > 0) return;
+        const serverSerialized = keyPresentInServer
+          ? (typeof serverData[key] === 'string'
+              ? serverData[key]
+              : JSON.stringify(serverData[key]))
+          : undefined;
+        const localSerialized = memoryStore.get(key);
         const lastKeySave = lastLocalSaveTime.get(key) || 0;
-        if (!isInitialBoot && Date.now() - lastKeySave < 8000) return;
 
-        const strVal = typeof val === 'string' ? val : JSON.stringify(val);
-        const prevVal = memoryStore.get(key);
+        const action = resolveServerPullAction({
+          keyPresentInServer,
+          serverSerialized,
+          localSerialized,
+          isInitialBoot,
+          inFlightCount: inFlightSaves.get(key) || 0,
+          lastLocalSaveMs: lastKeySave,
+          pullStartedAt,
+          nowMs
+        });
 
-        // If server returned empty [] or {} for a key, but local memoryStore has real data, push local data to server instead of wiping it!
-        if (!isNonEmptySerializedData(strVal) && isNonEmptySerializedData(prevVal)) {
-          sendSaveRequest(key, prevVal!, true);
-          return;
-        }
-
-        if (prevVal !== strVal) {
-          memoryStore.set(key, strVal);
-          persistToNativeStorage(key, strVal);
-          dispatchLocalSyncEvent(key, strVal);
-        }
-      });
-
-      // On initial boot, if local storage has keys that don't exist on the server yet, push them to the server
-      if (isInitialBoot) {
-        for (const key of SYNCED_KEYS) {
-          const localVal = memoryStore.get(key);
-          if (isNonEmptySerializedData(localVal) && !(key in serverData)) {
-            sendSaveRequest(key, localVal!, true);
-          }
+        if (action === 'push-local' && localSerialized && isNonEmptySerializedValue(localSerialized)) {
+          sendSaveRequest(key, localSerialized, true);
+        } else if (action === 'apply' && serverSerialized !== undefined) {
+          memoryStore.set(key, serverSerialized);
+          persistToNativeStorage(key, serverSerialized);
+          dispatchLocalSyncEvent(key, serverSerialized);
         }
       }
     } finally {
@@ -704,6 +718,16 @@ export async function initSqlDatabaseSync(): Promise<void> {
   Storage.prototype.clear = function (): void {
     memoryStore.clear();
   };
+
+  // Keep memoryStore synced with genuine cross-tab StorageEvents without echoing a redundant save back to server
+  window.addEventListener('storage', (e) => {
+    if (isInternalDispatching || !e.key || e.newValue === null) return;
+    if (SYNCED_KEYS.has(e.key)) {
+      memoryStore.set(e.key, e.newValue);
+      lastLocalSaveTime.set(e.key, Date.now());
+      lastGlobalSaveTime = Date.now();
+    }
+  });
 
   // Load initial database state from cPanel server BEFORE mounting React app
   await pullFromServer(true);

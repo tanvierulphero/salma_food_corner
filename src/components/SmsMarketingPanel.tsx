@@ -26,9 +26,9 @@ const PRESET_TEMPLATES = [
   },
   {
     id: 'free_delivery',
-    title: '🚚 ১ কি.মি. ফ্রি হোম ডেলিভারি অফার',
+    title: '🚚 ১ কি.মি. লোকাল হোম ডেলিভারি',
     category: 'ডেলিভারি',
-    message: 'প্রিয় {name}, সুখবর! সালমা ফুড কর্ণার থেকে ১ কি.মি. পরিধিতে ডেলিভারি সম্পূর্ণ ফ্রি (৳০)! গরম কাচ্চি ও তেহারি অর্ডার করুন আজই।'
+    message: 'প্রিয় {name}, সুখবর! সালমা ফুড কর্ণার থেকে ১ কি.মি. পরিধিতে দ্রুত হোম ডেলিভারি চালু আছে! গরম কাচ্চি ও তেহারি অর্ডার করুন আজই।'
   },
   {
     id: 'loyalty_bonus',
@@ -40,7 +40,7 @@ const PRESET_TEMPLATES = [
     id: 'new_item',
     title: '🍔 নতুন খাবারের মেনু সংযোজন',
     category: 'নতুন খাবার',
-    message: 'প্রিয় খাদ্যরসিক, সালমা ফুডে নতুন যুক্ত হয়েছে ক্রিস্পি চিকেন ফ্রাই ও শাহী জিলাপি কম্বো! মাত্র ৫০% অগ্রীমে এখনই দ্রুত অর্ডার করুন।'
+    message: 'প্রিয় খাদ্যরসিক, সালমা ফুডে নতুন যুক্ত হয়েছে ক্রিস্পি চিকেন ফ্রাই ও শাহী জিলাপি কম্বো! মাত্র ৩০% অগ্রীমে এখনই দ্রুত অর্ডার করুন।'
   },
   {
     id: 'rainy_khichuri',
@@ -101,7 +101,7 @@ export default function SmsMarketingPanel({
 
   // Banner text
   const [bannerInput, setBannerInput] = useState<string>(
-    activeOffer || '🎉 সুখবর! দোকানের ১ কি.মি. পরিধিতে ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)!'
+    activeOffer || '🎉 সুখবর! দোকানের ১ কি.মি. পরিধিতে ৩০% অগ্রীম পেমেন্টেই দ্রুত হোম সার্ভিস!'
   );
 
   // Persist config and logs
@@ -398,7 +398,7 @@ export default function SmsMarketingPanel({
       case 'all': return 'সব গ্রাহক';
       case 'vip': return 'ভিআইপি / টপ স্পেন্ডার';
       case 'loyalty': return 'লয়্যালটি মেম্বার';
-      case 'within1km': return '১ কি.মি. ফ্রি ডেলিভারি জোন';
+      case 'within1km': return '১ কি.মি. লোকাল সার্ভিস জোন';
       case 'selected': return 'বাছাইকৃত নির্দিষ্ট গ্রাহক';
       case 'direct': return 'সরাসরি মোবাইল নম্বর';
       default: return 'কাস্টমার';
@@ -430,7 +430,7 @@ export default function SmsMarketingPanel({
           </div>
           <h2 className="text-base font-black">গ্রাহক মোবাইল এসএমএস মার্কেটিং</h2>
           <p className="text-[11px] text-amber-100 leading-snug">
-            রেজিস্টার্ড গ্রাহকের ফোনে এক ক্লিকে অফার, ১ কি.মি. ফ্রি ডেলিভারি ও ডিসকাউন্ট মেসেজ পাঠান।
+            রেজিস্টার্ড গ্রাহকের ফোনে এক ক্লিকে অফার, ১ কি.মি. লোকাল সার্ভিস ও ডিসকাউন্ট মেসেজ পাঠান।
           </p>
         </div>
       </div>

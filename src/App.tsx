@@ -28,6 +28,8 @@ import { ShopLocationConfig, DEFAULT_SHOP_LOCATION, MenuCategory, DEFAULT_MENU_C
 import CategoryManagerModal from './components/CategoryManagerModal';
 import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer, getCustomerDueOrAdvanceBalance, getCustomerTransactions } from './utils/sqlSync';
 import { formatDateDMY } from './utils/dateFormatter';
+import { calculateCheckoutSummary, isWithinLocalServiceArea } from './utils/orderCalculations';
+import { countActiveOrders, removeOrderById, setOrderStatusById } from './utils/syncReconcile';
 
 // Types
 interface FoodItem {
@@ -61,12 +63,12 @@ interface Order {
   items: CartItem[];
   totalAmount: number;
   discount: number;
-  advancePaid: number; // কমপক্ষে ৫০% অগ্রীম
+  advancePaid: number; // কমপক্ষে ৩০% অগ্রীম
   dueAmount: number;   // বাকি টাকা (ডেলিভারির সময় প্রদেয়)
   paymentMethod: string;
   advancePaymentMethod: 'bKash' | 'Nagad' | 'Card';
   transactionId?: string;
-  paymentStatus: '50% Advance Paid (Due on Delivery)' | 'Fully Paid (100%)';
+  paymentStatus: '30% Advance Paid (Due on Delivery)' | '50% Advance Paid (Due on Delivery)' | 'Fully Paid (100%)';
   status: 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled';
   createdAt: string;
   date: string; // YYYY-MM-DD
@@ -115,7 +117,7 @@ export const SHOP_LOCATION = {
   lat: 23.9905,
   lng: 90.3875,
   freeRadiusKm: 1.0,
-  standardFee: 60
+  standardFee: 0
 };
 
 export const NEARBY_1KM_AREAS = [
@@ -229,7 +231,7 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object' && !String(parsed.address || '').includes('ধানমন্ডি')) {
-          return { ...DEFAULT_SHOP_LOCATION, ...parsed };
+          return { ...DEFAULT_SHOP_LOCATION, ...parsed, standardFee: 0 };
         }
       } catch (e) {
         console.error(e);
@@ -505,6 +507,9 @@ export default function App() {
     }
     return [];
   });
+  const ordersRef = useRef<Order[]>(orders);
+  ordersRef.current = orders;
+  const [pendingOrderConfirm, setPendingOrderConfirm] = useState<{ type: 'cancel' | 'delete'; order: Order } | null>(null);
 
   // 1 KM Free Delivery Zone States
   const [customerDistanceKm, setCustomerDistanceKm] = useState<number | null>(null);
@@ -534,15 +539,15 @@ export default function App() {
   // Reviews
   const [reviews, setReviews] = useState<Review[]>([]);
 
-  const [activeOffer, setActiveOffer] = useState<string>('🎉 সুখবর! দোকানের ১ কি.মি. পরিধিতে ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)! যেকোনো খাবারে ১০% ছাড়ে কোড: SALMA10');
+  const [activeOffer, setActiveOffer] = useState<string>('🎉 সুখবর! দোকানের ১ কি.মি. পরিধিতে দ্রুত হোম ডেলিভারি ও মাত্র ৩০% অগ্রীমে অর্ডার সুবিধা! কোড: SALMA10');
   const [showOfferBanner, setShowOfferBanner] = useState<boolean>(true);
 
-  // Checkout Form State (At least 50% advance required)
+  // Checkout Form State (At least 30% advance required)
   const [checkoutForm, setCheckoutForm] = useState({
     name: currentCustomer ? currentCustomer.name : '',
     phone: currentCustomer ? currentCustomer.phone : '',
     address: currentCustomer ? currentCustomer.address : '',
-    advanceOption: '50' as '50' | '100', // '50' = ৫০% অগ্রীম, '100' = ১০০% সম্পূর্ণ
+    advanceOption: '30' as '30' | '100', // '30' = ৩০% অগ্রীম, '100' = ১০০% সম্পূর্ণ
     advancePaymentMethod: 'bKash' as 'bKash' | 'Nagad' | 'Card',
     transactionId: '',
     coupon: '',
@@ -575,7 +580,7 @@ export default function App() {
     if (matched) {
       setCustomerDistanceKm(0.4);
       setDistanceVerifiedType('address');
-      setGpsMessage({ type: 'success', text: 'আপনার ঠিকানাটি দোকানের ১ কি.মি. ফ্রি ডেলিভারি জোনের অন্তর্ভুক্ত! (ডেলিভারি ফি: ৳০)' });
+      setGpsMessage({ type: 'success', text: 'আপনার ঠিকানাটি দোকানের ১ কি.মি. সার্ভিস এরিয়ার অন্তর্ভুক্ত!' });
     }
   };
 
@@ -599,12 +604,12 @@ export default function App() {
         if (dist <= shopLocation.freeRadiusKm) {
           setGpsMessage({ 
             type: 'success', 
-            text: `অভিনন্দন! আপনার দূরত্ব মাত্র ${dist} কি.মি. (${shopLocation.freeRadiusKm} কি.মি. ফ্রি ডেলিভারি জোনের ভিতরে)। ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)!` 
+            text: `অভিনন্দন! আপনার দূরত্ব মাত্র ${dist} কি.মি. (দোকানের ${shopLocation.freeRadiusKm} কি.মি. সার্ভিস এরিয়ার ভিতরে)।` 
           });
         } else {
           setGpsMessage({ 
             type: 'info', 
-            text: `আপনার দূরত্ব ${dist} কি.মি. (${shopLocation.freeRadiusKm} কি.মি. ফ্রি জোনের বাইরে)। রেগুলার ডেলিভারি ফি ৳${shopLocation.standardFee} প্রযোজ্য।` 
+            text: `আপনার দূরত্ব ${dist} কি.মি. (দোকানের ${shopLocation.freeRadiusKm} কি.মি. পরিধির বাইরে)। আমরা ১ কি.মি. এর মধ্যে সার্ভিস দিচ্ছি, নিচে থেকে এলাকা সিলেক্ট করুন।` 
           });
         }
       },
@@ -625,7 +630,7 @@ export default function App() {
     setDistanceVerifiedType('area');
     setGpsMessage({
       type: 'success',
-      text: `${area.name} সিলেক্ট করা হয়েছে (দূরত্ব: ${area.distanceKm} কি.মি.)। ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)!`
+      text: `${area.name} সিলেক্ট করা হয়েছে (দূরত্ব: ${area.distanceKm} কি.মি. — ১ কি.মি. এরিয়ার মধ্যে)।`
     });
     // Append or fill address if needed
     setCheckoutForm(prev => {
@@ -910,22 +915,27 @@ export default function App() {
   };
 
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  // Free Delivery Zone Rule: Within configured freeRadiusKm or matching nearby address keywords = FREE (৳0)
+  // 1km Local Service Area Check (No delivery charge anywhere)
   const isAddressInFreeZone = (shopLocation.nearbyAreas || []).some(area => 
     checkoutForm.address.toLowerCase().includes(area.toLowerCase())
   );
-  const isWithinFreeRadius = (customerDistanceKm !== null && customerDistanceKm <= shopLocation.freeRadiusKm) || isAddressInFreeZone;
+  const isWithinFreeRadius = isWithinLocalServiceArea(customerDistanceKm, isAddressInFreeZone, shopLocation.freeRadiusKm);
   const isWithin1Km = isWithinFreeRadius;
-  const deliveryFee = isWithinFreeRadius ? 0 : shopLocation.standardFee;
   const couponDiscount = discountApplied;
   const availablePoints = currentCustomer ? currentCustomer.loyaltyPoints : 0;
   const loyaltyDiscount = checkoutForm.useLoyalty ? Math.min(availablePoints * 0.5, subtotal * 0.3) : 0;
-  const finalTotal = Math.max(0, subtotal + deliveryFee - couponDiscount - loyaltyDiscount);
 
-  // Advance Payment Calculation (Minimum 50% required by restaurant policy)
-  const minAdvance = Math.ceil(finalTotal * 0.5);
-  const advanceAmount = checkoutForm.advanceOption === '100' ? finalTotal : minAdvance;
-  const dueAmount = finalTotal - advanceAmount;
+  const {
+    finalTotal,
+    minAdvance,
+    advanceAmount,
+    dueAmount
+  } = calculateCheckoutSummary({
+    subtotal,
+    couponDiscount,
+    loyaltyDiscount,
+    advanceOption: checkoutForm.advanceOption
+  });
 
   const handleApplyCoupon = () => {
     if (checkoutForm.coupon.toUpperCase() === 'SALMA10') {
@@ -1000,7 +1010,7 @@ export default function App() {
       paymentMethod: `${checkoutForm.advancePaymentMethod} (অগ্রীম ৳${advanceAmount}) + ${dueAmount > 0 ? 'ক্যাশ অন ডেলিভারি (বাকি ৳' + dueAmount + ')' : 'সম্পূর্ণ পরিশোধিত'}`,
       advancePaymentMethod: checkoutForm.advancePaymentMethod,
       transactionId: trxId,
-      paymentStatus: dueAmount === 0 ? 'Fully Paid (100%)' : '50% Advance Paid (Due on Delivery)',
+      paymentStatus: dueAmount === 0 ? 'Fully Paid (100%)' : '30% Advance Paid (Due on Delivery)',
       status: 'Placed',
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       date: todayStr,
@@ -1023,7 +1033,7 @@ export default function App() {
       amount: advanceAmount,
       date: todayStr,
       paymentMethod: checkoutForm.advancePaymentMethod,
-      note: `অর্ডার ${newOrder.id} - ${name} (${checkoutForm.advanceOption === '100' ? '১০০% ফুল পেমেন্ট' : '৫০% অগ্রীম প্রাপ্তি ৳' + advanceAmount + ', বাকি বকেয়া ৳' + dueAmount}) (Trx: ${trxId})`
+      note: `অর্ডার ${newOrder.id} - ${name} (${checkoutForm.advanceOption === '100' ? '১০০% ফুল পেমেন্ট' : '৩০% অগ্রীম প্রাপ্তি ৳' + advanceAmount + ', বাকি বকেয়া ৳' + dueAmount}) (Trx: ${trxId})`
     };
     const nextLedger = [autoLedgerEntry, ...ledger];
     setLedger(nextLedger);
@@ -1142,26 +1152,34 @@ export default function App() {
 
   const handleCancelOrder = (order: Order) => {
     if (order.status === 'Cancelled') return;
-    if (confirm(`আপনি কি নিশ্চিতভাবে অর্ডার #${order.id} ক্যান্সেল (বাতিল) করতে চান? (আপনার কাস্টমার প্রোফাইল ও অ্যাকাউন্ট সংরক্ষিত থাকবে)`)) {
-      ensureCustomerSavedFromOrder(order);
-      const updatedOrders: Order[] = orders.map(o =>
-        o.id === order.id ? { ...o, status: 'Cancelled' } : o
-      );
-      setOrders(updatedOrders);
-      saveToCpanelDb('salma_orders', updatedOrders);
-      alert(`অর্ডার #${order.id} সফলভাবে ক্যান্সেল (বাতিল) করা হয়েছে এবং আপনার কাস্টমার তথ্য ডাটাবেসে সংরক্ষিত রয়েছে।`);
-    }
+    setPendingOrderConfirm({ type: 'cancel', order });
   };
 
   const handleDeleteOrderInApp = (orderId: string) => {
-    const targetOrder = orders.find(o => o.id === orderId);
-    if (confirm(`আপনি কি নিশ্চিতভাবে অর্ডার #${orderId} মুছে ফেলতে চান? (কাস্টমারের প্রোফাইল সংরক্ষিত থাকবে)`)) {
-      if (targetOrder) {
-        ensureCustomerSavedFromOrder(targetOrder);
-      }
-      const updated = orders.filter(o => o.id !== orderId);
-      setOrders(updated);
-      saveToCpanelDb('salma_orders', updated);
+    const targetOrder = ordersRef.current.find(o => o.id === orderId);
+    if (!targetOrder) return;
+    setPendingOrderConfirm({ type: 'delete', order: targetOrder });
+  };
+
+  const executePendingOrderConfirm = async () => {
+    if (!pendingOrderConfirm) return;
+    const { type, order } = pendingOrderConfirm;
+    setPendingOrderConfirm(null);
+
+    ensureCustomerSavedFromOrder(order);
+
+    if (type === 'cancel') {
+      const updatedOrders = setOrderStatusById(ordersRef.current, order.id, 'Cancelled');
+      ordersRef.current = updatedOrders;
+      setOrders(updatedOrders);
+      await saveToCpanelDb('salma_orders', updatedOrders);
+      setActiveOffer(`অর্ডার #${order.id} বাতিল (Cancelled) করা হয়েছে।`);
+    } else {
+      const updatedOrders = removeOrderById(ordersRef.current, order.id);
+      ordersRef.current = updatedOrders;
+      setOrders(updatedOrders);
+      await saveToCpanelDb('salma_orders', updatedOrders);
+      setActiveOffer(`অর্ডার #${order.id} স্থায়ীভাবে ডিলেট করা হয়েছে।`);
     }
   };
 
@@ -1348,7 +1366,7 @@ export default function App() {
                 className="text-[10px] text-emerald-700 font-bold flex items-center gap-0.5 hover:underline truncate"
               >
                 <MapPin className="w-2.5 h-2.5 text-red-600 shrink-0" />
-                <span className="truncate">{shopLocation.zoneName || 'চান্দনা চৌরাস্তা, গাজীপুর'} • {shopLocation.freeRadiusKm} কি.মি. ফ্রি</span>
+                <span className="truncate">{shopLocation.zoneName || 'চান্দনা চৌরাস্তা, গাজীপুর'} • {shopLocation.freeRadiusKm} কি.মি. এরিয়া</span>
               </button>
             </div>
           </div>
@@ -1591,7 +1609,7 @@ export default function App() {
                       className="bg-emerald-500 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs cursor-pointer"
                     >
                       <Truck className="w-3 h-3" />
-                      <span>গাজীপুরে {shopLocation.freeRadiusKm} কি.মি. ফ্রি ডেলিভারি</span>
+                      <span>গাজীপুরে {shopLocation.freeRadiusKm} কি.মি. লোকাল ডেলিভারি</span>
                     </button>
                   </div>
 
@@ -1617,13 +1635,13 @@ export default function App() {
                   <div className="flex items-center justify-between text-[10px] text-amber-100 pt-0.5">
                     <span className="flex items-center gap-1 font-semibold">
                       <ShieldCheck className="w-3.5 h-3.5 text-amber-300" />
-                      <span>৫০% অগ্রীম পেমেন্ট পলিসি</span>
+                      <span>৩০% অগ্রীম পেমেন্ট পলিসি</span>
                     </span>
                     <button 
                       onClick={() => setShowShopLocationModal(true)}
                       className="underline font-bold text-white cursor-pointer"
                     >
-                      গাজীপুর ফ্রি ডেলিভারি ম্যাপ দেখুন ›
+                      ১ কি.মি. কভারেজ ম্যাপ দেখুন ›
                     </button>
                   </div>
                 </div>
@@ -1802,7 +1820,7 @@ export default function App() {
                     <h2>সালমা ফুড কর্ণার গাজীপুর — অনলাইন খাবার অর্ডার ও হোম ডেলিভারি</h2>
                   </div>
                   <p className="text-[11px] text-gray-600 leading-relaxed">
-                    গাজীপুর সিটি কর্পোরেশন ও আশেপাশের এলাকার খাদ্যপ্রেমীদের জন্য <strong>সালমা ফুড কর্ণার (Salma Food Corner Gazipur)</strong> নিয়ে এসেছে ঘরোয়া স্বাদের ভাত, গরুর কালা ভুনা, খাসির কাচ্চি বিরিয়ানি, চিকেন দম বিরিয়ানি ও ফাস্ট ফুড। আমাদের প্রধান শাখা <strong>চান্দনা চৌরাস্তা (জয়দেবপুর রোড মোড়), গাজীপুর সদর</strong> থেকে ১ কিলোমিটারের মধ্যে সম্পূর্ণ ফ্রি হোম ডেলিভারি দেওয়া হয়।
+                    গাজীপুর সিটি কর্পোরেশন ও আশেপাশের এলাকার খাদ্যপ্রেমীদের জন্য <strong>সালমা ফুড কর্ণার (Salma Food Corner Gazipur)</strong> নিয়ে এসেছে ঘরোয়া স্বাদের ভাত, গরুর কালা ভুনা, খাসির কাচ্চি বিরিয়ানি, চিকেন দম বিরিয়ানি ও ফাস্ট ফুড। আমাদের প্রধান শাখা <strong>চান্দনা চৌরাস্তা (জয়দেবপুর রোড মোড়), গাজীপুর সদর</strong> থেকে চারপাশে ১ কিলোমিটারের মধ্যে দ্রুত হোম ডেলিভারি ও মাত্র ৩০% অগ্রীম পেমেন্টেই অর্ডার সেবা দেওয়া হয়।
                   </p>
                   <div className="flex flex-wrap gap-1 pt-1">
                     {[
@@ -1857,7 +1875,7 @@ export default function App() {
                                 <div className="mt-1 flex items-center gap-1">
                                   <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 border border-emerald-300">
                                     <Truck className="w-3 h-3 text-emerald-600" />
-                                    <span>১ কি.মি. ফ্রি ডেলিভারি জোন ({order.deliveryDistanceKm ? `${order.deliveryDistanceKm} কি.মি.` : 'লোকাল'} • ডেলিভারি ফি: ৳০)</span>
+                                    <span>১ কি.মি. লোকাল ডেলিভারি ({order.deliveryDistanceKm ? `${order.deliveryDistanceKm} কি.মি.` : 'লোকাল'})</span>
                                   </span>
                                 </div>
                               )}
@@ -2308,7 +2326,6 @@ export default function App() {
                         >
                           <option value="খাবার বিক্রয় (Food Sales)">খাবার বিক্রয়</option>
                           <option value="ক্যাটারিং সার্ভিস (Catering)">ক্যাটারিং সার্ভিস</option>
-                          <option value="হোম ডেলিভারি ফি (Delivery)">হোম ডেলিভারি ফি</option>
                           <option value="অন্যান্য আয় (Other)">অন্যান্য আয়</option>
                         </select>
                         <input 
@@ -2965,34 +2982,31 @@ export default function App() {
                         />
                       </div>
 
-                      {/* 1 KM Free Delivery Zone System in Checkout */}
+                      {/* 1 KM Local Service Zone in Checkout (No delivery fee displayed) */}
                       <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-amber-50 border border-emerald-300 rounded-2xl p-3.5 space-y-3 shadow-xs">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-900">
                             <Truck className="w-4 h-4 text-emerald-600" />
-                            <span>১ কি.মি. ফ্রি ডেলিভারি জোন সুবিধা</span>
+                            <span>১ কি.মি. লোকাল ডেলিভারি এরিয়া</span>
                           </div>
                           <button 
                             type="button" 
                             onClick={() => setShowShopLocationModal(true)}
-                            className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 underline flex items-center gap-0.5"
+                            className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 underline flex items-center gap-0.5 cursor-pointer"
                           >
                             <Info className="w-3 h-3" />
                             <span>ম্যাপ ও কভারেজ</span>
                           </button>
                         </div>
 
-                        {/* Live Delivery Status Indicator */}
+                        {/* Live Delivery Coverage Indicator */}
                         {isWithin1Km ? (
                           <div className="bg-emerald-100/90 border border-emerald-400 rounded-xl p-2.5 flex items-start gap-2 text-xs text-emerald-900 shadow-xs">
                             <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
                             <div>
-                              <p className="font-extrabold flex items-center gap-1">
-                                <span>🎉 ফ্রি ডেলিভারি আনলকড!</span>
-                                <span className="bg-emerald-700 text-white text-[9px] px-2 py-0.5 rounded-full font-bold">ডেলিভারি ফি: ৳০</span>
-                              </p>
+                              <p className="font-extrabold">✓ ১ কি.মি. সার্ভিস এরিয়ায় নিশ্চিত!</p>
                               <p className="text-[11px] text-emerald-800 mt-0.5 leading-snug">
-                                আপনার দূরত্ব দোকান থেকে মাত্র <b>{customerDistanceKm} কি.মি.</b> (১ কি.মি. ফ্রি জোনের মধ্যে)!
+                                আপনার অবস্থান দোকান থেকে <b>{customerDistanceKm ?? '১.০'} কি.মি.</b> এর মধ্যে রয়েছে।
                               </p>
                             </div>
                           </div>
@@ -3002,13 +3016,13 @@ export default function App() {
                             <div>
                               <p className="font-bold">দূরত্ব: {customerDistanceKm} কি.মি. (১ কি.মি. এর বেশি)</p>
                               <p className="text-[11px] text-amber-800 mt-0.5">
-                                রেগুলার ডেলিভারি ফি ৳৬০ প্রযোজ্য। ১ কি.মি. এর মধ্যে থাকলে নিচের এলাকা বেছে নিন।
+                                আমরা দোকানের চারপাশে ১ কি.মি. এর মধ্যে দ্রুত ডেলিভারি দিচ্ছি। নিচের এলাকা বেছে নিন।
                               </p>
                             </div>
                           </div>
                         ) : (
                           <div className="bg-white/90 border border-amber-200 rounded-xl p-2 text-xs text-gray-700">
-                            দোকানের চারপাশে ১ কি.মি. এর মধ্যে ডেলিভারি চার্জ সম্পূর্ণ ফ্রি (৳০)!
+                            দোকানের চারপাশে ১ কি.মি. পরিধির মধ্যে আমাদের ডেলিভারি সার্ভিস চালু রয়েছে!
                           </div>
                         )}
 
@@ -3062,7 +3076,7 @@ export default function App() {
 
                       <div>
                         <label className="block text-[11px] font-bold text-gray-600 mb-0.5">
-                          ডেলিভারি ঠিকানা (স্বয়ংক্রিয় ১ কি.মি. যাচাই সহ)
+                          ডেলিভারি ঠিকানা (১ কি.মি. এরিয়া যাচাই সহ)
                         </label>
                         <textarea 
                           placeholder="বাসা নং, রোড, এলাকা (যেমন: চান্দনা চৌরাস্তা, জয়দেবপুর, ভোগড়া বাইপাস, গাজীপুর...)" 
@@ -3077,32 +3091,32 @@ export default function App() {
                           required 
                         />
                         <p className="text-[10px] text-gray-500 mt-0.5">
-                          💡 ঠিকানায় চান্দনা চৌরাস্তা, জয়দেবপুর, শিববাড়ি, ভোগড়া বাইপাস, ডুয়েট, বোর্ড বাজার ইত্যাদি লিখলে স্বয়ংক্রিয়ভাবে গাজীপুর ১ কি.মি. ফ্রি ডেলিভারি যুক্ত হবে।
+                          💡 ঠিকানায় চান্দনা চৌরাস্তা, জয়দেবপুর, শিববাড়ি, ভোগড়া বাইপাস, ডুয়েট, বোর্ড বাজার ইত্যাদি লিখলে স্বয়ংক্রিয়ভাবে ১ কি.মি. সার্ভিস এরিয়া নিশ্চিত হবে।
                         </p>
                       </div>
                       
-                      {/* 50% Advance Payment Policy Notice */}
+                      {/* 30% Advance Payment Policy Notice */}
                       <div className="bg-gradient-to-r from-red-50 to-amber-50 border border-red-300 rounded-xl p-3 space-y-1">
                         <div className="flex items-center gap-1.5 text-xs font-bold text-red-700">
                           <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-                          <span>অগ্রীম পেমেন্ট পলিসি (কমপক্ষে ৫০% আবশ্যক)</span>
+                          <span>অগ্রীম পেমেন্ট পলিসি (কমপক্ষে ৩০% আবশ্যক)</span>
                         </div>
                         <p className="text-[11px] text-gray-700 leading-relaxed">
-                          সালমা ফুড কর্ণারে অর্ডার কনফার্ম করতে <b>কমপক্ষে ৫০% টাকা অগ্রীম পেমেন্ট</b> করতে হবে। অবশিষ্ট টাকা খাবার ডেলিভারির সময় নগদ প্রদেয়।
+                          সালমা ফুড কর্ণারে অর্ডার কনফার্ম করতে <b>কমপক্ষে ৩০% টাকা অগ্রীম পেমেন্ট</b> করতে হবে। অবশিষ্ট টাকা খাবার ডেলিভারির সময় নগদ প্রদেয়।
                         </p>
                       </div>
 
-                      {/* Advance Amount Option (50% vs 100%) */}
+                      {/* Advance Amount Option (30% vs 100%) */}
                       <div className="space-y-1.5">
                         <label className="block text-[11px] font-bold text-gray-700">অগ্রীম পরিশোধের পরিমাণ নির্বাচন করুন</label>
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
-                            onClick={() => setCheckoutForm(prev => ({ ...prev, advanceOption: '50' }))}
-                            className={`p-2.5 rounded-xl border text-left text-xs transition ${checkoutForm.advanceOption === '50' ? 'border-red-600 bg-red-50 text-red-800 ring-2 ring-red-300 font-bold' : 'border-gray-200 bg-white text-gray-600'}`}
+                            onClick={() => setCheckoutForm(prev => ({ ...prev, advanceOption: '30' }))}
+                            className={`p-2.5 rounded-xl border text-left text-xs transition cursor-pointer ${checkoutForm.advanceOption === '30' ? 'border-red-600 bg-red-50 text-red-800 ring-2 ring-red-300 font-bold' : 'border-gray-200 bg-white text-gray-600'}`}
                           >
                             <div className="flex justify-between items-center">
-                              <span>৫০% অগ্রীম</span>
+                              <span>৩০% অগ্রীম</span>
                               <span className="font-extrabold text-red-600">৳ {minAdvance}</span>
                             </div>
                             <p className="text-[10px] text-gray-500 mt-0.5">বাকি ৳ {finalTotal - minAdvance} ডেলিভারিতে</p>
@@ -3111,7 +3125,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => setCheckoutForm(prev => ({ ...prev, advanceOption: '100' }))}
-                            className={`p-2.5 rounded-xl border text-left text-xs transition ${checkoutForm.advanceOption === '100' ? 'border-emerald-600 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-300 font-bold' : 'border-gray-200 bg-white text-gray-600'}`}
+                            className={`p-2.5 rounded-xl border text-left text-xs transition cursor-pointer ${checkoutForm.advanceOption === '100' ? 'border-emerald-600 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-300 font-bold' : 'border-gray-200 bg-white text-gray-600'}`}
                           >
                             <div className="flex justify-between items-center">
                               <span>১০০% ফুল পেমেন্ট</span>
@@ -3181,32 +3195,18 @@ export default function App() {
                 {cart.length > 0 && (
                   <div className="p-4 bg-gray-50 border-t space-y-3">
                     <div className="space-y-1.5 text-xs">
-                      <div className="flex justify-between text-gray-600">
-                        <span>ডেলিভারি ফি:</span>
-                        {isWithin1Km ? (
-                          <span className="text-emerald-700 font-bold flex items-center gap-1.5">
-                            <span className="line-through text-gray-400 font-normal">৳৬০</span>
-                            <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded font-extrabold flex items-center gap-1 border border-emerald-300">
-                              <Truck className="w-3 h-3 text-emerald-600" />
-                              ১ কি.মি. ফ্রি (৳০)
-                            </span>
-                          </span>
-                        ) : (
-                          <span>{deliveryFee === 0 ? 'ফ্রি' : `৳ ${deliveryFee}`}</span>
-                        )}
-                      </div>
                       {(discountApplied > 0 || loyaltyDiscount > 0) && (
                         <div className="flex justify-between text-emerald-600 font-bold">
                           <span>ডিসকাউন্ট:</span>
                           <span>-৳ {discountApplied + loyaltyDiscount}</span>
                         </div>
                       )}
-                      <div className="flex justify-between text-sm font-extrabold border-t pt-1.5">
+                      <div className="flex justify-between text-sm font-extrabold pt-0.5">
                         <span>সর্বমোট বিল:</span>
                         <span className="text-gray-900">৳ {finalTotal}</span>
                       </div>
                       <div className="flex justify-between text-xs font-bold text-red-600 bg-red-50 p-2 rounded-lg border border-red-200">
-                        <span>এখন অগ্রীম প্রদেয় ({checkoutForm.advanceOption === '100' ? '১০০%' : '৫০%'}):</span>
+                        <span>এখন অগ্রীম প্রদেয় ({checkoutForm.advanceOption === '100' ? '১০০%' : '৩০%'}):</span>
                         <span className="text-sm font-extrabold">৳ {advanceAmount}</span>
                       </div>
                       {dueAmount > 0 && (
@@ -3272,7 +3272,7 @@ export default function App() {
             {orderSuccessModal.isFreeDeliveryWithin1km && (
               <div className="bg-emerald-100 text-emerald-800 p-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border border-emerald-300">
                 <Truck className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>১ কি.মি. ফ্রি ডেলিভারি সুবিধা কার্যকর (ডেলিভারি ফি: ৳০ সম্পূর্ণ ফ্রি!)</span>
+                <span>১ কি.মি. লোকাল সার্ভিস এরিয়ায় অর্ডারটি গৃহীত হয়েছে!</span>
               </div>
             )}
 
@@ -3319,7 +3319,7 @@ export default function App() {
                   <Truck className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-extrabold text-base sm:text-lg">১ কি.মি. ফ্রি ডেলিভারি জোন (গাজীপুর)</h3>
+                  <h3 className="font-extrabold text-base sm:text-lg">১ কি.মি. সার্ভিস এরিয়া (গাজীপুর)</h3>
                   <p className="text-[11px] text-amber-100">সালমা ফুড কর্ণার, চান্দনা চৌরাস্তা, গাজীপুর</p>
                 </div>
               </div>
@@ -3341,10 +3341,7 @@ export default function App() {
                 <p className="text-gray-700 font-semibold">{SHOP_LOCATION.address}</p>
                 <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
                   <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full border border-emerald-300">
-                    ফ্রি ডেলিভারি ব্যাসার্ধ: ১.০ কিলোমিটার
-                  </span>
-                  <span className="bg-red-100 text-red-800 font-bold px-2 py-0.5 rounded-full border border-red-200">
-                    ডেলিভারি ফি: ৳ ০ (সম্পূর্ণ ফ্রি)
+                    ডেলিভারি সার্ভিস ব্যাসার্ধ: ১.০ কিলোমিটার
                   </span>
                 </div>
               </div>
@@ -3355,7 +3352,7 @@ export default function App() {
                   {/* Outer circle: 1 km radius */}
                   <div className="absolute inset-0 rounded-full border-2 border-dashed border-emerald-500/60 animate-pulse bg-emerald-500/10 flex items-center justify-center">
                     <span className="absolute top-1 text-[9px] text-emerald-400 font-bold bg-gray-900/80 px-2 py-0.5 rounded-full">
-                      ১ কি.মি. ফ্রি ডেলিভারি বাউন্ডারি
+                      ১ কি.মি. লোকাল সার্ভিস বাউন্ডারি
                     </span>
                   </div>
                   {/* Inner 0.5km ring */}
@@ -3374,7 +3371,7 @@ export default function App() {
                 </div>
 
                 <p className="text-[11px] text-gray-300">
-                  দোকানের কেন্দ্র থেকে চারপাশে ১ কি.মি. দূরত্বের মধ্যে সকল অর্ডার স্বয়ংক্রিয়ভাবে ফ্রি ডেলিভারির আওতায় আসবে।
+                  দোকানের কেন্দ্র থেকে চারপাশে ১ কি.মি. দূরত্বের মধ্যে আমাদের দ্রুত হোম ডেলিভারি সার্ভিস চালু রয়েছে।
                 </p>
               </div>
 
@@ -3427,7 +3424,7 @@ export default function App() {
                       : 'bg-amber-100 text-amber-900 border-amber-300'
                   }`}>
                     {isWithin1Km 
-                      ? `✓ আপনার দূরত্ব: ${customerDistanceKm} কি.মি. (অভিনন্দন! আপনি ১ কি.মি. ফ্রি জোনে আছেন - ডেলিভারি ফি ৳০)` 
+                      ? `✓ আপনার দূরত্ব: ${customerDistanceKm} কি.মি. (আপনি ১ কি.মি. সার্ভিস এরিয়ার মধ্যে আছেন)` 
                       : `📍 আপনার দূরত্ব: ${customerDistanceKm} কি.মি. (১ কি.মি. এর চেয়ে বেশি দূরত্ব)`}
                   </div>
                 )}
@@ -3744,7 +3741,7 @@ export default function App() {
               </div>
               <div className="text-left">
                 <p className="text-xs font-black">সর্বমোট: ৳ {subtotal}</p>
-                <p className="text-[10px] text-amber-200">৫০% অগ্রীমে অর্ডার কনফার্ম করুন</p>
+                <p className="text-[10px] text-amber-200">৩০% অগ্রীমে অর্ডার কনফার্ম করুন</p>
               </div>
             </div>
             <div className="flex items-center gap-1 bg-white text-red-700 font-black text-xs px-3 py-1.5 rounded-xl shadow-xs">
@@ -3760,7 +3757,7 @@ export default function App() {
         <nav className="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto bg-white/95 backdrop-blur-md border-t border-amber-200/80 z-40 px-2 py-1.5 flex justify-around items-center shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
           {[
             { id: 'menu', label: 'মেনু', icon: Utensils, action: () => setPublicTab('menu'), active: publicTab === 'menu' && !isCartOpen && !isChatOpen },
-            { id: 'tracker', label: 'ট্র্যাকিং', icon: Truck, badge: customerOrders.filter(o => o.status !== 'Delivered').length, action: () => setPublicTab('tracker'), active: publicTab === 'tracker' && !isCartOpen },
+            { id: 'tracker', label: 'ট্র্যাকিং', icon: Truck, badge: countActiveOrders(customerOrders), action: () => setPublicTab('tracker'), active: publicTab === 'tracker' && !isCartOpen },
             { id: 'cart', label: 'কার্ট', icon: ShoppingBag, badge: cart.reduce((s, i) => s + i.quantity, 0), action: () => setIsCartOpen(true), active: isCartOpen },
             { id: 'profile', label: 'প্রোফাইল', icon: User, action: () => setPublicTab('profile'), active: publicTab === 'profile' && !isCartOpen },
             { id: 'reviews', label: 'রিভিউ', icon: Star, action: () => setPublicTab('reviews'), active: publicTab === 'reviews' && !isCartOpen }
@@ -3790,7 +3787,7 @@ export default function App() {
           {[
             { id: 'dashboard', label: 'হোম', icon: TrendingUp },
             { id: 'menu', label: 'মেনু', icon: Utensils },
-            { id: 'orders', label: 'অর্ডার', icon: Truck, badge: orders.filter(o => o.status !== 'Delivered').length },
+            { id: 'orders', label: 'অর্ডার', icon: Truck, badge: countActiveOrders(orders) },
             { id: 'ledger', label: 'POS হিসাব', icon: BarChart2 },
             { id: 'location', label: 'লোকেশন', icon: MapPin }
           ].map(item => {
@@ -3815,6 +3812,52 @@ export default function App() {
             );
           })}
         </nav>
+      )}
+
+      {/* ================= IN-APP ORDER CANCEL / DELETE CONFIRMATION MODAL ================= */}
+      {pendingOrderConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-[380px] w-full p-5 shadow-2xl border border-red-200 space-y-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                {pendingOrderConfirm.type === 'delete' ? <Trash2 className="w-5 h-5" /> : <X className="w-5 h-5" />}
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-gray-900">
+                  {pendingOrderConfirm.type === 'delete'
+                    ? `অর্ডার #${pendingOrderConfirm.order.id} ডিলেট করবেন?`
+                    : `অর্ডার #${pendingOrderConfirm.order.id} ক্যান্সেল করবেন?`}
+                </h3>
+                <p className="text-[11px] text-gray-500">
+                  {pendingOrderConfirm.order.customerName} ({pendingOrderConfirm.order.phone})
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-700 bg-amber-50 border border-amber-200 rounded-2xl p-3 leading-relaxed">
+              {pendingOrderConfirm.type === 'delete'
+                ? 'অর্ডারটি ডাটাবেজ থেকে স্থায়ীভাবে মুছে যাবে। তবে গ্রাহকের প্রোফাইল ও অ্যাকাউন্ট সংরক্ষিত থাকবে।'
+                : 'অর্ডারটি বাতিল (Cancelled) হিসেবে চিহ্নিত হবে এবং গ্রাহকের প্রোফাইল সংরক্ষিত থাকবে।'}
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingOrderConfirm(null)}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-2.5 rounded-xl text-xs cursor-pointer transition"
+              >
+                না, থাকুক
+              </button>
+              <button
+                type="button"
+                onClick={executePendingOrderConfirm}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 rounded-xl text-xs shadow cursor-pointer transition"
+              >
+                {pendingOrderConfirm.type === 'delete' ? 'হ্যাঁ, ডিলেট করুন' : 'হ্যাঁ, ক্যান্সেল করুন'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
