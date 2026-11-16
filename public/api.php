@@ -23,6 +23,11 @@ $DB_NAME = '';
 $DB_USER = '';
 $DB_PASS = '';
 
+$inlineDbHost = trim((string)$DB_HOST);
+$inlineDbName = trim((string)$DB_NAME);
+$inlineDbUser = trim((string)$DB_USER);
+$inlineDbPass = (string)$DB_PASS;
+
 // db_config.php লোড করা (public_html অথবা তার উপরের ফোল্ডার থেকে, যাতে Git Push করলেও না মুছে যায়)
 $configFileLocal = __DIR__ . '/db_config.php';
 $configFileParent = dirname(__DIR__) . '/salma_db_config.php';
@@ -35,6 +40,34 @@ if (file_exists($configFileLocal)) {
 } elseif (file_exists($configFileParent)) {
     @include $configFileParent;
     @copy($configFileParent, $configFileLocal);
+}
+
+// যদি কেউ db_config.php-তে define('DB_NAME', ...) বা ছোট হাতের $db_name ব্যবহার করে থাকেন তাও সাপোর্ট করবে
+if (empty($DB_NAME) && defined('DB_NAME')) $DB_NAME = constant('DB_NAME');
+if (empty($DB_USER) && defined('DB_USER')) $DB_USER = constant('DB_USER');
+if (empty($DB_PASS) && defined('DB_PASS')) $DB_PASS = constant('DB_PASS');
+if (empty($DB_HOST) && defined('DB_HOST')) $DB_HOST = constant('DB_HOST');
+if (empty($DB_NAME) && !empty($db_name)) $DB_NAME = $db_name;
+if (empty($DB_USER) && !empty($db_user)) $DB_USER = $db_user;
+if (empty($DB_PASS) && isset($db_pass)) $DB_PASS = $db_pass;
+if (empty($DB_HOST) && !empty($db_host)) $DB_HOST = $db_host;
+
+// যদি ইউজার সরাসরি api.php ফাইলের উপরে ডাটাবেস তথ্য বসিয়ে থাকেন, তবে সেটি প্রাধান্য পাবে এবং স্বয়ংক্রিয়ভাবে db_config.php-তে ব্যাকআপ হয়ে থাকবে
+if ($inlineDbName !== '' && $inlineDbUser !== '' && $inlineDbName !== 'cpaneluser_salmafood') {
+    $DB_HOST = $inlineDbHost ?: 'localhost';
+    $DB_NAME = $inlineDbName;
+    $DB_USER = $inlineDbUser;
+    $DB_PASS = $inlineDbPass;
+
+    $autoPhpConfig = "<?php\n"
+        . "\$DB_HOST = " . var_export($DB_HOST, true) . ";\n"
+        . "\$DB_NAME = " . var_export($DB_NAME, true) . ";\n"
+        . "\$DB_USER = " . var_export($DB_USER, true) . ";\n"
+        . "\$DB_PASS = " . var_export($DB_PASS, true) . ";\n";
+    if (!file_exists($configFileLocal)) {
+        @file_put_contents($configFileLocal, $autoPhpConfig, LOCK_EX);
+    }
+    @file_put_contents($configFileParent, $autoPhpConfig, LOCK_EX);
 }
 
 // সার্ভারের ফাইল-বেসড ব্যাকআপ ডাটাবেস (public_html এবং parent ফোল্ডারে দ্বৈত ব্যাকআপ)
@@ -133,20 +166,35 @@ function writeServerDbFile($localFile, $data, $backupFile = null) {
     }
 }
 
-mysqli_report(MYSQLI_REPORT_OFF);
+function safeSubstr($str, $len) {
+    $s = (string)$str;
+    if (function_exists('mb_substr')) {
+        return mb_substr($s, 0, $len, 'UTF-8');
+    }
+    return substr($s, 0, $len);
+}
+
+@mysqli_report(MYSQLI_REPORT_OFF);
 $conn = null;
 $mysqlConnected = false;
 $mysqlError = null;
 
 if (!empty($DB_NAME) && !empty($DB_USER) && $DB_NAME !== 'cpaneluser_salmafood') {
-    $conn = @new mysqli($DB_HOST ?: 'localhost', $DB_USER, $DB_PASS, $DB_NAME);
-    if ($conn && !$conn->connect_error) {
-        $conn->set_charset('utf8mb4');
-        $conn->query("SET SESSION sql_mode = ''");
-        $mysqlConnected = true;
-    } else {
-        $mysqlError = $conn ? $conn->connect_error : 'Connection failed';
+    try {
+        $conn = @new mysqli($DB_HOST ?: 'localhost', $DB_USER, $DB_PASS, $DB_NAME);
+        if ($conn && !$conn->connect_error) {
+            @$conn->set_charset('utf8mb4');
+            @$conn->query("SET SESSION sql_mode = ''");
+            $mysqlConnected = true;
+        } else {
+            $mysqlError = $conn ? $conn->connect_error : 'MySQL connection failed';
+        }
+    } catch (\Throwable $e) {
+        $mysqlConnected = false;
+        $mysqlError = $e->getMessage();
     }
+} else {
+    $mysqlError = 'cPanel-এ public_html/db_config.php অথবা api.php ফাইলে এখনো Database Name, Username ও Password বসানো হয়নি।';
 }
 
 function ensureColumn($conn, $table, $column, $definition) {
@@ -306,6 +354,9 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
               ON DUPLICATE KEY UPDATE `store_value` = '$valEscaped'");
 
     $parsed = json_decode($valJson, true);
+    if (is_string($parsed)) {
+        $parsed = json_decode($parsed, true);
+    }
     if (!is_array($parsed)) return !empty($errors) ? implode(' | ', $errors) : null;
 
     if ($rawKey === 'salma_menu_items') {
@@ -315,7 +366,7 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $id = $conn->real_escape_string((string)($item['id'] ?? ('food-' . uniqid())));
             $nameBn = $conn->real_escape_string((string)($item['nameBn'] ?? ''));
             $nameEn = $conn->real_escape_string((string)($item['nameEn'] ?? ''));
-            $cat = $conn->real_escape_string(mb_substr((string)($item['category'] ?? 'popular'), 0, 95));
+            $cat = $conn->real_escape_string(safeSubstr((string)($item['category'] ?? 'popular'), 95));
             $price = floatval($item['price'] ?? 0);
             $origPrice = isset($item['originalPrice']) && $item['originalPrice'] !== '' ? floatval($item['originalPrice']) : 'NULL';
             $image = $conn->real_escape_string((string)($item['image'] ?? ''));
@@ -345,8 +396,8 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $disc = floatval($ord['discount'] ?? 0);
             $adv = floatval($ord['advancePaid'] ?? 0);
             $due = floatval($ord['dueAmount'] ?? 0);
-            $pm = $conn->real_escape_string(mb_substr((string)($ord['paymentMethod'] ?? ''), 0, 95));
-            $apm = $conn->real_escape_string(mb_substr((string)($ord['advancePaymentMethod'] ?? 'bKash'), 0, 45));
+            $pm = $conn->real_escape_string(safeSubstr((string)($ord['paymentMethod'] ?? ''), 95));
+            $apm = $conn->real_escape_string(safeSubstr((string)($ord['advancePaymentMethod'] ?? 'bKash'), 45));
             $trx = $conn->real_escape_string((string)($ord['transactionId'] ?? ''));
             $pStat = $conn->real_escape_string((string)($ord['paymentStatus'] ?? ''));
             $stat = $conn->real_escape_string((string)($ord['status'] ?? 'Placed'));
@@ -369,7 +420,7 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
             $cat = $conn->real_escape_string((string)($le['category'] ?? ''));
             $amt = floatval($le['amount'] ?? 0);
             $eDate = $conn->real_escape_string((string)($le['date'] ?? date('Y-m-d')));
-            $pm = $conn->real_escape_string(mb_substr((string)($le['paymentMethod'] ?? 'Cash'), 0, 95));
+            $pm = $conn->real_escape_string(safeSubstr((string)($le['paymentMethod'] ?? 'Cash'), 95));
             $note = $conn->real_escape_string((string)($le['note'] ?? ''));
 
             $execSql("REPLACE INTO `ledger_entries` (`id`,`voucher_no`,`type`,`category`,`amount`,`entry_date`,`payment_method`,`note`)
@@ -569,27 +620,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
     $data = $fileData;
 
     if ($mysqlConnected && $conn) {
-        $result = $conn->query("SELECT `store_key`, `store_value` FROM `salma_app_store`");
-        $mysqlKeys = [];
+        $result = @$conn->query("SELECT `store_key`, `store_value` FROM `salma_app_store`");
+        $mysqlData = [];
         if ($result && $result->num_rows > 0) {
             while ($row = $result->fetch_assoc()) {
                 $k = $row['store_key'];
                 $decoded = json_decode($row['store_value'], true);
-                $mysqlVal = ($decoded !== null) ? $decoded : $row['store_value'];
-                $mysqlKeys[$k] = true;
-
-                // MySQL-এ সংরক্ষিত বর্তমান ডাটা (যেমন সব অর্ডার ডিলেট করলে []) প্রাধান্য পাবে
-                $data[$k] = $mysqlVal;
+                $mysqlData[$k] = ($decoded !== null) ? $decoded : $row['store_value'];
             }
         }
 
-        // যে কী-গুলো ফাইলে আছে কিন্তু এখনো MySQL-এ নেই সেগুলো স্বয়ংক্রিয়ভাবে MySQL টেবিলে সিঙ্ক করা
-        foreach ($fileData as $k => $v) {
+        $fileMeta = (isset($fileData['_salma_meta']) && is_array($fileData['_salma_meta'])) ? $fileData['_salma_meta'] : [];
+        $mysqlMeta = (isset($mysqlData['_salma_meta']) && is_array($mysqlData['_salma_meta'])) ? $mysqlData['_salma_meta'] : [];
+        $mergedMeta = $mysqlMeta;
+
+        // ১) যেসব কী MySQL-এ আছে সেগুলো লোড করা
+        foreach ($mysqlData as $k => $mVal) {
             if ($k === '_salma_meta') continue;
-            if (!isset($mysqlKeys[$k]) && isNonEmptyVal($v)) {
-                $vJson = is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE);
+            $data[$k] = $mVal;
+        }
+
+        // ২) যেসব কী ফাইলে (salma_server_db.json) আছে কিন্তু MySQL-এ নেই অথবা ফাইলে নতুন টাইমস্ট্যাম্প আছে সেগুলো MySQL টেবিলে সিঙ্ক করা
+        foreach ($fileData as $k => $fVal) {
+            if ($k === '_salma_meta') continue;
+            $fTs = isset($fileMeta[$k]) ? floatval($fileMeta[$k]) : 0;
+            $mTs = isset($mysqlMeta[$k]) ? floatval($mysqlMeta[$k]) : 0;
+            $missingInMysql = !array_key_exists($k, $mysqlData);
+            $fileIsNewer = ($fTs > $mTs) || ($missingInMysql && isNonEmptyVal($fVal)) || (!isNonEmptyVal($mysqlData[$k] ?? null) && isNonEmptyVal($fVal) && $mTs <= 0);
+
+            if ($fileIsNewer) {
+                $data[$k] = $fVal;
+                if ($fTs > 0) {
+                    $mergedMeta[$k] = $fTs;
+                }
+                $vJson = is_string($fVal) ? $fVal : json_encode($fVal, JSON_UNESCAPED_UNICODE);
                 syncKeyToRelationalTables($conn, $k, $vJson);
             }
+        }
+
+        // ৩) যদি কোনো রিলেশনাল টেবিল (menu_items, orders, ledger_entries, due_entries, customers) খালি থাকে কিন্তু ডাটা উপস্থিত থাকে, তবে স্বয়ংক্রিয়ভাবে পপুলেট করা
+        $relationalMap = [
+            'salma_menu_items' => 'menu_items',
+            'salma_orders'     => 'orders',
+            'salma_ledger'     => 'ledger_entries',
+            'salma_due_ledger' => 'due_entries',
+            'salma_customers'  => 'customers'
+        ];
+        foreach ($relationalMap as $storeKey => $tableName) {
+            if (isset($data[$storeKey]) && isNonEmptyVal($data[$storeKey])) {
+                $cntRes = @$conn->query("SELECT COUNT(*) AS cnt FROM `$tableName`");
+                $cntRow = $cntRes ? $cntRes->fetch_assoc() : null;
+                if (!$cntRow || intval($cntRow['cnt']) === 0) {
+                    $vJson = is_string($data[$storeKey]) ? $data[$storeKey] : json_encode($data[$storeKey], JSON_UNESCAPED_UNICODE);
+                    syncKeyToRelationalTables($conn, $storeKey, $vJson);
+                }
+            }
+        }
+
+        if (!empty($mergedMeta)) {
+            $data['_salma_meta'] = $mergedMeta;
         }
     }
 

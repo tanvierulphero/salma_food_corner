@@ -193,6 +193,10 @@ export default function AdminApp() {
   }, [menuItems]);
 
   useEffect(() => {
+    localStorage.setItem('salma_menu_categories', JSON.stringify(menuCategories));
+  }, [menuCategories]);
+
+  useEffect(() => {
     localStorage.setItem('salma_orders', JSON.stringify(orders));
   }, [orders]);
 

@@ -54,9 +54,9 @@ export function resolveServerPullAction(params: ReconcileServerPullParams): Serv
     }
   }
 
-  // Server has never stored this key yet -> preserve and push non-empty local data on initial boot.
+  // Server has never stored this key yet -> preserve and push non-empty local data.
   if (!keyPresentInServer) {
-    if (isInitialBoot && isNonEmptySerializedValue(localSerialized)) {
+    if (isNonEmptySerializedValue(localSerialized)) {
       return 'push-local';
     }
     return 'skip';
@@ -69,12 +69,12 @@ export function resolveServerPullAction(params: ReconcileServerPullParams): Serv
   // If server holds an empty [] / {} while local browser holds real non-empty data:
   // Apply the empty list ONLY when server has a newer explicit mutation timestamp (or no explicit
   // uninitialized boot mismatch) — i.e., if serverMetaTs > localSyncedMetaTs (Admin explicitly deleted orders).
-  // If serverMetaTs === 0 and local has unsynced data on boot, preserve local data instead of wiping it.
+  // If serverMetaTs === 0 and local has unsynced data, preserve local data instead of wiping it.
   if (!isNonEmptySerializedValue(serverSerialized) && isNonEmptySerializedValue(localSerialized)) {
     if (serverMetaTs > localSyncedMetaTs) {
       return 'apply';
     }
-    if (isInitialBoot && serverMetaTs === 0) {
+    if (serverMetaTs === 0) {
       return 'push-local';
     }
   }

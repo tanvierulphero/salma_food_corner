@@ -190,8 +190,7 @@ async function sendSaveRequest(key: string, strValue: string, force = false): Pr
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body,
-      keepalive: body.length < 60000
+      body
     });
 
     const data = await res.json().catch(() => null);
@@ -603,6 +602,7 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
       ...Object.keys(serverData)
     ]);
 
+    const keysToPush: Array<{ key: string; val: string }> = [];
     isRemoteApplying = true;
     try {
       const nowMs = Date.now();
@@ -636,7 +636,7 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
         });
 
         if (action === 'push-local' && localSerialized && isNonEmptySerializedValue(localSerialized)) {
-          sendSaveRequest(key, localSerialized, true);
+          keysToPush.push({ key, val: localSerialized });
         } else if (action === 'apply' && serverSerialized !== undefined) {
           if (localSerialized && localSerialized !== serverSerialized) {
             capturePreOverwriteAutoBackup(key, localSerialized);
@@ -651,6 +651,10 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
       }
     } finally {
       isRemoteApplying = false;
+    }
+
+    for (const item of keysToPush) {
+      await sendSaveRequest(item.key, item.val, true);
     }
   } catch {
     // Ignore transient network errors
@@ -917,13 +921,23 @@ export async function initSqlDatabaseSync(): Promise<void> {
       return;
     }
 
-    // Skip initial mount default writes (empty [] / {} or first 1200ms after boot) when previousValue is undefined so page load never overwrites server DB
+    // Skip initial mount empty default writes ('[]' or '{}') when previousValue is undefined so page load never overwrites server DB
     if (
       previousValue === undefined &&
       SYNCED_KEYS.has(key) &&
-      (strValue === '[]' || strValue === '{}' || (syncBootDoneAt > 0 && Date.now() - syncBootDoneAt < 1200))
+      (strValue === '[]' || strValue === '{}')
     ) {
       memoryStore.set(key, strValue);
+      return;
+    }
+    if (
+      previousValue === undefined &&
+      SYNCED_KEYS.has(key) &&
+      syncBootDoneAt > 0 &&
+      Date.now() - syncBootDoneAt < 1200
+    ) {
+      memoryStore.set(key, strValue);
+      persistToNativeStorage(key, strValue);
       return;
     }
 
@@ -967,6 +981,12 @@ export async function initSqlDatabaseSync(): Promise<void> {
   // Load initial database state from cPanel server BEFORE mounting React app
   await pullFromServer(true);
   syncBootDoneAt = Date.now();
+
+  // After React mounts and populates default menu/categories/location in memoryStore,
+  // reconcile once so any keys missing on the server/phpMyAdmin are pushed automatically
+  setTimeout(() => {
+    pullFromServer(false);
+  }, 1500);
 
   // Keep all tabs/devices synced with cPanel server (guarded against overwriting recent saves)
   window.addEventListener('focus', () => {
