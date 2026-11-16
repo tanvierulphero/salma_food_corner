@@ -735,6 +735,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
 }
 
 // ============================================================================
+// ১.খ সাইটের ওয়েবহুক এন্ডপয়েন্ট (GET/POST /api.php?action=webhook অথবা /api.php?action=deploy)
+// ============================================================================
+if ($action === 'webhook' || $action === 'deploy') {
+    $payload = is_array($jsonPayload) ? $jsonPayload : (!empty($_POST) ? $_POST : $_GET);
+
+    // যদি GitHub Webhook থেকে Push ইভেন্ট আসে বা action=deploy কল করা হয়
+    $isGithubPush = ($action === 'deploy') || isset($_SERVER['HTTP_X_GITHUB_EVENT']) || (isset($payload['ref']) && isset($payload['repository']));
+    $deployOutput = null;
+
+    if ($isGithubPush && function_exists('exec')) {
+        // ডাটা ও কনফিগ নিরাপদ ব্যাকআপে রাখা
+        if (file_exists($serverDbFile)) @copy($serverDbFile, $serverDbFileBackup);
+        if (file_exists($configFileLocal)) @copy($configFileLocal, $configFileParent);
+
+        $repoDir = __DIR__;
+        if (!is_dir($repoDir . '/.git') && is_dir(dirname(__DIR__) . '/.git')) {
+            $repoDir = dirname(__DIR__);
+        }
+        $out = [];
+        @exec("cd " . escapeshellarg($repoDir) . " && git pull origin main 2>&1 || git pull origin master 2>&1", $out);
+        if (is_dir($repoDir . '/dist')) {
+            @exec("cp -rf " . escapeshellarg($repoDir . '/dist/.') . " " . escapeshellarg(__DIR__ . '/') . " 2>&1", $out);
+        }
+        // ব্যাকআপ থেকে কনফিগ ও ডাটাবেস ফাইল পুনরায় নিশ্চিত করা
+        if (!file_exists($configFileLocal) && file_exists($configFileParent)) {
+            @copy($configFileParent, $configFileLocal);
+        }
+        if (!file_exists($serverDbFile) && file_exists($serverDbFileBackup)) {
+            @copy($serverDbFileBackup, $serverDbFile);
+        }
+        $deployOutput = implode("\n", $out);
+    }
+
+    // যদি পেমেন্ট গেটওয়ে বা অর্ডার স্ট্যাটাস ওয়েবহুক আসে (orderId ও status/paymentStatus থাকলে অর্ডার আপডেট করবে)
+    $orderUpdated = false;
+    $targetOrderId = $payload['orderId'] ?? ($payload['order_id'] ?? ($payload['invoice_id'] ?? null));
+    if ($targetOrderId) {
+        $serverData = readServerDbFile($serverDbFile, $serverDbFileBackup);
+        if (isset($serverData['salma_orders']) && is_array($serverData['salma_orders'])) {
+            foreach ($serverData['salma_orders'] as &$ord) {
+                if (is_array($ord) && isset($ord['id']) && (string)$ord['id'] === (string)$targetOrderId) {
+                    if (!empty($payload['status'])) $ord['status'] = (string)$payload['status'];
+                    if (!empty($payload['paymentStatus'])) $ord['paymentStatus'] = (string)$payload['paymentStatus'];
+                    if (!empty($payload['transactionId']) || !empty($payload['trxID'])) {
+                        $ord['transactionId'] = (string)($payload['transactionId'] ?? $payload['trxID']);
+                    }
+                    $orderUpdated = true;
+                }
+            }
+            unset($ord);
+            if ($orderUpdated) {
+                $serverData['_salma_meta']['salma_orders'] = round(microtime(true) * 1000);
+                writeServerDbFile($serverDbFile, $serverData, $serverDbFileBackup);
+                if ($mysqlConnected && $conn) {
+                    syncKeyToRelationalTables($conn, 'salma_orders', json_encode($serverData['salma_orders'], JSON_UNESCAPED_UNICODE));
+                }
+            }
+        }
+    }
+
+    echo json_encode([
+        'status' => 'ok',
+        'webhook' => 'active',
+        'action' => $action,
+        'mysqlConnected' => $mysqlConnected,
+        'orderUpdated' => $orderUpdated,
+        'deployOutput' => $deployOutput,
+        'timestamp' => round(microtime(true) * 1000)
+    ], JSON_UNESCAPED_UNICODE);
+    if ($conn) $conn->close();
+    exit;
+}
+
+// ============================================================================
 // ২. সার্ভারে ও phpMyAdmin টেবিলে ডাটা সেভ করা (POST /api.php?action=save)
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
