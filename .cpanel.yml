@@ -5,6 +5,7 @@ deployment:
     - export BACKUPROOT=/home/$(whoami)
     - '[ -f "$DEPLOYPATH/salma_server_db.json" ] && cp -f "$DEPLOYPATH/salma_server_db.json" "$BACKUPROOT/salma_server_db.json" || true'
     - '[ -f "$DEPLOYPATH/db_config.php" ] && cp -f "$DEPLOYPATH/db_config.php" "$BACKUPROOT/salma_db_config.php" || true'
+    - php -r '$f=getenv("DEPLOYPATH")."/api.php";if(file_exists($f)){$c=file_get_contents($f);if(preg_match("/\\\$DB_NAME\s*=\s*[\x27\"]([^\x27\"]+)[\x27\"]/",$c,$n)&&!empty($n[1])){preg_match("/\\\$DB_HOST\s*=\s*[\x27\"]([^\x27\"]*)[\x27\"]/",$c,$h);preg_match("/\\\$DB_USER\s*=\s*[\x27\"]([^\x27\"]*)[\x27\"]/",$c,$u);preg_match("/\\\$DB_PASS\s*=\s*[\x27\"]([^\x27\"]*)[\x27\"]/",$c,$p);$cfg="<?php\n\$DB_HOST=".var_export($h[1]?:"localhost",true).";\n\$DB_NAME=".var_export($n[1],true).";\n\$DB_USER=".var_export($u[1]?:"",true).";\n\$DB_PASS=".var_export($p[1]?:"",true).";\n";file_put_contents(getenv("DEPLOYPATH")."/db_config.php",$cfg);file_put_contents(getenv("BACKUPROOT")."/salma_db_config.php",$cfg);}}' || true
     - /bin/rm -f dist/salma_server_db.json dist/db_config.php
     - /bin/cp -Rf dist/* $DEPLOYPATH
     - /bin/cp -f public/api.php $DEPLOYPATH/api.php

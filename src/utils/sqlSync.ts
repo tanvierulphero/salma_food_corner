@@ -596,6 +596,8 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
       result.data && typeof result.data === 'object' ? result.data : {};
     const serverMeta: Record<string, number> =
       result.meta && typeof result.meta === 'object' ? result.meta : {};
+    const tableCounts: Record<string, number> =
+      result.tableCounts && typeof result.tableCounts === 'object' ? result.tableCounts : {};
 
     const keysToReconcile = new Set<string>([
       ...SYNCED_KEYS,
@@ -635,7 +637,18 @@ export async function pullFromServer(isInitialBoot = false): Promise<void> {
           localSyncedMetaTs
         });
 
-        if (action === 'push-local' && localSerialized && isNonEmptySerializedValue(localSerialized)) {
+        const mysqlTableIsEmpty =
+          Boolean(result.mysqlConnected) &&
+          Object.prototype.hasOwnProperty.call(tableCounts, key) &&
+          Number(tableCounts[key]) === 0 &&
+          Boolean(localSerialized && isNonEmptySerializedValue(localSerialized)) &&
+          !(serverMetaTs > localSyncedMetaTs && !isNonEmptySerializedValue(serverSerialized));
+
+        if (
+          (action === 'push-local' || mysqlTableIsEmpty) &&
+          localSerialized &&
+          isNonEmptySerializedValue(localSerialized)
+        ) {
           keysToPush.push({ key, val: localSerialized });
         } else if (action === 'apply' && serverSerialized !== undefined) {
           if (localSerialized && localSerialized !== serverSerialized) {

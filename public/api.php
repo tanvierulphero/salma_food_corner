@@ -271,6 +271,8 @@ function initMysqlTables($conn) {
     @$conn->query("ALTER TABLE `orders` MODIFY `status` varchar(50) NOT NULL DEFAULT 'Placed';");
     @$conn->query("ALTER TABLE `orders` MODIFY `order_date` varchar(30) NOT NULL;");
     @$conn->query("ALTER TABLE `orders` MODIFY `payment_method` varchar(100) DEFAULT NULL;");
+    @$conn->query("ALTER TABLE `orders` MODIFY `advance_payment_method` varchar(50) DEFAULT 'bKash';");
+    @$conn->query("ALTER TABLE `orders` MODIFY `payment_status` varchar(100) DEFAULT NULL;");
     ensureColumn($conn, 'orders', 'advance_payment_method', "varchar(50) DEFAULT 'bKash'");
     ensureColumn($conn, 'orders', 'transaction_id', "varchar(100) DEFAULT NULL");
     ensureColumn($conn, 'orders', 'payment_status', "varchar(100) DEFAULT NULL");
@@ -409,6 +411,15 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
 
             $execSql("REPLACE INTO `orders` (`id`,`customer_name`,`phone`,`address`,`items_json`,`total_amount`,`discount`,`advance_paid`,`due_amount`,`payment_method`,`advance_payment_method`,`transaction_id`,`payment_status`,`status`,`order_date`,`created_at_str`,`loyalty_points_earned`,`delivery_distance_km`,`is_free_delivery`)
                 VALUES ('$id','$cName','$phone','$addr','$itemsJson',$total,$disc,$adv,$due,'$pm','$apm','$trx','$pStat','$stat','$oDate','$cAt',$pts,$dist,$free)");
+
+            if ($phone !== '' || $cName !== '') {
+                $custKey = $phone !== '' ? $phone : ('ord-' . $id);
+                $execSql("INSERT INTO `customers` (`phone`,`name`,`address`,`loyalty_points`,`registered_at`,`total_orders`,`total_spent`)
+                    VALUES ('$custKey','$cName','$addr',$pts,'$oDate',1,$total)
+                    ON DUPLICATE KEY UPDATE
+                    `name` = IF(`name` = '', VALUES(`name`), `name`),
+                    `address` = IF(`address` = '', VALUES(`address`), `address`)");
+            }
         }
     } elseif ($rawKey === 'salma_ledger') {
         $execSql("DELETE FROM `ledger_entries`");
@@ -447,12 +458,20 @@ function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
 
             $execSql("REPLACE INTO `due_entries` (`id`,`voucher_no`,`customer_name`,`customer_phone`,`order_id`,`total_amount`,`paid_amount`,`due_amount`,`entry_date`,`due_date`,`items_description`,`status`,`payments_json`,`note`)
                 VALUES ('$id','$vNo','$cName','$cPhone','$ordId',$tot,$paid,$due,'$eDate','$dDate','$desc','$stat','$pJson','$note')");
+
+            if ($cPhone !== '' || $cName !== '') {
+                $custKey = $cPhone !== '' ? $cPhone : ('due-' . $id);
+                $execSql("INSERT INTO `customers` (`phone`,`name`,`address`,`loyalty_points`,`registered_at`,`total_orders`,`total_spent`)
+                    VALUES ('$custKey','$cName','',0,'$eDate',1,$tot)
+                    ON DUPLICATE KEY UPDATE
+                    `name` = IF(`name` = '', VALUES(`name`), `name`)");
+            }
         }
     } elseif ($rawKey === 'salma_customers') {
-        $execSql("DELETE FROM `customers`");
         foreach ($parsed as $phoneKey => $cust) {
             if (!is_array($cust)) continue;
             $phone = $conn->real_escape_string((string)($cust['phone'] ?? $phoneKey));
+            if ($phone === '') continue;
             $name = $conn->real_escape_string((string)($cust['name'] ?? ''));
             $addr = $conn->real_escape_string((string)($cust['address'] ?? ''));
             $pts = intval($cust['loyaltyPoints'] ?? 0);
@@ -658,7 +677,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
             }
         }
 
-        // ৩) যদি কোনো রিলেশনাল টেবিল (menu_items, orders, ledger_entries, due_entries, customers) খালি থাকে কিন্তু ডাটা উপস্থিত থাকে, তবে স্বয়ংক্রিয়ভাবে পপুলেট করা
+        // ৩) যদি কোনো রিলেশনাল টেবিলে (menu_items, orders, ledger_entries, due_entries, customers) ডাটার তুলনায় রো কম থাকে বা action=status কল করা হয়, তবে স্বয়ংক্রিয়ভাবে পপুলেট করা
         $relationalMap = [
             'salma_menu_items' => 'menu_items',
             'salma_orders'     => 'orders',
@@ -666,15 +685,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
             'salma_due_ledger' => 'due_entries',
             'salma_customers'  => 'customers'
         ];
+        $tableCounts = [];
+        $syncErrors = [];
         foreach ($relationalMap as $storeKey => $tableName) {
-            if (isset($data[$storeKey]) && isNonEmptyVal($data[$storeKey])) {
-                $cntRes = @$conn->query("SELECT COUNT(*) AS cnt FROM `$tableName`");
-                $cntRow = $cntRes ? $cntRes->fetch_assoc() : null;
-                if (!$cntRow || intval($cntRow['cnt']) === 0) {
-                    $vJson = is_string($data[$storeKey]) ? $data[$storeKey] : json_encode($data[$storeKey], JSON_UNESCAPED_UNICODE);
-                    syncKeyToRelationalTables($conn, $storeKey, $vJson);
-                }
+            $cntRes = @$conn->query("SELECT COUNT(*) AS cnt FROM `$tableName`");
+            $cntRow = $cntRes ? $cntRes->fetch_assoc() : null;
+            $cnt = $cntRow ? intval($cntRow['cnt']) : 0;
+            $expectedCnt = (isset($data[$storeKey]) && is_array($data[$storeKey])) ? count($data[$storeKey]) : 0;
+            if (($action === 'status' || $cnt < $expectedCnt) && isset($data[$storeKey]) && isNonEmptyVal($data[$storeKey])) {
+                $vJson = is_string($data[$storeKey]) ? $data[$storeKey] : json_encode($data[$storeKey], JSON_UNESCAPED_UNICODE);
+                $err = syncKeyToRelationalTables($conn, $storeKey, $vJson);
+                if ($err) $syncErrors[$storeKey] = $err;
+                $cntRes2 = @$conn->query("SELECT COUNT(*) AS cnt FROM `$tableName`");
+                $cntRow2 = $cntRes2 ? $cntRes2->fetch_assoc() : null;
+                $cnt = $cntRow2 ? intval($cntRow2['cnt']) : 0;
             }
+            $tableCounts[$storeKey] = $cnt;
+        }
+        // orders ও due_ledger সিঙ্ক হওয়ার পর customers টেবিলের সর্বশেষ সংখ্যা আপডেট করা
+        $custCntRes = @$conn->query("SELECT COUNT(*) AS cnt FROM `customers`");
+        $custCntRow = $custCntRes ? $custCntRes->fetch_assoc() : null;
+        if ($custCntRow) {
+            $tableCounts['salma_customers'] = intval($custCntRow['cnt']);
         }
 
         if (!empty($mergedMeta)) {
@@ -693,7 +725,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
         'connected' => true,
         'mysqlConnected' => $mysqlConnected,
         'dbName' => $mysqlConnected ? $DB_NAME : null,
-        'mysqlError' => $mysqlError,
+        'mysqlError' => $mysqlError ?: (!empty($syncErrors) ? implode(' | ', $syncErrors) : null),
+        'tableCounts' => isset($tableCounts) ? (object)$tableCounts : (object)[],
         'meta' => (object)$meta,
         'data' => (object)$data
     ], JSON_UNESCAPED_UNICODE);

@@ -113,4 +113,21 @@ CREATE TABLE IF NOT EXISTS `customers` (
   PRIMARY KEY (`phone`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ৭. পূর্বের টেবিল থাকলে কলাম সাইজ স্বয়ংক্রিয়ভাবে আপডেট করা (ডাটা অক্ষুণ্ণ রেখে)
+ALTER TABLE `salma_app_store` MODIFY `store_value` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;
+ALTER TABLE `menu_items` MODIFY `category` varchar(100) NOT NULL DEFAULT 'popular';
+ALTER TABLE `menu_items` MODIFY `image` longtext;
+ALTER TABLE `orders` MODIFY `items_json` longtext NOT NULL;
+ALTER TABLE `orders` MODIFY `payment_method` varchar(100) DEFAULT NULL;
+ALTER TABLE `orders` MODIFY `advance_payment_method` varchar(50) DEFAULT 'bKash';
+ALTER TABLE `orders` MODIFY `payment_status` varchar(100) DEFAULT NULL;
+ALTER TABLE `orders` MODIFY `status` varchar(50) NOT NULL DEFAULT 'Placed';
+ALTER TABLE `orders` MODIFY `order_date` varchar(30) NOT NULL;
+ALTER TABLE `ledger_entries` MODIFY `entry_date` varchar(30) NOT NULL;
+ALTER TABLE `ledger_entries` MODIFY `payment_method` varchar(100) NOT NULL DEFAULT 'Cash';
+ALTER TABLE `due_entries` MODIFY `entry_date` varchar(30) NOT NULL;
+ALTER TABLE `due_entries` MODIFY `due_date` varchar(30) DEFAULT NULL;
+ALTER TABLE `due_entries` MODIFY `status` varchar(30) NOT NULL DEFAULT 'unpaid';
+ALTER TABLE `due_entries` MODIFY `payments_json` longtext;
+
 COMMIT;

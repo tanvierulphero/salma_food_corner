@@ -57,7 +57,21 @@ jobs:
             set net:timeout 15;
             set net:max-retries 2;
             open -u \"$FTP_USER\",\"$FTP_PASS\" $CLEAN_SERVER;
-            mirror -R --verbose --only-newer --exclude-glob salma_server_db.json --exclude-glob db_config.php --exclude-glob salma_db_config.php --exclude-glob uploads/* ./dist/ ./
+            get api.php -o /tmp/remote_api.php || true;
+          " || true
+          if [ -f /tmp/remote_api.php ]; then
+            php -r '$c=file_get_contents("/tmp/remote_api.php");if(preg_match("/\\\$DB_NAME\s*=\s*[\x27\"]([^\x27\"]+)[\x27\"]/",$c,$n)&&!empty($n[1])){preg_match("/\\\$DB_HOST\s*=\s*[\x27\"]([^\x27\"]*)[\x27\"]/",$c,$h);preg_match("/\\\$DB_USER\s*=\s*[\x27\"]([^\x27\"]*)[\x27\"]/",$c,$u);preg_match("/\\\$DB_PASS\s*=\s*[\x27\"]([^\x27\"]*)[\x27\"]/",$c,$p);$cfg="<?php\n\$DB_HOST=".var_export($h[1]?:"localhost",true).";\n\$DB_NAME=".var_export($n[1],true).";\n\$DB_USER=".var_export($u[1]?:"",true).";\n\$DB_PASS=".var_export($p[1]?:"",true).";\n";file_put_contents("dist/db_config.php",$cfg);}' || true
+          fi
+
+          lftp -c "
+            set ssl:verify-certificate no;
+            set ftp:ssl-allow yes;
+            set ftp:ssl-protect-data yes;
+            set ftp:passive-mode yes;
+            set net:timeout 15;
+            set net:max-retries 2;
+            open -u \"$FTP_USER\",\"$FTP_PASS\" $CLEAN_SERVER;
+            mirror -R --verbose --exclude-glob salma_server_db.json --exclude-glob salma_db_config.php --exclude-glob uploads/* ./dist/ ./
           " && echo "✅ Successfully deployed via FTP/FTPS!" && exit 0
 
           echo "⚠️ FTP/FTPS returned 530 or failed. Trying plain FTP (without SSL)..."
@@ -67,7 +81,7 @@ jobs:
             set net:timeout 15;
             set net:max-retries 2;
             open -u \"$FTP_USER\",\"$FTP_PASS\" $CLEAN_SERVER;
-            mirror -R --verbose --only-newer --exclude-glob salma_server_db.json --exclude-glob db_config.php --exclude-glob salma_db_config.php --exclude-glob uploads/* ./dist/ ./
+            mirror -R --verbose --exclude-glob salma_server_db.json --exclude-glob salma_db_config.php --exclude-glob uploads/* ./dist/ ./
           " && echo "✅ Successfully deployed via plain FTP!" && exit 0
 
           echo "⚠️ Plain FTP failed. Trying SFTP (Port 22)..."
@@ -76,7 +90,7 @@ jobs:
             set net:timeout 15;
             set net:max-retries 1;
             open -u \"$FTP_USER\",\"$FTP_PASS\" sftp://$CLEAN_SERVER:22;
-            mirror -R --verbose --only-newer --exclude-glob salma_server_db.json --exclude-glob db_config.php --exclude-glob salma_db_config.php --exclude-glob uploads/* ./dist/ ./public_html/
+            mirror -R --verbose --exclude-glob salma_server_db.json --exclude-glob salma_db_config.php --exclude-glob uploads/* ./dist/ ./public_html/
           " && echo "✅ Successfully deployed via SFTP!" && exit 0
 
           echo "✅ Build completed."
