@@ -223,7 +223,7 @@ export default function AdminApp() {
       setPinError('');
       if (soundOn) playAddToCartSound();
     } else {
-      setPinError('ভুল পিন নম্বর! (ডিফল্ট পিন: 1234)');
+      setPinError('ভুল পিন নম্বর! আবার চেষ্টা করুন।');
     }
   };
 
@@ -928,7 +928,7 @@ export default function AdminApp() {
                   setPinInput(e.target.value);
                   setPinError('');
                 }}
-                placeholder="পিন (ডিফল্ট: 1234)"
+                placeholder="••••"
                 className="w-full text-center text-2xl tracking-[0.5em] font-mono py-3 px-4 border-2 border-red-300 focus:border-red-600 rounded-2xl focus:outline-none bg-red-50/40 text-gray-800"
                 autoFocus
               />
@@ -950,8 +950,7 @@ export default function AdminApp() {
             </button>
           </form>
 
-          <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
-            <span>ডিফল্ট পিন: <b className="text-gray-800">1234</b></span>
+          <div className="pt-2 border-t border-gray-100 flex items-center justify-center text-xs text-gray-500">
             <a href="/index.html" className="text-emerald-700 font-bold hover:underline flex items-center gap-1">
               <Eye className="w-3 h-3" />
               <span>গ্রাহক অ্যাপ ভিউ</span>

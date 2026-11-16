@@ -1543,7 +1543,7 @@ export default function App() {
               <ShieldAlert className="w-7 h-7" />
             </div>
             <h3 className="text-base font-bold text-gray-900 text-center">এডমিন প্যানেল সিকিউরিটি</h3>
-            <p className="text-xs text-gray-500 text-center">এডমিন পিন দিন (ডিফল্ট পাসওয়ার্ড: 1234)</p>
+            <p className="text-xs text-gray-500 text-center">এডমিন প্যানেলে প্রবেশ করতে গোপন পিন নম্বর দিন</p>
             <input 
               type="password"
               inputMode="numeric"
@@ -1563,7 +1563,7 @@ export default function App() {
                     setAdminLoginModal(false);
                     setAdminPinInput('');
                   } else {
-                    alert('ভুল পিন কোড! সঠিক পিন: 1234');
+                    alert('ভুল পিন কোড! সঠিক পিন নম্বর দিন।');
                   }
                 }}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-xs font-bold shadow"
