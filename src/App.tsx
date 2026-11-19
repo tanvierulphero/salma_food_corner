@@ -495,6 +495,41 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
+  const [cartStep, setCartStep] = useState<'cart' | 'checkout'>('cart');
+  const cartBodyRef = useRef<HTMLDivElement>(null);
+
+  const openCartDrawer = (step: 'cart' | 'checkout' = 'cart') => {
+    setCheckoutError('');
+    setBazarPayError('');
+    setCartStep(step);
+    setIsCartOpen(true);
+    setTimeout(() => {
+      if (cartBodyRef.current) cartBodyRef.current.scrollTop = 0;
+    }, 30);
+  };
+
+  const closeCartDrawer = () => {
+    setIsCartOpen(false);
+    setCartStep('cart');
+    setCheckoutError('');
+    setBazarPayError('');
+  };
+
+  const goToCheckoutStep = () => {
+    if (cart.length === 0) return;
+    setCheckoutError('');
+    setBazarPayError('');
+    setCartStep('checkout');
+    setTimeout(() => {
+      if (cartBodyRef.current) cartBodyRef.current.scrollTop = 0;
+    }, 30);
+  };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.pathname.replace(/\/+$/, '') === '/checkout') {
+      openCartDrawer('checkout');
+    }
+  }, []);
 
   const [orders, setOrders] = useState<Order[]>(() => {
     const saved = localStorage.getItem('salma_orders');
@@ -1146,6 +1181,7 @@ export default function App() {
     setOrderSuccessModal(newOrder);
     playOrderSuccessSound();
     setCart([]);
+    setCartStep('cart');
     setIsCartOpen(false);
   };
 
@@ -2975,71 +3011,111 @@ export default function App() {
 
       </main>
 
-      {/* ================= CART MOBILE BOTTOM SHEET DRAWER ================= */}
+      {/* ================= CART & CHECKOUT MOBILE BOTTOM SHEET DRAWER ================= */}
       <AnimatePresence>
         {isCartOpen && (
           <div className="fixed inset-0 z-50 flex items-end justify-center overflow-hidden">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-xs" onClick={() => setIsCartOpen(false)} />
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-xs" onClick={closeCartDrawer} />
             <motion.div 
               initial={{ y: '100%' }} 
               animate={{ y: 0 }} 
               exit={{ y: '100%' }} 
               transition={{ type: 'spring', damping: 26, stiffness: 260 }}
-              className="relative z-10 w-full max-w-[430px] max-h-[90vh] bg-white rounded-t-3xl shadow-2xl flex flex-col overflow-hidden"
+              className="relative z-10 w-full max-w-[430px] max-h-[92vh] bg-white rounded-t-3xl shadow-2xl flex flex-col overflow-hidden"
             >
-              <div className="p-3.5 bg-gradient-to-r from-red-600 to-amber-500 text-white flex items-center justify-between">
-                <h2 className="font-bold text-base flex items-center gap-2"><ShoppingBag className="w-5 h-5" /><span>আপনার শপিং কার্ট</span></h2>
-                <button onClick={() => setIsCartOpen(false)} className="hover:bg-black/10 p-1 rounded-full cursor-pointer"><X className="w-5 h-5" /></button>
+              <div className="p-3.5 bg-gradient-to-r from-red-600 to-amber-500 text-white flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  {cartStep === 'checkout' && cart.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCartStep('cart');
+                        setCheckoutError('');
+                        setBazarPayError('');
+                        if (cartBodyRef.current) cartBodyRef.current.scrollTop = 0;
+                      }}
+                      className="bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-2.5 py-1 rounded-lg cursor-pointer transition"
+                    >
+                      ← কার্ট
+                    </button>
+                  )}
+                  <h2 className="font-bold text-base flex items-center gap-2">
+                    <ShoppingBag className="w-5 h-5" />
+                    <span>{cartStep === 'checkout' && cart.length > 0 ? 'চেকআউট ও পেমেন্ট' : 'আপনার শপিং কার্ট'}</span>
+                  </h2>
+                </div>
+                <button type="button" onClick={closeCartDrawer} className="hover:bg-black/10 p-1 rounded-full cursor-pointer"><X className="w-5 h-5" /></button>
               </div>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div ref={cartBodyRef} className="flex-1 overflow-y-auto p-4 space-y-4">
                   {cart.length === 0 ? (
-                    <div className="text-center py-16 text-gray-400"><ShoppingBag className="w-16 h-16 mx-auto mb-3 opacity-30" /><p>কার্ট খালি রয়েছে</p></div>
-                  ) : (
-                    cart.map(item => (
-                      <div key={item.id} className="flex items-center justify-between gap-3 border-b pb-3">
-                        <img src={item.image} alt={item.nameBn} className="w-14 h-14 rounded-xl object-cover" />
-                        <div className="flex-1"><h4 className="font-bold text-sm">{item.nameBn}</h4><span className="text-xs text-red-600 font-bold">৳ {item.price}</span></div>
-                        <div className="flex items-center gap-2 bg-amber-50 border rounded-lg p-1">
-                          <button onClick={() => updateQuantity(item.id, -1)} className="p-1"><Minus className="w-3 h-3" /></button>
-                          <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item.id, 1)} className="p-1"><Plus className="w-3 h-3" /></button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-
-                  {/* Coupon & Loyalty */}
-                  {cart.length > 0 && (
-                    <div className="space-y-3 pt-3 border-t">
-                      <div className="flex gap-2">
-                        <input 
-                          type="text" 
-                          placeholder="কুপন কোড (SALMA10)"
-                          value={checkoutForm.coupon}
-                          onChange={(e) => setCheckoutForm({ ...checkoutForm, coupon: e.target.value })}
-                          className="flex-1 border rounded-lg p-2 text-xs"
-                        />
-                        <button onClick={handleApplyCoupon} className="bg-amber-500 text-white font-bold px-3 rounded-lg text-xs">প্রয়োগ</button>
-                      </div>
-
-                      {currentCustomer && currentCustomer.loyaltyPoints > 0 && (
-                        <label className="flex items-center gap-2 text-xs font-semibold bg-amber-50 p-2.5 rounded-xl border border-amber-200 cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            checked={checkoutForm.useLoyalty}
-                            onChange={(e) => setCheckoutForm({ ...checkoutForm, useLoyalty: e.target.checked })}
-                          />
-                          <span>লয়্যালটি পয়েন্ট ব্যবহার করুন (জমা: {currentCustomer.loyaltyPoints} Pts)</span>
-                        </label>
-                      )}
+                    <div className="text-center py-16 text-gray-400">
+                      <ShoppingBag className="w-16 h-16 mx-auto mb-3 opacity-30" />
+                      <p className="font-semibold text-gray-500">কার্ট খালি রয়েছে</p>
+                      <p className="text-xs text-gray-400 mt-1">চেকআউট করতে প্রথমে মেনু থেকে পছন্দের খাবার কার্টে যোগ করুন</p>
+                      <button
+                        type="button"
+                        onClick={closeCartDrawer}
+                        className="mt-4 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow cursor-pointer"
+                      >
+                        মেনু দেখুন
+                      </button>
                     </div>
-                  )}
+                  ) : cartStep === 'cart' ? (
+                    <>
+                      {cart.map(item => (
+                        <div key={item.id} className="flex items-center justify-between gap-3 border-b pb-3">
+                          <img src={item.image} alt={item.nameBn} className="w-14 h-14 rounded-xl object-cover" />
+                          <div className="flex-1"><h4 className="font-bold text-sm">{item.nameBn}</h4><span className="text-xs text-red-600 font-bold">৳ {item.price}</span></div>
+                          <div className="flex items-center gap-2 bg-amber-50 border rounded-lg p-1">
+                            <button type="button" onClick={() => updateQuantity(item.id, -1)} className="p-1 cursor-pointer"><Minus className="w-3 h-3" /></button>
+                            <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
+                            <button type="button" onClick={() => updateQuantity(item.id, 1)} className="p-1 cursor-pointer"><Plus className="w-3 h-3" /></button>
+                          </div>
+                        </div>
+                      ))}
 
-                  {/* Customer Information (Auto Profile Creation) */}
-                  {cart.length > 0 && (
-                    <form onSubmit={handleCheckout} className="space-y-3 pt-4 border-t">
-                      <div className="flex justify-between items-center">
+                      {/* Coupon & Loyalty */}
+                      <div className="space-y-3 pt-3 border-t">
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            placeholder="কুপন কোড (SALMA10)"
+                            value={checkoutForm.coupon}
+                            onChange={(e) => setCheckoutForm({ ...checkoutForm, coupon: e.target.value })}
+                            className="flex-1 border rounded-lg p-2 text-xs"
+                          />
+                          <button type="button" onClick={handleApplyCoupon} className="bg-amber-500 text-white font-bold px-3 rounded-lg text-xs cursor-pointer">প্রয়োগ</button>
+                        </div>
+
+                        {currentCustomer && currentCustomer.loyaltyPoints > 0 && (
+                          <label className="flex items-center gap-2 text-xs font-semibold bg-amber-50 p-2.5 rounded-xl border border-amber-200 cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              checked={checkoutForm.useLoyalty}
+                              onChange={(e) => setCheckoutForm({ ...checkoutForm, useLoyalty: e.target.checked })}
+                            />
+                            <span>লয়্যালটি পয়েন্ট ব্যবহার করুন (জমা: {currentCustomer.loyaltyPoints} Pts)</span>
+                          </label>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    /* Customer Information & Payment (Checkout Step) */
+                    <form id="salma-checkout-form" onSubmit={handleCheckout} className="space-y-3">
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 flex items-center justify-between text-xs">
+                        <span className="font-bold text-gray-700">
+                          মোট {cart.reduce((s, i) => s + i.quantity, 0)}টি খাবার অর্ডার
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setCartStep('cart')}
+                          className="text-red-600 font-bold hover:underline cursor-pointer"
+                        >
+                          আইটেম পরিবর্তন ›
+                        </button>
+                      </div>
+                      <div className="flex justify-between items-center pt-1">
                         <h4 className="font-bold text-sm text-gray-800">গ্রাহকের তথ্য (অটো প্রোফাইল সেভ)</h4>
                         {currentCustomer && (
                           <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">
@@ -3309,20 +3385,19 @@ export default function App() {
                         )}
                       </div>
 
-                      {checkoutError && (
-                        <div className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
-                          <AlertCircle className="w-4 h-4 shrink-0" />
-                          <span>{checkoutError}</span>
-                        </div>
-                      )}
-
                     </form>
                   )}
                 </div>
 
                 {cart.length > 0 && (
-                  <div className="p-4 bg-gray-50 border-t space-y-3">
-                    <div className="space-y-1.5 text-xs">
+                  <div className="p-4 bg-gray-50 border-t space-y-2.5">
+                    {(checkoutError || bazarPayError) && cartStep === 'checkout' && (
+                      <div className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <span>{checkoutError || bazarPayError}</span>
+                      </div>
+                    )}
+                    <div className="space-y-1 text-xs">
                       {(discountApplied > 0 || loyaltyDiscount > 0) && (
                         <div className="flex justify-between text-emerald-600 font-bold">
                           <span>ডিসকাউন্ট:</span>
@@ -3344,13 +3419,25 @@ export default function App() {
                         </div>
                       )}
                     </div>
-                    <button 
-                      onClick={handleCheckout}
-                      disabled={bazarPayChecking}
-                      className="w-full bg-gradient-to-r from-red-600 to-emerald-600 hover:opacity-95 disabled:opacity-60 text-white font-bold py-3 rounded-xl text-sm shadow-lg transition active:scale-95 cursor-pointer"
-                    >
-                      {bazarPayChecking ? 'BazarPay পেমেন্ট যাচাই হচ্ছে...' : `৳ ${advanceAmount} অগ্রীম দিয়ে অর্ডার কনফার্ম করুন`}
-                    </button>
+                    {cartStep === 'cart' ? (
+                      <button
+                        type="button"
+                        onClick={goToCheckoutStep}
+                        className="w-full bg-gradient-to-r from-red-600 to-emerald-600 hover:opacity-95 text-white font-bold py-3 rounded-xl text-sm shadow-lg transition active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <span>চেকআউট পেজে যান</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    ) : (
+                      <button 
+                        type="button"
+                        onClick={handleCheckout}
+                        disabled={bazarPayChecking}
+                        className="w-full bg-gradient-to-r from-red-600 to-emerald-600 hover:opacity-95 disabled:opacity-60 text-white font-bold py-3 rounded-xl text-sm shadow-lg transition active:scale-95 cursor-pointer"
+                      >
+                        {bazarPayChecking ? 'BazarPay পেমেন্ট যাচাই হচ্ছে...' : `৳ ${advanceAmount} অগ্রীম দিয়ে অর্ডার কনফার্ম করুন`}
+                      </button>
+                    )}
                   </div>
                 )}
             </motion.div>
@@ -3857,11 +3944,12 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= FLOATING VIEW CART BAR (When items in cart) ================= */}
+      {/* ================= FLOATING VIEW CART / CHECKOUT BAR (When items in cart) ================= */}
       {appMode === 'public' && cart.length > 0 && !isCartOpen && (
         <div className="fixed bottom-[62px] left-0 right-0 max-w-[430px] mx-auto px-3 z-40">
           <button
-            onClick={() => setIsCartOpen(true)}
+            type="button"
+            onClick={() => openCartDrawer('checkout')}
             className="w-full bg-gradient-to-r from-red-600 via-rose-600 to-emerald-700 text-white p-3 rounded-2xl shadow-xl flex items-center justify-between border border-white/20 cursor-pointer active:scale-98 transition"
           >
             <div className="flex items-center gap-2.5">
@@ -3875,7 +3963,7 @@ export default function App() {
             </div>
             <div className="flex items-center gap-1 bg-white text-red-700 font-black text-xs px-3 py-1.5 rounded-xl shadow-xs">
               <ShoppingBag className="w-3.5 h-3.5" />
-              <span>কার্ট দেখুন ›</span>
+              <span>চেকআউট করুন ›</span>
             </div>
           </button>
         </div>
@@ -3887,7 +3975,7 @@ export default function App() {
           {[
             { id: 'menu', label: 'মেনু', icon: Utensils, action: () => setPublicTab('menu'), active: publicTab === 'menu' && !isCartOpen && !isChatOpen },
             { id: 'tracker', label: 'ট্র্যাকিং', icon: Truck, badge: countActiveOrders(customerOrders), action: () => setPublicTab('tracker'), active: publicTab === 'tracker' && !isCartOpen },
-            { id: 'cart', label: 'কার্ট', icon: ShoppingBag, badge: cart.reduce((s, i) => s + i.quantity, 0), action: () => setIsCartOpen(true), active: isCartOpen },
+            { id: 'cart', label: 'কার্ট', icon: ShoppingBag, badge: cart.reduce((s, i) => s + i.quantity, 0), action: () => openCartDrawer('cart'), active: isCartOpen },
             { id: 'profile', label: 'প্রোফাইল', icon: User, action: () => setPublicTab('profile'), active: publicTab === 'profile' && !isCartOpen },
             { id: 'reviews', label: 'রিভিউ', icon: Star, action: () => setPublicTab('reviews'), active: publicTab === 'reviews' && !isCartOpen }
           ].map(nav => {
