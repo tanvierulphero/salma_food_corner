@@ -30,6 +30,7 @@ import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomer
 import { formatDateDMY } from './utils/dateFormatter';
 import { calculateCheckoutSummary, isWithinLocalServiceArea } from './utils/orderCalculations';
 import { countActiveOrders, removeOrderById, setOrderStatusById } from './utils/syncReconcile';
+import { verifyBazarPayOrder } from './utils/bazarpayClient';
 
 // Types
 interface FoodItem {
@@ -554,6 +555,15 @@ export default function App() {
     useLoyalty: false
   });
   const [discountApplied, setDiscountApplied] = useState<number>(0);
+  const [bazarPayChecking, setBazarPayChecking] = useState<boolean>(false);
+  const [bazarPayError, setBazarPayError] = useState<string>('');
+  const [checkoutError, setCheckoutError] = useState<string>('');
+  const [bazarPayVerified, setBazarPayVerified] = useState<{
+    orderId: string;
+    trxId: string;
+    gateway: string;
+    amountBdt: number;
+  } | null>(null);
   const [orderSuccessModal, setOrderSuccessModal] = useState<Order | null>(null);
   const [deliveryToast, setDeliveryToast] = useState<Order | null>(null);
   const prevOrderStatusesRef = useRef<Record<string, Order['status']>>({});
@@ -946,17 +956,112 @@ export default function App() {
     }
   };
 
-  const handleCheckout = (e: React.FormEvent) => {
+  const mapBazarPayGateway = (
+    gw: string | undefined,
+    fallback: 'bKash' | 'Nagad' | 'Card'
+  ): 'bKash' | 'Nagad' | 'Card' => {
+    const lower = (gw || '').toLowerCase();
+    if (lower.includes('bkash')) return 'bKash';
+    if (lower.includes('nagad')) return 'Nagad';
+    if (lower.includes('card') || lower.includes('visa') || lower.includes('master')) return 'Card';
+    return fallback;
+  };
+
+  const handleVerifyBazarPayTrx = async () => {
+    const normalizedTrx = checkoutForm.transactionId.trim().toUpperCase();
+    setBazarPayError('');
+    setCheckoutError('');
+    if (!normalizedTrx) {
+      setBazarPayError('দয়া করে পেমেন্টের TrxID লিখুন।');
+      return;
+    }
+    if (bazarPayVerified && bazarPayVerified.trxId === normalizedTrx && bazarPayVerified.amountBdt >= advanceAmount) {
+      return;
+    }
+
+    const candidateOrderId = bazarPayVerified?.orderId || ('SF-' + Math.floor(1000 + Math.random() * 9000));
+    setBazarPayChecking(true);
+    try {
+      const res = await verifyBazarPayOrder({
+        orderId: candidateOrderId,
+        trxId: normalizedTrx,
+        amountBdt: advanceAmount
+      });
+      if (!res.paid) {
+        setBazarPayVerified(null);
+        setBazarPayError(res.message || 'TrxID ভেরিফাই করা যায়নি।');
+        return;
+      }
+      const verifiedMethod = mapBazarPayGateway(res.gateway, checkoutForm.advancePaymentMethod);
+      setCheckoutForm(prev => ({
+        ...prev,
+        transactionId: res.trxId || normalizedTrx,
+        advancePaymentMethod: verifiedMethod
+      }));
+      setBazarPayVerified({
+        orderId: res.orderId || candidateOrderId,
+        trxId: res.trxId || normalizedTrx,
+        gateway: res.gateway || verifiedMethod,
+        amountBdt: Number(res.amountBdt || advanceAmount)
+      });
+    } finally {
+      setBazarPayChecking(false);
+    }
+  };
+
+  const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCheckoutError('');
+    setBazarPayError('');
+
     const phone = normalizeBdPhone(checkoutForm.phone);
     const name = checkoutForm.name.trim();
     const address = checkoutForm.address.trim();
 
     if (!phone || !name || !address) {
-      alert('দয়া করে আপনার মোবাইল নম্বর, নাম এবং ডেলিভারি ঠিকানা পূরণ করুন।');
+      setCheckoutError('দয়া করে আপনার মোবাইল নম্বর, নাম এবং ডেলিভারি ঠিকানা পূরণ করুন।');
       return;
     }
     if (cart.length === 0) return;
+
+    const normalizedTrx = checkoutForm.transactionId.trim().toUpperCase();
+    if (!normalizedTrx) {
+      setBazarPayError('অর্ডার কনফার্ম করতে পেমেন্টের TrxID প্রদান করুন।');
+      return;
+    }
+
+    let confirmedOrderId = 'SF-' + Math.floor(1000 + Math.random() * 9000);
+    let confirmedTrxId = normalizedTrx;
+    let confirmedMethod: 'bKash' | 'Nagad' | 'Card' = checkoutForm.advancePaymentMethod;
+
+    if (
+      bazarPayVerified &&
+      bazarPayVerified.trxId === normalizedTrx &&
+      bazarPayVerified.amountBdt >= advanceAmount
+    ) {
+      confirmedOrderId = bazarPayVerified.orderId;
+      confirmedTrxId = bazarPayVerified.trxId;
+      confirmedMethod = mapBazarPayGateway(bazarPayVerified.gateway, checkoutForm.advancePaymentMethod);
+    } else {
+      setBazarPayChecking(true);
+      try {
+        const res = await verifyBazarPayOrder({
+          orderId: confirmedOrderId,
+          trxId: normalizedTrx,
+          amountBdt: advanceAmount
+        });
+        if (!res.paid) {
+          setBazarPayVerified(null);
+          setBazarPayError(res.message || 'TrxID ভেরিফাই করা যায়নি। পেমেন্ট করে সঠিক TrxID দিন।');
+          return;
+        }
+        confirmedOrderId = res.orderId || confirmedOrderId;
+        confirmedTrxId = res.trxId || normalizedTrx;
+        confirmedMethod = mapBazarPayGateway(res.gateway, checkoutForm.advancePaymentMethod);
+      } finally {
+        setBazarPayChecking(false);
+      }
+    }
 
     const pointsEarned = Math.floor(finalTotal / 10);
 
@@ -991,14 +1096,9 @@ export default function App() {
     setCurrentCustomer(updatedProfile);
     saveToCpanelDb('salma_customers', nextCustomers);
 
-    // Auto-generate or use Transaction ID
-    const trxId = checkoutForm.transactionId.trim() || 
-      (checkoutForm.advancePaymentMethod === 'bKash' ? 'BK-' : checkoutForm.advancePaymentMethod === 'Nagad' ? 'NG-' : 'CD-') + 
-      Math.floor(100000 + Math.random() * 900000);
-
-    // Create Order with Advance Payment, Due Amount, and 1km Free Delivery Data
+    // Create Order with Verified Advance Payment, Due Amount, and 1km Free Delivery Data
     const newOrder: Order = {
-      id: 'SF-' + Math.floor(1000 + Math.random() * 9000),
+      id: confirmedOrderId,
       customerName: name,
       phone: phone,
       address: address,
@@ -1007,9 +1107,9 @@ export default function App() {
       discount: couponDiscount + loyaltyDiscount,
       advancePaid: advanceAmount,
       dueAmount: dueAmount,
-      paymentMethod: `${checkoutForm.advancePaymentMethod} (অগ্রীম ৳${advanceAmount}) + ${dueAmount > 0 ? 'ক্যাশ অন ডেলিভারি (বাকি ৳' + dueAmount + ')' : 'সম্পূর্ণ পরিশোধিত'}`,
-      advancePaymentMethod: checkoutForm.advancePaymentMethod,
-      transactionId: trxId,
+      paymentMethod: `${confirmedMethod} (অগ্রীম ৳${advanceAmount}) + ${dueAmount > 0 ? 'ক্যাশ অন ডেলিভারি (বাকি ৳' + dueAmount + ')' : 'সম্পূর্ণ পরিশোধিত'}`,
+      advancePaymentMethod: confirmedMethod,
+      transactionId: confirmedTrxId,
       paymentStatus: dueAmount === 0 ? 'Fully Paid (100%)' : '30% Advance Paid (Due on Delivery)',
       status: 'Placed',
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -1032,13 +1132,17 @@ export default function App() {
       category: 'খাবার বিক্রয় (Food Sales)',
       amount: advanceAmount,
       date: todayStr,
-      paymentMethod: checkoutForm.advancePaymentMethod,
-      note: `অর্ডার ${newOrder.id} - ${name} (${checkoutForm.advanceOption === '100' ? '১০০% ফুল পেমেন্ট' : '৩০% অগ্রীম প্রাপ্তি ৳' + advanceAmount + ', বাকি বকেয়া ৳' + dueAmount}) (Trx: ${trxId})`
+      paymentMethod: confirmedMethod,
+      note: `অর্ডার ${newOrder.id} - ${name} (${checkoutForm.advanceOption === '100' ? '১০০% ফুল পেমেন্ট' : '৩০% অগ্রীম প্রাপ্তি ৳' + advanceAmount + ', বাকি বকেয়া ৳' + dueAmount}) (BazarPay Verified Trx: ${confirmedTrxId})`
     };
     const nextLedger = [autoLedgerEntry, ...ledger];
     setLedger(nextLedger);
     saveToCpanelDb('salma_ledger', nextLedger);
 
+    setBazarPayVerified(null);
+    setBazarPayError('');
+    setCheckoutError('');
+    setCheckoutForm(prev => ({ ...prev, transactionId: '' }));
     setOrderSuccessModal(newOrder);
     playOrderSuccessSound();
     setCart([]);
@@ -3164,29 +3268,53 @@ export default function App() {
                           <span className="font-mono font-bold text-red-600 bg-white px-2 py-0.5 rounded border border-amber-300">01712-345678</span>
                         </div>
                         <p className="text-[10px] text-gray-500">
-                          নম্বরে <b>৳ {advanceAmount}</b> সেন্ড মানি বা পেমেন্ট করে TrxID দিন অথবা নিচের বাটনে টেস্ট ভেরিফাই করুন।
+                          নম্বরে <b>৳ {advanceAmount}</b> সেন্ড মানি/পেমেন্ট করে SMS-এ পাওয়া TrxID দিন — BazarPay স্বয়ংক্রিয়ভাবে যাচাই করবে।
                         </p>
                         <div className="flex gap-2">
                           <input 
                             type="text" 
                             placeholder="ট্রানজেকশন আইডি (যেমন: 9J4K2L)" 
                             value={checkoutForm.transactionId}
-                            onChange={(e) => setCheckoutForm({ ...checkoutForm, transactionId: e.target.value })}
+                            onChange={(e) => {
+                              const nextVal = e.target.value;
+                              setCheckoutForm({ ...checkoutForm, transactionId: nextVal });
+                              setBazarPayError('');
+                              if (bazarPayVerified && nextVal.trim().toUpperCase() !== bazarPayVerified.trxId) {
+                                setBazarPayVerified(null);
+                              }
+                            }}
                             className="flex-1 border rounded-lg p-2 text-xs font-mono uppercase bg-white"
                           />
                           <button
                             type="button"
-                            onClick={() => {
-                              const prefix = checkoutForm.advancePaymentMethod === 'bKash' ? 'BK' : checkoutForm.advancePaymentMethod === 'Nagad' ? 'NG' : 'CD';
-                              const gen = prefix + Math.floor(100000 + Math.random() * 900000);
-                              setCheckoutForm(prev => ({ ...prev, transactionId: gen }));
-                            }}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg text-[10px] font-bold shadow-xs shrink-0"
+                            disabled={bazarPayChecking}
+                            onClick={handleVerifyBazarPayTrx}
+                            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold shadow-xs shrink-0 cursor-pointer flex items-center gap-1"
                           >
-                            ⚡ অটো পে
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>{bazarPayChecking ? 'যাচাই হচ্ছে...' : 'ভেরিফাই'}</span>
                           </button>
                         </div>
+                        {bazarPayVerified && (
+                          <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                            <span>পেমেন্ট ভেরিফাইড: ৳{bazarPayVerified.amountBdt} ({bazarPayVerified.gateway}) • {bazarPayVerified.trxId}</span>
+                          </div>
+                        )}
+                        {bazarPayError && (
+                          <div className="text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                            <span>{bazarPayError}</span>
+                          </div>
+                        )}
                       </div>
+
+                      {checkoutError && (
+                        <div className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          <span>{checkoutError}</span>
+                        </div>
+                      )}
 
                     </form>
                   )}
@@ -3217,10 +3345,11 @@ export default function App() {
                       )}
                     </div>
                     <button 
-                      onClick={handleCheckout} 
-                      className="w-full bg-gradient-to-r from-red-600 to-emerald-600 hover:opacity-95 text-white font-bold py-3 rounded-xl text-sm shadow-lg transition active:scale-95 cursor-pointer"
+                      onClick={handleCheckout}
+                      disabled={bazarPayChecking}
+                      className="w-full bg-gradient-to-r from-red-600 to-emerald-600 hover:opacity-95 disabled:opacity-60 text-white font-bold py-3 rounded-xl text-sm shadow-lg transition active:scale-95 cursor-pointer"
                     >
-                      ৳ {advanceAmount} অগ্রীম দিয়ে অর্ডার কনফার্ম করুন
+                      {bazarPayChecking ? 'BazarPay পেমেন্ট যাচাই হচ্ছে...' : `৳ ${advanceAmount} অগ্রীম দিয়ে অর্ডার কনফার্ম করুন`}
                     </button>
                   </div>
                 )}

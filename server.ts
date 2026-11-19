@@ -1,17 +1,77 @@
 import express from 'express';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import {
+  buildBazarPaySignaturePayload,
+  storeIncomingBazarPayTx,
+  verifyAndClaimBazarPayTx,
+  type BazarPayTransaction,
+} from './src/utils/bazarpayPool.js';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const BAZARPAY_SECRET = process.env.BAZARPAY_SECRET || 'bp_test_94f8a2c1e7b04d39';
+
 const app = express();
+
+// 1) BazarPay live payment webhook (MUST run before express.json() so raw body HMAC matches exactly)
+app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (req, res) => {
+  const ts = req.header('X-BazarPay-Timestamp') || '';
+  const sig = req.header('X-BazarPay-Signature') || '';
+  const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? '');
+  const expected = crypto
+    .createHmac('sha256', BAZARPAY_SECRET)
+    .update(buildBazarPaySignaturePayload(ts, rawBody))
+    .digest('hex');
+
+  const sigBuf = Buffer.from(sig.toLowerCase(), 'utf8');
+  const expBuf = Buffer.from(expected.toLowerCase(), 'utf8');
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return res.status(401).json({ ok: false, error: 'Invalid HMAC signature' });
+  }
+
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(rawBody);
+  } catch {
+    return res.status(400).json({ ok: false, error: 'Invalid JSON body' });
+  }
+
+  serverDbStore = loadServerDbFromDisk();
+  if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
+    serverDbStore._bazarpay_pool = {};
+  }
+  const pool = serverDbStore._bazarpay_pool as Record<string, BazarPayTransaction>;
+  const stored = storeIncomingBazarPayTx(pool, data);
+  if (!stored.ok) {
+    return res.status(400).json({ ok: false, error: stored.error });
+  }
+  saveServerDbToDisk(serverDbStore);
+  return res.json({ ok: true, stored: stored.trxId });
+});
+
 app.use(express.json({ limit: '15mb' }));
+
+// 2) Website Checkout calls this to verify Customer TrxID & confirm Order!
+app.post('/api/bazarpay/verify-order', (req, res) => {
+  serverDbStore = loadServerDbFromDisk();
+  if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
+    serverDbStore._bazarpay_pool = {};
+  }
+  const pool = serverDbStore._bazarpay_pool as Record<string, BazarPayTransaction>;
+  const result = verifyAndClaimBazarPayTx(pool, req.body || {});
+  if (result.status === 200) {
+    saveServerDbToDisk(serverDbStore);
+  }
+  return res.status(result.status).json(result.body);
+});
 
 const appRoot = fs.existsSync(path.resolve(__dirname, 'package.json'))
   ? __dirname
@@ -142,7 +202,7 @@ let serverDbStore: Record<string, any> = loadServerDbFromDisk();
 app.get('/api.php', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   serverDbStore = loadServerDbFromDisk();
-  const { _salma_meta, ...publicData } = serverDbStore;
+  const { _salma_meta, _bazarpay_pool: _ignoredPool, ...publicData } = serverDbStore;
   res.json({
     status: 'ok',
     connected: true,
@@ -155,6 +215,17 @@ app.get('/api.php', (_req, res) => {
 app.post('/api.php', (req, res) => {
   serverDbStore = loadServerDbFromDisk();
   const action = req.query.action || req.body?.action;
+  if (action === 'bazarpay_verify') {
+    if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
+      serverDbStore._bazarpay_pool = {};
+    }
+    const pool = serverDbStore._bazarpay_pool as Record<string, BazarPayTransaction>;
+    const result = verifyAndClaimBazarPayTx(pool, req.body || {});
+    if (result.status === 200) {
+      saveServerDbToDisk(serverDbStore);
+    }
+    return res.status(result.status).json(result.body);
+  }
   if (action === 'upload_image') {
     const { imageBase64 } = req.body || {};
     if (!imageBase64 || typeof imageBase64 !== 'string') {

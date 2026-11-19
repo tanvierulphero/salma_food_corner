@@ -2,6 +2,10 @@
   RewriteEngine On
   RewriteBase /
 
+  # BazarPay Webhook ও TrxID ভেরিফিকেশন রুট সরাসরি api.php-তে পাঠানো
+  RewriteRule ^api/bazarpay/webhook/?$ api.php?action=bazarpay_webhook [QSA,L]
+  RewriteRule ^api/bazarpay/verify-order/?$ api.php?action=bazarpay_verify [QSA,L]
+
   # api.php এবং uploads/ ফোল্ডারের ছবি সরাসরি সার্ভ করবে (কখনোই index.html এ যাবে না)
   RewriteRule ^api\.php$ - [L]
   RewriteRule ^(?:.*/)?api\.php$ api.php [QSA,L]
