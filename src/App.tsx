@@ -39,6 +39,16 @@ import {
   type BazarPayPaymentSession,
   type BazarPayReceiverNumbers,
 } from './utils/bazarpayClient';
+import {
+  addItemToCart,
+  calculateCartSubtotal,
+  countCartItems,
+  getCartItemKey,
+  removeCartItem,
+  sanitizeOrderItemsForStorage,
+  toNumericPrice,
+  updateCartItemQuantity,
+} from './utils/cartHelpers';
 
 // Types
 interface FoodItem {
@@ -501,10 +511,42 @@ export default function App() {
 
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('salma_cart');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter((item) => item && typeof item === 'object')
+            .map((item) => ({
+              ...item,
+              id: getCartItemKey(item),
+              price: toNumericPrice(item.price),
+              quantity: Math.max(1, Math.floor(Number(item.quantity) || 1)),
+            }));
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return [];
+  });
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [cartStep, setCartStep] = useState<'cart' | 'checkout'>('cart');
   const cartBodyRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      if (cart.length === 0) {
+        localStorage.removeItem('salma_cart');
+      } else {
+        localStorage.setItem('salma_cart', JSON.stringify(sanitizeOrderItemsForStorage(cart)));
+      }
+    } catch {
+      // Ignore storage quota errors for client-only cart cache
+    }
+  }, [cart]);
 
   const openCartDrawer = (step: 'cart' | 'checkout' = 'cart') => {
     setCheckoutError('');
@@ -772,7 +814,11 @@ export default function App() {
     }
     prevOrderStatusesRef.current = nextMap;
 
-    localStorage.setItem('salma_orders', JSON.stringify(orders));
+    try {
+      localStorage.setItem('salma_orders', JSON.stringify(orders));
+    } catch (err) {
+      console.error('Failed to persist salma_orders locally:', err);
+    }
   }, [orders, soundOn]);
 
   // Auto-dismiss delivery toast after 6 seconds
@@ -816,7 +862,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('salma_ledger', JSON.stringify(ledger));
+    try {
+      localStorage.setItem('salma_ledger', JSON.stringify(ledger));
+    } catch (err) {
+      console.error('Failed to persist salma_ledger locally:', err);
+    }
   }, [ledger]);
 
   // -------------------------------------------------------------
@@ -929,51 +979,51 @@ export default function App() {
   // -------------------------------------------------------------
   const [cardQuantities, setCardQuantities] = useState<Record<string, number>>({});
 
-  const getCardQuantity = (itemId: string) => {
-    const inCart = cart.find(c => c.id === itemId);
+  const getCardQuantity = (item: FoodItem) => {
+    const key = getCartItemKey(item);
+    const inCart = cart.find(c => getCartItemKey(c) === key);
     if (inCart) return inCart.quantity;
-    return cardQuantities[itemId] || 1;
+    return cardQuantities[key] || 1;
   };
 
   const handleCardStepper = (item: FoodItem, delta: number) => {
-    const inCart = cart.find(c => c.id === item.id);
+    const key = getCartItemKey(item);
+    const inCart = cart.find(c => getCartItemKey(c) === key);
     if (inCart) {
-      updateQuantity(item.id, delta);
+      updateQuantity(key, delta);
       const nextQty = Math.max(1, inCart.quantity + delta);
-      setCardQuantities(prev => ({ ...prev, [item.id]: nextQty }));
+      setCardQuantities(prev => ({ ...prev, [key]: nextQty }));
     } else {
       playCartQuantitySound();
       setCardQuantities(prev => {
-        const current = prev[item.id] || 1;
-        return { ...prev, [item.id]: Math.max(1, current + delta) };
+        const current = prev[key] || 1;
+        return { ...prev, [key]: Math.max(1, current + delta) };
       });
     }
   };
 
   const addToCart = (item: FoodItem, qtyToAdd?: number) => {
     playAddToCartSound();
-    const amount = qtyToAdd ?? (cardQuantities[item.id] || 1);
+    const key = getCartItemKey(item);
     setCart(prev => {
-      const existing = prev.find(i => i.id === item.id);
-      if (existing) {
-        return prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i);
-      }
-      return [...prev, { ...item, quantity: amount }];
+      const existing = prev.find(i => getCartItemKey(i) === key);
+      const amount = existing ? 1 : (qtyToAdd ?? (cardQuantities[key] || 1));
+      return addItemToCart(prev, item, amount) as CartItem[];
     });
   };
 
   const updateQuantity = (id: string, delta: number) => {
     playCartQuantitySound();
-    setCart(prev => prev.map(i => {
-      if (i.id === id) {
-        const newQty = i.quantity + delta;
-        return newQty > 0 ? { ...i, quantity: newQty } : null;
-      }
-      return i;
-    }).filter(Boolean) as CartItem[]);
+    setCart(prev => updateCartItemQuantity(prev, id, delta));
   };
 
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const handleRemoveFromCart = (id: string) => {
+    playCartQuantitySound();
+    setCart(prev => removeCartItem(prev, id));
+  };
+
+  const subtotal = calculateCartSubtotal(cart);
+  const totalCartQuantity = countCartItems(cart);
   // 1km Local Service Area Check (No delivery charge anywhere)
   const safeCheckoutAddress = String(checkoutForm.address || '').toLowerCase();
   const isAddressInFreeZone = (shopLocation.nearbyAreas || []).some(area => 
@@ -981,7 +1031,9 @@ export default function App() {
   );
   const isWithinFreeRadius = isWithinLocalServiceArea(customerDistanceKm, isAddressInFreeZone, shopLocation.freeRadiusKm);
   const isWithin1Km = isWithinFreeRadius;
-  const couponDiscount = discountApplied;
+  const couponDiscount = discountApplied > 0 && checkoutForm.coupon.trim().toUpperCase() === 'SALMA10'
+    ? Math.round(subtotal * 0.1)
+    : discountApplied;
   const availablePoints = currentCustomer ? currentCustomer.loyaltyPoints : 0;
   const loyaltyDiscount = checkoutForm.useLoyalty ? Math.min(availablePoints * 0.5, subtotal * 0.3) : 0;
 
@@ -998,13 +1050,19 @@ export default function App() {
   });
 
   const handleApplyCoupon = () => {
-    if (checkoutForm.coupon.toUpperCase() === 'SALMA10') {
+    if (checkoutForm.coupon.trim().toUpperCase() === 'SALMA10') {
       setDiscountApplied(Math.round(subtotal * 0.1));
       alert('১০% ডিসকাউন্ট কুপন সফলভাবে প্রয়োগ করা হয়েছে!');
     } else {
       alert('অকার্যকর কুপন কোড! (চেক করুন: SALMA10)');
     }
   };
+
+  useEffect(() => {
+    if (bazarPayVerified && bazarPayVerified.amountBdt < advanceAmount) {
+      setBazarPayVerified(null);
+    }
+  }, [advanceAmount, bazarPayVerified]);
 
   useEffect(() => {
     if (!isCartOpen || cartStep !== 'checkout' || cart.length === 0 || advanceAmount <= 0) return;
@@ -1033,7 +1091,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [isCartOpen, cartStep, cart.length, advanceAmount]);
+  }, [isCartOpen, cartStep, cart.length, subtotal, advanceAmount]);
 
   const mapBazarPayGateway = (
     gw: string | undefined,
@@ -1185,7 +1243,7 @@ export default function App() {
       customerName: name,
       phone: phone,
       address: address,
-      items: [...cart],
+      items: sanitizeOrderItemsForStorage(cart) as CartItem[],
       totalAmount: finalTotal,
       discount: couponDiscount + loyaltyDiscount,
       advancePaid: advanceAmount,
@@ -1226,7 +1284,9 @@ export default function App() {
     setBazarPayVerified(null);
     setBazarPayError('');
     setCheckoutError('');
-    setCheckoutForm(prev => ({ ...prev, transactionId: '' }));
+    setDiscountApplied(0);
+    setCardQuantities({});
+    setCheckoutForm(prev => ({ ...prev, transactionId: '', coupon: '' }));
     setOrderSuccessModal(newOrder);
     playOrderSuccessSound();
     setCart([]);
@@ -1479,7 +1539,7 @@ export default function App() {
   }
 
   return (
-    <div className="max-w-[430px] w-full mx-auto min-h-screen bg-[#fffdf9] flex flex-col font-sans text-gray-800 pb-28 shadow-[0_0_60px_rgba(0,0,0,0.55)] relative border-x border-amber-200/70 overflow-x-hidden">
+    <div className="max-w-[430px] w-full mx-auto min-h-screen bg-[#fffdf9] flex flex-col font-sans text-gray-800 pb-36 shadow-[0_0_60px_rgba(0,0,0,0.55)] relative border-x border-amber-200/70 overflow-x-hidden">
       
       {/* Visual Toast Notification: 'Preparing' -> 'Out for Delivery' */}
       <AnimatePresence>
@@ -1893,12 +1953,13 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-4">
-                    {filteredMenu.map(item => {
-                      const inCartItem = cart.find(c => c.id === item.id);
-                      const qty = getCardQuantity(item.id);
+                    {filteredMenu.map((item, idx) => {
+                      const itemKey = getCartItemKey(item);
+                      const inCartItem = cart.find(c => getCartItemKey(c) === itemKey);
+                      const qty = getCardQuantity(item);
                       return (
                         <div 
-                          key={item.id} 
+                          key={`${itemKey}-${idx}`} 
                           className={`bg-white rounded-2xl p-3.5 shadow-xs hover:shadow-md transition border flex flex-col gap-3 ${
                             inCartItem ? 'border-emerald-400 bg-emerald-50/10' : 'border-amber-100'
                           }`}
@@ -1921,12 +1982,12 @@ export default function App() {
                               <span>{item.rating}</span>
                             </div>
                             {inCartItem && (
-                              <span className="absolute top-2.5 right-2.5 bg-emerald-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-lg shadow-xs">
+                              <span className="absolute top-2.5 right-2.5 bg-emerald-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-lg shadow-xs z-10">
                                 কার্টে {inCartItem.quantity}টি
                               </span>
                             )}
                             {/* Bundle / Combo Badge */}
-                            {(item.isBundle || item.category === 'combo') && (
+                            {(item.isBundle || item.category === 'combo') && !inCartItem && (
                               <span className="absolute top-2.5 right-2.5 bg-gradient-to-r from-red-600 to-amber-600 text-white text-[10px] font-black px-2 py-0.5 rounded-lg shadow-xs flex items-center gap-1">
                                 <span>🎁 কম্বো বান্ডেল</span>
                               </span>
@@ -1942,7 +2003,7 @@ export default function App() {
                           <div className="flex flex-col justify-between gap-2">
                             <div>
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <h3 className="font-bold text-base text-gray-900 leading-snug">{item.nameBn}</h3>
+                                <h3 className="font-bold text-base text-gray-900 leading-snug">{item.nameBn || (item as any).name}</h3>
                                 {(item.isBundle || item.category === 'combo') && (
                                   <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.2 rounded-md">
                                     কম্বো অফার
@@ -1979,7 +2040,7 @@ export default function App() {
 
                             <div className="flex items-center justify-between gap-2 pt-2.5 mt-1 border-t border-gray-100">
                               <div className="flex items-baseline gap-1.5">
-                                <span className="text-base font-black text-red-600">৳{item.price}</span>
+                                <span className="text-base font-black text-red-600">৳{toNumericPrice(item.price)}</span>
                                 {item.originalPrice && (
                                   <span className="text-xs text-gray-400 line-through">৳{item.originalPrice}</span>
                                 )}
@@ -1990,6 +2051,7 @@ export default function App() {
                                 <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 text-gray-900 rounded-full px-2.5 py-1 shadow-2xs">
                                   <button 
                                     type="button"
+                                    aria-label={`${item.nameBn || 'খাবার'} কমান`}
                                     onClick={() => handleCardStepper(item, -1)}
                                     className="p-0.5 hover:bg-amber-200/60 active:scale-90 rounded-full text-red-600 cursor-pointer"
                                   >
@@ -1998,6 +2060,7 @@ export default function App() {
                                   <span className="text-xs font-black min-w-[18px] text-center select-none">{qty}</span>
                                   <button 
                                     type="button"
+                                    aria-label={`${item.nameBn || 'খাবার'} বাড়ান`}
                                     onClick={() => handleCardStepper(item, 1)}
                                     className="p-0.5 hover:bg-amber-200/60 active:scale-90 rounded-full text-emerald-700 cursor-pointer"
                                   >
@@ -2009,10 +2072,14 @@ export default function App() {
                                 <button
                                   type="button"
                                   onClick={() => addToCart(item, qty)}
-                                  className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0"
+                                  className={`active:scale-95 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0 ${
+                                    inCartItem
+                                      ? 'bg-emerald-700 hover:bg-emerald-800'
+                                      : 'bg-emerald-600 hover:bg-emerald-700'
+                                  }`}
                                 >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>কার্টে যোগ</span>
+                                  {inCartItem ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                                  <span>{inCartItem ? 'আরও যোগ' : 'কার্টে যোগ'}</span>
                                 </button>
                               </div>
                             </div>
@@ -3097,9 +3164,9 @@ export default function App() {
               animate={{ y: 0 }} 
               exit={{ y: '100%' }} 
               transition={{ type: 'spring', damping: 26, stiffness: 260 }}
-              className="relative z-10 w-full max-w-[430px] max-h-[92vh] bg-white rounded-t-3xl shadow-2xl flex flex-col overflow-hidden"
+              className="relative z-10 w-full max-w-[430px] max-h-[90dvh] bg-white rounded-t-3xl shadow-2xl flex flex-col overflow-hidden"
             >
-              <div className="p-3.5 bg-gradient-to-r from-red-600 to-amber-500 text-white flex items-center justify-between gap-2">
+              <div className="p-3.5 bg-gradient-to-r from-red-600 to-amber-500 text-white flex items-center justify-between gap-2 shrink-0">
                 <div className="flex items-center gap-2">
                   {cartStep === 'checkout' && cart.length > 0 && (
                     <button
@@ -3117,13 +3184,13 @@ export default function App() {
                   )}
                   <h2 className="font-bold text-base flex items-center gap-2">
                     <ShoppingBag className="w-5 h-5" />
-                    <span>{cartStep === 'checkout' && cart.length > 0 ? 'চেকআউট ও পেমেন্ট' : 'আপনার শপিং কার্ট'}</span>
+                    <span>{cartStep === 'checkout' && cart.length > 0 ? 'চেকআউট ও পেমেন্ট' : `আপনার শপিং কার্ট (${cart.length})`}</span>
                   </h2>
                 </div>
-                <button type="button" onClick={closeCartDrawer} className="hover:bg-black/10 p-1 rounded-full cursor-pointer"><X className="w-5 h-5" /></button>
+                <button type="button" aria-label="কার্ট বন্ধ করুন" onClick={closeCartDrawer} className="hover:bg-black/10 p-1 rounded-full cursor-pointer"><X className="w-5 h-5" /></button>
               </div>
 
-                <div ref={cartBodyRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div ref={cartBodyRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4">
                   {cart.length === 0 ? (
                     <div className="text-center py-16 text-gray-400">
                       <ShoppingBag className="w-16 h-16 mx-auto mb-3 opacity-30" />
@@ -3139,23 +3206,52 @@ export default function App() {
                     </div>
                   ) : cartStep === 'cart' ? (
                     <>
-                      {cart.map(item => (
-                        <div key={item.id} className="flex items-center justify-between gap-3 border-b pb-3">
-                          {item.image ? (
-                            <img src={item.image} alt={item.nameBn || 'Food item'} className="w-14 h-14 rounded-xl object-cover" />
-                          ) : (
-                            <div className="w-14 h-14 rounded-xl bg-amber-50 flex items-center justify-center text-amber-500 shrink-0">
-                              <Utensils className="w-6 h-6" />
+                      {cart.map(item => {
+                        const key = getCartItemKey(item);
+                        const unitPrice = toNumericPrice(item.price);
+                        return (
+                          <div key={key} className="flex items-center justify-between gap-2.5 border-b border-gray-100 pb-3">
+                            {item.image ? (
+                              <img src={item.image} alt={item.nameBn || 'Food item'} className="w-14 h-14 rounded-xl object-cover shrink-0" />
+                            ) : (
+                              <div className="w-14 h-14 rounded-xl bg-amber-50 flex items-center justify-center text-amber-500 shrink-0">
+                                <Utensils className="w-6 h-6" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-bold text-sm text-gray-900 truncate">{item.nameBn}</h4>
+                              <div className="flex items-center gap-1.5 text-xs">
+                                <span className="text-gray-500">৳{unitPrice} × {item.quantity}</span>
+                                <span className="text-red-600 font-extrabold">= ৳{unitPrice * item.quantity}</span>
+                              </div>
                             </div>
-                          )}
-                          <div className="flex-1"><h4 className="font-bold text-sm">{item.nameBn}</h4><span className="text-xs text-red-600 font-bold">৳ {item.price}</span></div>
-                          <div className="flex items-center gap-2 bg-amber-50 border rounded-lg p-1">
-                            <button type="button" onClick={() => updateQuantity(item.id, -1)} className="p-1 cursor-pointer"><Minus className="w-3 h-3" /></button>
-                            <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
-                            <button type="button" onClick={() => updateQuantity(item.id, 1)} className="p-1 cursor-pointer"><Plus className="w-3 h-3" /></button>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg p-1">
+                                <button type="button" aria-label={`${item.nameBn} কমান`} onClick={() => updateQuantity(key, -1)} className="p-1 cursor-pointer"><Minus className="w-3 h-3" /></button>
+                                <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
+                                <button type="button" aria-label={`${item.nameBn} বাড়ান`} onClick={() => updateQuantity(key, 1)} className="p-1 cursor-pointer"><Plus className="w-3 h-3" /></button>
+                              </div>
+                              <button
+                                type="button"
+                                aria-label={`${item.nameBn} সরান`}
+                                onClick={() => handleRemoveFromCart(key)}
+                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer transition"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
+
+                      <button
+                        type="button"
+                        onClick={closeCartDrawer}
+                        className="w-full py-2 border border-dashed border-emerald-400 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>আরও খাবার কার্টে যোগ করুন</span>
+                      </button>
 
                       {/* Coupon & Loyalty */}
                       <div className="space-y-3 pt-3 border-t">
@@ -3185,17 +3281,33 @@ export default function App() {
                   ) : (
                     /* Customer Information & Payment (Checkout Step) */
                     <form id="salma-checkout-form" onSubmit={handleCheckout} className="space-y-3">
-                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 flex items-center justify-between text-xs">
-                        <span className="font-bold text-gray-700">
-                          মোট {cart.reduce((s, i) => s + i.quantity, 0)}টি খাবার অর্ডার
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setCartStep('cart')}
-                          className="text-red-600 font-bold hover:underline cursor-pointer"
-                        >
-                          আইটেম পরিবর্তন ›
-                        </button>
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 space-y-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-800">
+                            মোট {cart.length}টি আইটেম ({totalCartQuantity} পিস)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setCartStep('cart')}
+                            className="text-red-600 font-bold hover:underline cursor-pointer"
+                          >
+                            আইটেম পরিবর্তন ›
+                          </button>
+                        </div>
+                        <div className="border-t border-amber-200/80 pt-1.5 space-y-1 max-h-28 overflow-y-auto">
+                          {cart.map((item) => {
+                            const key = getCartItemKey(item);
+                            const unitPrice = toNumericPrice(item.price);
+                            return (
+                              <div key={key} className="flex items-center justify-between gap-2 text-[11px] text-gray-700">
+                                <span className="truncate font-medium">
+                                  {item.nameBn} <b className="text-amber-900">× {item.quantity}</b>
+                                </span>
+                                <span className="font-bold text-gray-900 shrink-0">৳ {unitPrice * item.quantity}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                       <div className="flex justify-between items-center pt-1">
                         <h4 className="font-bold text-sm text-gray-800">গ্রাহকের তথ্য (অটো প্রোফাইল সেভ)</h4>
@@ -3521,7 +3633,7 @@ export default function App() {
                 </div>
 
                 {cart.length > 0 && (
-                  <div className="p-4 bg-gray-50 border-t space-y-2.5">
+                  <div className="p-4 bg-gray-50 border-t space-y-2.5 shrink-0">
                     {(checkoutError || bazarPayError) && cartStep === 'checkout' && (
                       <div className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
                         <AlertCircle className="w-4 h-4 shrink-0" />
@@ -4078,25 +4190,31 @@ export default function App() {
       {/* ================= FLOATING VIEW CART / CHECKOUT BAR (When items in cart) ================= */}
       {appMode === 'public' && cart.length > 0 && !isCartOpen && (
         <div className="fixed bottom-[62px] left-0 right-0 max-w-[430px] mx-auto px-3 z-40">
-          <button
-            type="button"
-            onClick={() => openCartDrawer('checkout')}
-            className="w-full bg-gradient-to-r from-red-600 via-rose-600 to-emerald-700 text-white p-3 rounded-2xl shadow-xl flex items-center justify-between border border-white/20 cursor-pointer active:scale-98 transition"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="bg-white/20 px-2.5 py-1 rounded-xl font-black text-xs">
-                {cart.reduce((sum, i) => sum + i.quantity, 0)} টি পদ
+          <div className="w-full bg-gradient-to-r from-red-600 via-rose-600 to-emerald-700 text-white px-2.5 py-2 rounded-2xl shadow-xl flex items-center justify-between gap-2 border border-white/20">
+            <button
+              type="button"
+              onClick={() => openCartDrawer('cart')}
+              className="flex items-center gap-2 text-left flex-1 min-w-0 cursor-pointer"
+            >
+              <div className="bg-white/20 min-w-[34px] h-9 px-2 rounded-xl flex items-center justify-center font-black text-sm shrink-0">
+                {totalCartQuantity}
               </div>
-              <div className="text-left">
-                <p className="text-xs font-black">সর্বমোট: ৳ {subtotal}</p>
-                <p className="text-[10px] text-amber-200">৩০% অগ্রীমে অর্ডার কনফার্ম করুন</p>
+              <div className="min-w-0">
+                <p className="text-sm font-black leading-tight">মোট: ৳{subtotal}</p>
+                <p className="text-[10px] text-amber-100 leading-tight truncate">
+                  {cart.length}টি আইটেম • {totalCartQuantity} পিস • কার্ট দেখুন
+                </p>
               </div>
-            </div>
-            <div className="flex items-center gap-1 bg-white text-red-700 font-black text-xs px-3 py-1.5 rounded-xl shadow-xs">
+            </button>
+            <button
+              type="button"
+              onClick={() => openCartDrawer('checkout')}
+              className="flex items-center gap-1 bg-white text-red-700 hover:bg-amber-50 font-black text-xs px-3 py-2 rounded-xl shadow-xs shrink-0 cursor-pointer active:scale-95 transition"
+            >
               <ShoppingBag className="w-3.5 h-3.5" />
               <span>চেকআউট করুন ›</span>
-            </div>
-          </button>
+            </button>
+          </div>
         </div>
       )}
 
@@ -4106,7 +4224,7 @@ export default function App() {
           {[
             { id: 'menu', label: 'মেনু', icon: Utensils, action: () => setPublicTab('menu'), active: publicTab === 'menu' && !isCartOpen && !isChatOpen },
             { id: 'tracker', label: 'ট্র্যাকিং', icon: Truck, badge: countActiveOrders(customerOrders), action: () => setPublicTab('tracker'), active: publicTab === 'tracker' && !isCartOpen },
-            { id: 'cart', label: 'কার্ট', icon: ShoppingBag, badge: cart.reduce((s, i) => s + i.quantity, 0), action: () => openCartDrawer('cart'), active: isCartOpen },
+            { id: 'cart', label: 'কার্ট', icon: ShoppingBag, badge: totalCartQuantity, action: () => openCartDrawer('cart'), active: isCartOpen },
             { id: 'profile', label: 'প্রোফাইল', icon: User, action: () => setPublicTab('profile'), active: publicTab === 'profile' && !isCartOpen },
             { id: 'reviews', label: 'রিভিউ', icon: Star, action: () => setPublicTab('reviews'), active: publicTab === 'reviews' && !isCartOpen }
           ].map(nav => {
