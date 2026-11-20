@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {
+  buildBanglaQrPayload,
   buildBazarPaySignaturePayload,
+  crc16Ccitt,
   createBazarPayPaymentSession,
   DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
   markBazarPaySessionPaid,
@@ -86,6 +88,7 @@ test('createBazarPayPaymentSession creates session with 01840684615 receiver num
   assert.equal(created.receiverNumbers.NAGAD, '01840684615');
   assert.equal(created.receiverNumbers.ROCKET, '01840684615');
   assert.equal(created.receiverNumbers.BANGLA_QR, '01840684615');
+  assert.ok(created.banglaQrPayload.startsWith('000201'));
   assert.equal(created.session.status, 'PENDING');
 
   const paidSession = markBazarPaySessionPaid(sessions, {
@@ -96,6 +99,22 @@ test('createBazarPayPaymentSession creates session with 01840684615 receiver num
   assert.ok(paidSession);
   assert.equal(paidSession.status, 'PAID');
   assert.equal(paidSession.trxId, 'BK999111');
+});
+
+test('buildBanglaQrPayload generates valid EMVCo payload with BDT currency, wallet, amount, and CRC16', () => {
+  const payload = buildBanglaQrPayload({
+    receiverNumber: '01840684615',
+    amountBdt: 450,
+    orderId: 'SF-5501',
+  });
+  assert.ok(payload.startsWith('000201010212'));
+  assert.ok(payload.includes('01840684615'));
+  assert.ok(payload.includes('5303050'));
+  assert.ok(payload.includes('5403450'));
+  assert.ok(payload.includes('5802BD'));
+  const body = payload.slice(0, -4);
+  const crc = payload.slice(-4);
+  assert.equal(crc, crc16Ccitt(body));
 });
 
 test('buildBazarPaySignaturePayload matches expected HMAC-SHA256 format', () => {

@@ -28,6 +28,7 @@ export interface BazarPayPaymentSession {
   status: 'PENDING' | 'PAID';
   trxId?: string | null;
   receiverNumbers: BazarPayReceiverNumbers;
+  banglaQrPayload?: string;
   createdAt: number;
   paidAt?: number | null;
 }
@@ -80,6 +81,66 @@ export function buildBazarPaySignaturePayload(timestamp: string, rawBody: string
   return `${timestamp}.${rawBody.trim()}`;
 }
 
+function tlv(tag: string, value: string): string {
+  const clean = value;
+  const len = String(clean.length).padStart(2, '0');
+  return `${tag}${len}${clean}`;
+}
+
+export function crc16Ccitt(input: string): string {
+  let crc = 0xffff;
+  for (let i = 0; i < input.length; i++) {
+    crc ^= input.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) {
+        crc = ((crc << 1) ^ 0x1021) & 0xffff;
+      } else {
+        crc = (crc << 1) & 0xffff;
+      }
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+/**
+ * Generates an EMVCo / Bangla QR Merchant Presented payload string for BazarPay BANGLA_QR.
+ */
+export function buildBanglaQrPayload(opts: {
+  receiverNumber: string;
+  amountBdt?: number;
+  orderId?: string;
+  merchantName?: string;
+  merchantCity?: string;
+}): string {
+  const wallet = String(opts.receiverNumber || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR).replace(/[^0-9+]/g, '') || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR;
+  const amountNum = Number(opts.amountBdt ?? 0);
+  const hasAmount = Number.isFinite(amountNum) && amountNum > 0;
+  const merchantName = (opts.merchantName || 'Salma Food Corner').slice(0, 25);
+  const merchantCity = (opts.merchantCity || 'Gazipur').slice(0, 15);
+  const orderRef = String(opts.orderId || 'ORDER').replace(/[^A-Za-z0-9-_]/g, '').slice(0, 20) || 'ORDER';
+
+  // Tag 26: Merchant Account Info (Bangla QR / BazarPay wallet identifier)
+  const merchantAccountInfo = tlv('00', 'BD.BAZARPAY.QR') + tlv('01', wallet);
+  // Tag 62: Additional Data (Bill/Order Reference)
+  const additionalData = tlv('05', orderRef);
+
+  const parts = [
+    tlv('00', '01'),
+    tlv('01', hasAmount ? '12' : '11'),
+    tlv('26', merchantAccountInfo),
+    tlv('52', '5812'),
+    tlv('53', '050'),
+    ...(hasAmount ? [tlv('54', Number.isInteger(amountNum) ? String(amountNum) : amountNum.toFixed(2))] : []),
+    tlv('58', 'BD'),
+    tlv('59', merchantName),
+    tlv('60', merchantCity),
+    tlv('62', additionalData),
+  ];
+
+  const payloadWithoutCrc = `${parts.join('')}6304`;
+  return `${payloadWithoutCrc}${crc16Ccitt(payloadWithoutCrc)}`;
+}
+
 export function createBazarPayPaymentSession(
   sessions: Record<string, BazarPayPaymentSession>,
   input: {
@@ -90,21 +151,28 @@ export function createBazarPayPaymentSession(
   },
   receiverNumbers: BazarPayReceiverNumbers = DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
   nowMs: number = Date.now()
-): { paymentId: string; checkoutUrl: string; receiverNumbers: BazarPayReceiverNumbers; session: BazarPayPaymentSession } {
+): { paymentId: string; checkoutUrl: string; receiverNumbers: BazarPayReceiverNumbers; banglaQrPayload: string; session: BazarPayPaymentSession } {
   const paymentId = `bp_pay_${nowMs}`;
   const amount = Number(input.amountBdt ?? 0);
+  const cleanAmount = Number.isFinite(amount) ? amount : 0;
   const gateway = String(input.gateway || 'BKASH').trim().toUpperCase() || 'BKASH';
   const orderId = String(input.orderId || `ORD-${nowMs}`).trim();
+  const banglaQrPayload = buildBanglaQrPayload({
+    receiverNumber: receiverNumbers.BANGLA_QR || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR,
+    amountBdt: cleanAmount,
+    orderId,
+  });
 
   const session: BazarPayPaymentSession = {
     paymentId,
     orderId,
-    amountBdt: Number.isFinite(amount) ? amount : 0,
+    amountBdt: cleanAmount,
     customerName: String(input.customerName || 'Customer').trim() || 'Customer',
     gateway,
     status: 'PENDING',
     trxId: null,
     receiverNumbers: { ...receiverNumbers },
+    banglaQrPayload,
     createdAt: nowMs,
     paidAt: null,
   };
@@ -115,6 +183,7 @@ export function createBazarPayPaymentSession(
     paymentId,
     checkoutUrl: `/bazarpay/checkout/${paymentId}`,
     receiverNumbers: { ...receiverNumbers },
+    banglaQrPayload,
     session,
   };
 }

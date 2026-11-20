@@ -6,6 +6,7 @@ import {
   verifyBazarPayOrder,
   type BazarPayPaymentSession,
 } from '../utils/bazarpayClient';
+import BanglaQrCard from './BanglaQrCard';
 
 interface BazarPayCheckoutPageProps {
   paymentId: string;
@@ -224,6 +225,14 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                 <p className="text-[11px] text-gray-600 leading-relaxed">
                   উপরের নম্বরে <b>৳ {session.amountBdt}</b> সেন্ড মানি/পেমেন্ট করে SMS-এ পাওয়া <b>TrxID</b> নিচে বসান।
                 </p>
+                {selectedGateway === 'BANGLA_QR' && (
+                  <BanglaQrCard
+                    receiverNumber={activeNumber}
+                    amountBdt={session.amountBdt}
+                    orderId={session.orderId}
+                    qrPayloadOverride={session.banglaQrPayload}
+                  />
+                )}
               </div>
 
               <form onSubmit={handleVerify} className="space-y-3">

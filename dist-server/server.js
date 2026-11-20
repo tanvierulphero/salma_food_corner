@@ -65,6 +65,7 @@ app.post('/api/bazarpay/create-payment', (req, res) => {
         paymentId: created.paymentId,
         checkoutUrl: created.checkoutUrl,
         receiverNumbers: created.receiverNumbers,
+        banglaQrPayload: created.banglaQrPayload,
         session: created.session,
     });
 });

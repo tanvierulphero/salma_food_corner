@@ -25,6 +25,7 @@ import {
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import BazarPayCheckoutPage from './components/BazarPayCheckoutPage';
+import BanglaQrCard from './components/BanglaQrCard';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION, MenuCategory, DEFAULT_MENU_CATEGORIES } from './types';
 import CategoryManagerModal from './components/CategoryManagerModal';
 import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer, getCustomerDueOrAdvanceBalance, getCustomerTransactions } from './utils/sqlSync';
@@ -3466,6 +3467,16 @@ export default function App() {
                         <p className="text-[10px] text-gray-600">
                           উপরের নম্বরে <b>৳ {advanceAmount}</b> পেমেন্ট করে SMS-এ পাওয়া TrxID দিন — <b>BazarPay</b> সাথে সাথে অটো ভেরিফাই করবে।
                         </p>
+                        {bazarPayGateway === 'BANGLA_QR' && (
+                          <BanglaQrCard
+                            receiverNumber={
+                              bazarPayReceiverNumbers.BANGLA_QR || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR
+                            }
+                            amountBdt={advanceAmount}
+                            orderId={bazarPaySession?.orderId}
+                            compact
+                          />
+                        )}
                         <div className="flex gap-2">
                           <input 
                             type="text" 
