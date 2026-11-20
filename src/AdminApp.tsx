@@ -893,10 +893,13 @@ export default function AdminApp() {
   };
 
   // Filtered menu
-  const filteredMenu = menuItems.filter(item => {
+  const normalizedMenuSearch = String(menuSearch || '').toLowerCase();
+  const filteredMenu = (Array.isArray(menuItems) ? menuItems : []).filter(item => {
+    if (!item) return false;
     const matchCat = menuCategoryFilter === 'all' || item.category === menuCategoryFilter;
-    const matchSearch = item.nameBn.toLowerCase().includes(menuSearch.toLowerCase()) || 
-                        item.nameEn.toLowerCase().includes(menuSearch.toLowerCase());
+    const bn = String(item.nameBn || (item as any).name || '').toLowerCase();
+    const en = String(item.nameEn || '').toLowerCase();
+    const matchSearch = bn.includes(normalizedMenuSearch) || en.includes(normalizedMenuSearch);
     return matchCat && matchSearch;
   });
 

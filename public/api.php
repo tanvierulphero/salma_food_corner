@@ -23,8 +23,14 @@ $DB_NAME = '';
 $DB_USER = '';
 $DB_PASS = '';
 
-// BazarPay ওয়েবহুক সিক্রেট (চাইলে এখানে অথবা public_html/db_config.php ফাইলে $BAZARPAY_SECRET = '...'; হিসেবে রাখতে পারেন)
+// BazarPay ওয়েবহুক সিক্রেট ও পেমেন্ট রিসিভার নম্বর (চাইলে এখানে অথবা public_html/db_config.php ফাইলে পরিবর্তন করতে পারেন)
 $BAZARPAY_SECRET = getenv('BAZARPAY_SECRET') ?: 'bp_test_94f8a2c1e7b04d39';
+$BAZARPAY_RECEIVER_NUMBERS = [
+    'BKASH'     => '01840684615',
+    'NAGAD'     => '01840684615',
+    'ROCKET'    => '01840684615',
+    'BANGLA_QR' => '01840684615',
+];
 
 $inlineDbHost = trim((string)$DB_HOST);
 $inlineDbName = trim((string)$DB_NAME);
@@ -352,6 +358,20 @@ function initMysqlTables($conn) {
       `claimed_at` timestamp NULL DEFAULT NULL,
       PRIMARY KEY (`trx_id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    $conn->query("CREATE TABLE IF NOT EXISTS `bazarpay_sessions` (
+      `payment_id` varchar(100) NOT NULL,
+      `order_id` varchar(64) NOT NULL,
+      `amount_bdt` decimal(10,2) NOT NULL DEFAULT 0.00,
+      `customer_name` varchar(255) DEFAULT 'Customer',
+      `gateway` varchar(50) NOT NULL DEFAULT 'BKASH',
+      `status` varchar(30) NOT NULL DEFAULT 'PENDING',
+      `trx_id` varchar(100) DEFAULT NULL,
+      `receiver_numbers_json` text,
+      `created_at_ms` bigint(20) NOT NULL DEFAULT 0,
+      `paid_at_ms` bigint(20) DEFAULT NULL,
+      PRIMARY KEY (`payment_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 }
 
 function syncKeyToRelationalTables($conn, $rawKey, $valJson) {
@@ -671,13 +691,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
 
         // ১) যেসব কী MySQL-এ আছে সেগুলো লোড করা
         foreach ($mysqlData as $k => $mVal) {
-            if ($k === '_salma_meta' || $k === '_bazarpay_pool') continue;
+            if ($k === '_salma_meta' || $k === '_bazarpay_pool' || $k === '_bazarpay_sessions') continue;
             $data[$k] = $mVal;
         }
 
         // ২) যেসব কী ফাইলে (salma_server_db.json) আছে কিন্তু MySQL-এ নেই অথবা ফাইলে নতুন টাইমস্ট্যাম্প আছে সেগুলো MySQL টেবিলে সিঙ্ক করা
         foreach ($fileData as $k => $fVal) {
-            if ($k === '_salma_meta' || $k === '_bazarpay_pool') continue;
+            if ($k === '_salma_meta' || $k === '_bazarpay_pool' || $k === '_bazarpay_sessions') continue;
             $fTs = isset($fileMeta[$k]) ? floatval($fileMeta[$k]) : 0;
             $mTs = isset($mysqlMeta[$k]) ? floatval($mysqlMeta[$k]) : 0;
             $missingInMysql = !array_key_exists($k, $mysqlData);
@@ -737,6 +757,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
     }
     if (isset($data['_bazarpay_pool'])) {
         unset($data['_bazarpay_pool']);
+    }
+    if (isset($data['_bazarpay_sessions'])) {
+        unset($data['_bazarpay_sessions']);
     }
 
     echo json_encode([
@@ -833,11 +856,116 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'bazarpay_webhook' || 
 }
 
 // ============================================================================
+// ১.ক.০ BazarPay সেল্ফ-হোস্টেড পেমেন্ট সেশন তৈরি ও লোড করা
+// POST /api/bazarpay/create-payment  |  GET /api/bazarpay/payment/:paymentId
+// ============================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'bazarpay_create') {
+    $payload = is_array($jsonPayload) ? $jsonPayload : (!empty($_POST) ? $_POST : []);
+    $nowMs = round(microtime(true) * 1000);
+    $paymentId = 'bp_pay_' . (string)$nowMs;
+    $orderId = trim((string)($payload['orderId'] ?? ($payload['order_id'] ?? ('ORD-' . $nowMs))));
+    $amountBdt = floatval($payload['amountBdt'] ?? ($payload['amount_bdt'] ?? 0));
+    $customerName = trim((string)($payload['customerName'] ?? ($payload['customer_name'] ?? 'Customer'))) ?: 'Customer';
+    $gateway = strtoupper(trim((string)($payload['gateway'] ?? 'BKASH'))) ?: 'BKASH';
+
+    $session = [
+        'paymentId' => $paymentId,
+        'orderId' => $orderId,
+        'amountBdt' => $amountBdt,
+        'customerName' => $customerName,
+        'gateway' => $gateway,
+        'status' => 'PENDING',
+        'trxId' => null,
+        'receiverNumbers' => $BAZARPAY_RECEIVER_NUMBERS,
+        'createdAt' => $nowMs,
+        'paidAt' => null
+    ];
+
+    $serverData = readServerDbFile($serverDbFile, $serverDbFileBackup);
+    if (!isset($serverData['_bazarpay_sessions']) || !is_array($serverData['_bazarpay_sessions'])) {
+        $serverData['_bazarpay_sessions'] = [];
+    }
+    $serverData['_bazarpay_sessions'][$paymentId] = $session;
+    writeServerDbFile($serverDbFile, $serverData, $serverDbFileBackup);
+
+    if ($mysqlConnected && $conn) {
+        $pidEsc = $conn->real_escape_string($paymentId);
+        $ordEsc = $conn->real_escape_string(safeSubstr($orderId, 60));
+        $nameEsc = $conn->real_escape_string(safeSubstr($customerName, 250));
+        $gwEsc = $conn->real_escape_string(safeSubstr($gateway, 45));
+        $rnEsc = $conn->real_escape_string(json_encode($BAZARPAY_RECEIVER_NUMBERS, JSON_UNESCAPED_UNICODE));
+        @$conn->query("REPLACE INTO `bazarpay_sessions` (`payment_id`, `order_id`, `amount_bdt`, `customer_name`, `gateway`, `status`, `receiver_numbers_json`, `created_at_ms`)
+            VALUES ('$pidEsc', '$ordEsc', $amountBdt, '$nameEsc', '$gwEsc', 'PENDING', '$rnEsc', $nowMs)");
+    }
+
+    echo json_encode([
+        'ok' => true,
+        'paymentId' => $paymentId,
+        'checkoutUrl' => '/bazarpay/checkout/' . $paymentId,
+        'receiverNumbers' => $BAZARPAY_RECEIVER_NUMBERS,
+        'session' => $session
+    ], JSON_UNESCAPED_UNICODE);
+    if ($conn) $conn->close();
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'bazarpay_payment') {
+    $paymentId = trim((string)($_GET['paymentId'] ?? ''));
+    if ($paymentId === '') {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Missing paymentId'], JSON_UNESCAPED_UNICODE);
+        if ($conn) $conn->close();
+        exit;
+    }
+
+    $session = null;
+    if ($mysqlConnected && $conn) {
+        $pidEsc = $conn->real_escape_string($paymentId);
+        $res = @$conn->query("SELECT * FROM `bazarpay_sessions` WHERE `payment_id` = '$pidEsc' LIMIT 1");
+        if ($res && $res->num_rows > 0) {
+            $row = $res->fetch_assoc();
+            $rn = json_decode((string)($row['receiver_numbers_json'] ?? ''), true);
+            $session = [
+                'paymentId' => $row['payment_id'],
+                'orderId' => $row['order_id'],
+                'amountBdt' => floatval($row['amount_bdt']),
+                'customerName' => $row['customer_name'],
+                'gateway' => $row['gateway'],
+                'status' => $row['status'],
+                'trxId' => $row['trx_id'],
+                'receiverNumbers' => is_array($rn) ? $rn : $BAZARPAY_RECEIVER_NUMBERS,
+                'createdAt' => floatval($row['created_at_ms']),
+                'paidAt' => $row['paid_at_ms'] ? floatval($row['paid_at_ms']) : null
+            ];
+        }
+    }
+
+    if (!$session) {
+        $serverData = readServerDbFile($serverDbFile, $serverDbFileBackup);
+        if (isset($serverData['_bazarpay_sessions'][$paymentId]) && is_array($serverData['_bazarpay_sessions'][$paymentId])) {
+            $session = $serverData['_bazarpay_sessions'][$paymentId];
+        }
+    }
+
+    if (!$session) {
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'error' => 'Session not found'], JSON_UNESCAPED_UNICODE);
+        if ($conn) $conn->close();
+        exit;
+    }
+
+    echo json_encode(['ok' => true, 'session' => $session], JSON_UNESCAPED_UNICODE);
+    if ($conn) $conn->close();
+    exit;
+}
+
+// ============================================================================
 // ১.ক.২ BazarPay TrxID ভেরিফিকেশন (POST /api/bazarpay/verify-order বা /api.php?action=bazarpay_verify)
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'bazarpay_verify') {
     $payload = is_array($jsonPayload) ? $jsonPayload : (!empty($_POST) ? $_POST : []);
     $orderId = trim((string)($payload['orderId'] ?? ($payload['order_id'] ?? '')));
+    $paymentId = trim((string)($payload['paymentId'] ?? ($payload['payment_id'] ?? '')));
     $key = strtoupper(trim((string)($payload['trxId'] ?? ($payload['trx_id'] ?? ''))));
     $amountBdt = floatval($payload['amountBdt'] ?? ($payload['amount_bdt'] ?? 0));
 
@@ -882,8 +1010,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'bazarpay_verify') {
             echo json_encode([
                 'paid' => true,
                 'orderId' => $orderId,
+                'paymentId' => $paymentId ?: null,
                 'trxId' => $key,
-                'gateway' => $tx['gateway'] ?? 'bKash',
+                'gateway' => $tx['gateway'] ?? 'BKASH',
                 'amountBdt' => floatval($tx['amount_bdt'] ?? 0),
                 'senderWallet' => $tx['sender_wallet'] ?? ''
             ], JSON_UNESCAPED_UNICODE);
@@ -904,11 +1033,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'bazarpay_verify') {
         exit;
     }
 
-    // Claim the transaction in both MySQL and JSON backup
+    $nowMs = round(microtime(true) * 1000);
+    // Claim the transaction & mark payment session PAID in both MySQL and JSON backup
     if ($mysqlConnected && $conn) {
         $trxEsc = $conn->real_escape_string($key);
         $ordEsc = $conn->real_escape_string(safeSubstr($orderId, 60));
         @$conn->query("UPDATE `bazarpay_transactions` SET `claimed` = 1, `claimed_order_id` = '$ordEsc', `claimed_at` = CURRENT_TIMESTAMP WHERE `trx_id` = '$trxEsc'");
+        if ($paymentId !== '') {
+            $pidEsc = $conn->real_escape_string($paymentId);
+            @$conn->query("UPDATE `bazarpay_sessions` SET `status` = 'PAID', `trx_id` = '$trxEsc', `paid_at_ms` = $nowMs WHERE `payment_id` = '$pidEsc'");
+        } elseif ($orderId !== '') {
+            @$conn->query("UPDATE `bazarpay_sessions` SET `status` = 'PAID', `trx_id` = '$trxEsc', `paid_at_ms` = $nowMs WHERE `order_id` = '$ordEsc'");
+        }
     }
     if (!isset($serverData['_bazarpay_pool']) || !is_array($serverData['_bazarpay_pool'])) {
         $serverData['_bazarpay_pool'] = [];
@@ -916,15 +1052,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'bazarpay_verify') {
     $serverData['_bazarpay_pool'][$key] = array_merge($tx, [
         'claimed' => true,
         'claimed_order_id' => $orderId,
-        'claimed_at' => round(microtime(true) * 1000)
+        'claimed_at' => $nowMs
     ]);
+    if (isset($serverData['_bazarpay_sessions']) && is_array($serverData['_bazarpay_sessions'])) {
+        if ($paymentId !== '' && isset($serverData['_bazarpay_sessions'][$paymentId])) {
+            $serverData['_bazarpay_sessions'][$paymentId]['status'] = 'PAID';
+            $serverData['_bazarpay_sessions'][$paymentId]['trxId'] = $key;
+            $serverData['_bazarpay_sessions'][$paymentId]['paidAt'] = $nowMs;
+        }
+    }
     writeServerDbFile($serverDbFile, $serverData, $serverDbFileBackup);
 
     echo json_encode([
         'paid' => true,
         'orderId' => $orderId,
+        'paymentId' => $paymentId ?: null,
         'trxId' => $key,
-        'gateway' => $tx['gateway'] ?? 'bKash',
+        'gateway' => $tx['gateway'] ?? 'BKASH',
         'amountBdt' => $receivedAmt,
         'senderWallet' => $tx['sender_wallet'] ?? ''
     ], JSON_UNESCAPED_UNICODE);

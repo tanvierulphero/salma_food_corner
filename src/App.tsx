@@ -12,7 +12,7 @@ import {
   Check, Lock, Smartphone, RefreshCw, Printer, User, ShieldAlert, LogOut, Eye,
   Calendar, FileText, ArrowUpRight, ArrowDownRight, PieChart, Users,
   Receipt, Edit3, Save, MapPin, Hash, CreditCard, Navigation, Compass, Crosshair, Info,
-  Volume2, VolumeX, Upload
+  Volume2, VolumeX, Upload, Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -24,13 +24,20 @@ import {
 } from './utils/audioFeedback';
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
+import BazarPayCheckoutPage from './components/BazarPayCheckoutPage';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION, MenuCategory, DEFAULT_MENU_CATEGORIES } from './types';
 import CategoryManagerModal from './components/CategoryManagerModal';
 import { uploadFoodImageToCpanel, saveToCpanelDb, normalizeBdPhone, findCustomerByPhone, pullFromServer, getCustomerDueOrAdvanceBalance, getCustomerTransactions } from './utils/sqlSync';
 import { formatDateDMY } from './utils/dateFormatter';
 import { calculateCheckoutSummary, isWithinLocalServiceArea } from './utils/orderCalculations';
 import { countActiveOrders, removeOrderById, setOrderStatusById } from './utils/syncReconcile';
-import { verifyBazarPayOrder } from './utils/bazarpayClient';
+import {
+  createBazarPayPayment,
+  DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+  verifyBazarPayOrder,
+  type BazarPayPaymentSession,
+  type BazarPayReceiverNumbers,
+} from './utils/bazarpayClient';
 
 // Types
 interface FoodItem {
@@ -593,6 +600,12 @@ export default function App() {
   const [bazarPayChecking, setBazarPayChecking] = useState<boolean>(false);
   const [bazarPayError, setBazarPayError] = useState<string>('');
   const [checkoutError, setCheckoutError] = useState<string>('');
+  const [bazarPayGateway, setBazarPayGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'>('BKASH');
+  const [bazarPaySession, setBazarPaySession] = useState<BazarPayPaymentSession | null>(null);
+  const [bazarPayReceiverNumbers, setBazarPayReceiverNumbers] = useState<BazarPayReceiverNumbers>(
+    DEFAULT_BAZARPAY_RECEIVER_NUMBERS
+  );
+  const [copiedBazarPayNum, setCopiedBazarPayNum] = useState<boolean>(false);
   const [bazarPayVerified, setBazarPayVerified] = useState<{
     orderId: string;
     trxId: string;
@@ -620,8 +633,8 @@ export default function App() {
   // Helper: Detect if typed address is within 1km
   const checkAddressKeywordFor1Km = (addr: string) => {
     if (!addr) return;
-    const lower = addr.toLowerCase();
-    const matched = NEARBY_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
+    const lower = String(addr || '').toLowerCase();
+    const matched = NEARBY_KEYWORDS.some(kw => lower.includes(String(kw || '').toLowerCase()));
     if (matched) {
       setCustomerDistanceKm(0.4);
       setDistanceVerifiedType('address');
@@ -961,8 +974,9 @@ export default function App() {
 
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   // 1km Local Service Area Check (No delivery charge anywhere)
+  const safeCheckoutAddress = String(checkoutForm.address || '').toLowerCase();
   const isAddressInFreeZone = (shopLocation.nearbyAreas || []).some(area => 
-    checkoutForm.address.toLowerCase().includes(area.toLowerCase())
+    safeCheckoutAddress.includes(String(area || '').toLowerCase())
   );
   const isWithinFreeRadius = isWithinLocalServiceArea(customerDistanceKm, isAddressInFreeZone, shopLocation.freeRadiusKm);
   const isWithin1Km = isWithinFreeRadius;
@@ -991,6 +1005,35 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!isCartOpen || cartStep !== 'checkout' || cart.length === 0 || advanceAmount <= 0) return;
+    if (bazarPaySession && bazarPaySession.amountBdt === advanceAmount && bazarPaySession.status === 'PENDING') {
+      return;
+    }
+    let active = true;
+    const nextOrderId = bazarPaySession?.orderId || ('SF-' + Math.floor(1000 + Math.random() * 9000));
+    createBazarPayPayment({
+      orderId: nextOrderId,
+      amountBdt: advanceAmount,
+      customerName: checkoutForm.name.trim() || 'Customer',
+      gateway: bazarPayGateway,
+    }).then((res) => {
+      if (!active) return;
+      if (res.receiverNumbers) {
+        setBazarPayReceiverNumbers(res.receiverNumbers);
+      }
+      if (res.ok && res.session) {
+        setBazarPaySession(res.session);
+        if (res.session.receiverNumbers) {
+          setBazarPayReceiverNumbers(res.session.receiverNumbers);
+        }
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [isCartOpen, cartStep, cart.length, advanceAmount]);
+
   const mapBazarPayGateway = (
     gw: string | undefined,
     fallback: 'BazarPay' | 'bKash' | 'Nagad' | 'Card'
@@ -1015,11 +1058,13 @@ export default function App() {
       return;
     }
 
-    const candidateOrderId = bazarPayVerified?.orderId || ('SF-' + Math.floor(1000 + Math.random() * 9000));
+    const candidateOrderId =
+      bazarPayVerified?.orderId || bazarPaySession?.orderId || ('SF-' + Math.floor(1000 + Math.random() * 9000));
     setBazarPayChecking(true);
     try {
       const res = await verifyBazarPayOrder({
         orderId: candidateOrderId,
+        paymentId: bazarPaySession?.paymentId,
         trxId: normalizedTrx,
         amountBdt: advanceAmount
       });
@@ -1037,7 +1082,7 @@ export default function App() {
       setBazarPayVerified({
         orderId: res.orderId || candidateOrderId,
         trxId: res.trxId || normalizedTrx,
-        gateway: res.gateway || verifiedMethod,
+        gateway: res.gateway || bazarPayGateway,
         amountBdt: Number(res.amountBdt || advanceAmount)
       });
     } finally {
@@ -1066,7 +1111,7 @@ export default function App() {
       return;
     }
 
-    let confirmedOrderId = 'SF-' + Math.floor(1000 + Math.random() * 9000);
+    let confirmedOrderId = bazarPaySession?.orderId || ('SF-' + Math.floor(1000 + Math.random() * 9000));
     let confirmedTrxId = normalizedTrx;
     let confirmedMethod: 'BazarPay' | 'bKash' | 'Nagad' | 'Card' = checkoutForm.advancePaymentMethod;
 
@@ -1083,6 +1128,7 @@ export default function App() {
       try {
         const res = await verifyBazarPayOrder({
           orderId: confirmedOrderId,
+          paymentId: bazarPaySession?.paymentId,
           trxId: normalizedTrx,
           amountBdt: advanceAmount
         });
@@ -1175,6 +1221,7 @@ export default function App() {
     setLedger(nextLedger);
     saveToCpanelDb('salma_ledger', nextLedger);
 
+    setBazarPaySession(null);
     setBazarPayVerified(null);
     setBazarPayError('');
     setCheckoutError('');
@@ -1389,24 +1436,30 @@ export default function App() {
   const todayExpense = ledger.filter(l => l.type === 'expense' && l.date === todayStr).reduce((sum, l) => sum + l.amount, 0);
 
   const currentMonthPrefix = todayStr.substring(0, 7);
-  const monthlyIncome = ledger.filter(l => l.type === 'income' && l.date.startsWith(currentMonthPrefix)).reduce((sum, l) => sum + l.amount, 0);
-  const monthlyExpense = ledger.filter(l => l.type === 'expense' && l.date.startsWith(currentMonthPrefix)).reduce((sum, l) => sum + l.amount, 0);
+  const monthlyIncome = ledger.filter(l => l && l.type === 'income' && String(l.date || '').startsWith(currentMonthPrefix)).reduce((sum, l) => sum + Number(l.amount || 0), 0);
+  const monthlyExpense = ledger.filter(l => l && l.type === 'expense' && String(l.date || '').startsWith(currentMonthPrefix)).reduce((sum, l) => sum + Number(l.amount || 0), 0);
 
   const currentYearPrefix = todayStr.substring(0, 4);
-  const yearlyIncome = ledger.filter(l => l.type === 'income' && l.date.startsWith(currentYearPrefix)).reduce((sum, l) => sum + l.amount, 0);
-  const yearlyExpense = ledger.filter(l => l.type === 'expense' && l.date.startsWith(currentYearPrefix)).reduce((sum, l) => sum + l.amount, 0);
+  const yearlyIncome = ledger.filter(l => l && l.type === 'income' && String(l.date || '').startsWith(currentYearPrefix)).reduce((sum, l) => sum + Number(l.amount || 0), 0);
+  const yearlyExpense = ledger.filter(l => l && l.type === 'expense' && String(l.date || '').startsWith(currentYearPrefix)).reduce((sum, l) => sum + Number(l.amount || 0), 0);
 
-  const filteredMenu = menuItems.filter(item => {
+  const normalizedSearchQuery = String(searchQuery || '').toLowerCase();
+  const filteredMenu = (Array.isArray(menuItems) ? menuItems : []).filter(item => {
+    if (!item) return false;
     const matchesCategory = categoryFilter === 'all' || item.category === categoryFilter;
-    const matchesSearch = item.nameBn.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          item.nameEn.toLowerCase().includes(searchQuery.toLowerCase());
+    const bn = String(item.nameBn || (item as any).name || '').toLowerCase();
+    const en = String(item.nameEn || '').toLowerCase();
+    const matchesSearch = bn.includes(normalizedSearchQuery) || en.includes(normalizedSearchQuery);
     return matchesCategory && matchesSearch;
   });
 
-  const adminFilteredMenu = menuItems.filter(item => {
+  const normalizedAdminFoodSearch = String(adminFoodSearch || '').toLowerCase();
+  const adminFilteredMenu = (Array.isArray(menuItems) ? menuItems : []).filter(item => {
+    if (!item) return false;
     const matchesCategory = adminFoodCategory === 'all' || item.category === adminFoodCategory;
-    const matchesSearch = item.nameBn.toLowerCase().includes(adminFoodSearch.toLowerCase()) || 
-                          item.nameEn.toLowerCase().includes(adminFoodSearch.toLowerCase());
+    const bn = String(item.nameBn || (item as any).name || '').toLowerCase();
+    const en = String(item.nameEn || '').toLowerCase();
+    const matchesSearch = bn.includes(normalizedAdminFoodSearch) || en.includes(normalizedAdminFoodSearch);
     return matchesCategory && matchesSearch;
   });
 
@@ -1414,6 +1467,15 @@ export default function App() {
   const customerOrders = currentCustomer 
     ? orders.filter(o => o.phone === currentCustomer.phone)
     : orders;
+
+  // Self-hosted BazarPay Checkout Page route (/bazarpay/checkout/:paymentId)
+  const bazarPayRouteMatch =
+    typeof window !== 'undefined'
+      ? window.location.pathname.match(/^\/bazarpay\/checkout\/([^/?#]+)\/?$/)
+      : null;
+  if (bazarPayRouteMatch && bazarPayRouteMatch[1]) {
+    return <BazarPayCheckoutPage paymentId={decodeURIComponent(bazarPayRouteMatch[1])} />;
+  }
 
   return (
     <div className="max-w-[430px] w-full mx-auto min-h-screen bg-[#fffdf9] flex flex-col font-sans text-gray-800 pb-28 shadow-[0_0_60px_rgba(0,0,0,0.55)] relative border-x border-amber-200/70 overflow-x-hidden">
@@ -1842,11 +1904,17 @@ export default function App() {
                         >
                           {/* Top Food Image */}
                           <div className="relative w-full h-44 rounded-xl overflow-hidden bg-amber-50">
-                            <img 
-                              src={item.image} 
-                              alt={item.nameBn} 
-                              className="w-full h-full object-cover" 
-                            />
+                            {item.image ? (
+                              <img 
+                                src={item.image} 
+                                alt={item.nameBn || (item as any).name || 'Food item'} 
+                                className="w-full h-full object-cover" 
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-amber-400">
+                                <Utensils className="w-10 h-10" />
+                              </div>
+                            )}
                             <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-xs text-white px-2 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-xs">
                               <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
                               <span>{item.rating}</span>
@@ -2668,7 +2736,13 @@ export default function App() {
                       className="bg-white rounded-2xl p-3 shadow-xs border border-amber-200 flex gap-3 items-center"
                     >
                       <div className="relative w-20 h-20 rounded-xl overflow-hidden bg-amber-50 shrink-0">
-                        <img src={item.image} alt={item.nameBn} className="w-full h-full object-cover" />
+                        {item.image ? (
+                          <img src={item.image} alt={item.nameBn || 'Food item'} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-amber-400">
+                            <Utensils className="w-6 h-6" />
+                          </div>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between items-start gap-1">
@@ -3066,7 +3140,13 @@ export default function App() {
                     <>
                       {cart.map(item => (
                         <div key={item.id} className="flex items-center justify-between gap-3 border-b pb-3">
-                          <img src={item.image} alt={item.nameBn} className="w-14 h-14 rounded-xl object-cover" />
+                          {item.image ? (
+                            <img src={item.image} alt={item.nameBn || 'Food item'} className="w-14 h-14 rounded-xl object-cover" />
+                          ) : (
+                            <div className="w-14 h-14 rounded-xl bg-amber-50 flex items-center justify-center text-amber-500 shrink-0">
+                              <Utensils className="w-6 h-6" />
+                            </div>
+                          )}
                           <div className="flex-1"><h4 className="font-bold text-sm">{item.nameBn}</h4><span className="text-xs text-red-600 font-bold">৳ {item.price}</span></div>
                           <div className="flex items-center gap-2 bg-amber-50 border rounded-lg p-1">
                             <button type="button" onClick={() => updateQuantity(item.id, -1)} className="p-1 cursor-pointer"><Minus className="w-3 h-3" /></button>
@@ -3335,10 +3415,53 @@ export default function App() {
                       </div>
 
                       {/* BazarPay TrxID Verification Box */}
-                      <div className="border rounded-xl p-3 space-y-2 bg-emerald-50/70 border-emerald-200">
-                        <div className="flex justify-between items-center text-xs gap-2">
-                          <span className="font-semibold text-gray-700">BazarPay পেমেন্ট নম্বর:</span>
-                          <span className="font-mono font-bold text-red-600 bg-white px-2 py-0.5 rounded border border-emerald-300">01712-345678</span>
+                      <div className="border rounded-xl p-3 space-y-2.5 bg-emerald-50/70 border-emerald-200">
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {(
+                            [
+                              { key: 'BKASH', label: 'bKash' },
+                              { key: 'NAGAD', label: 'Nagad' },
+                              { key: 'ROCKET', label: 'Rocket' },
+                              { key: 'BANGLA_QR', label: 'Bangla QR' },
+                            ] as const
+                          ).map((gw) => (
+                            <button
+                              key={gw.key}
+                              type="button"
+                              onClick={() => setBazarPayGateway(gw.key)}
+                              className={`py-1.5 px-1 rounded-lg border text-[10px] font-bold transition cursor-pointer ${
+                                bazarPayGateway === gw.key
+                                  ? 'border-emerald-600 bg-emerald-600 text-white shadow-xs'
+                                  : 'border-emerald-200 bg-white text-gray-700 hover:bg-emerald-50'
+                              }`}
+                            >
+                              {gw.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex justify-between items-center text-xs gap-2 bg-white px-2.5 py-2 rounded-lg border border-emerald-200">
+                          <div>
+                            <span className="block text-[10px] font-semibold text-gray-500">BazarPay ({bazarPayGateway}) নম্বর:</span>
+                            <span className="font-mono font-black text-sm text-red-600 tracking-wide">
+                              {bazarPayReceiverNumbers[bazarPayGateway] || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const num =
+                                bazarPayReceiverNumbers[bazarPayGateway] || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH;
+                              if (navigator.clipboard) {
+                                navigator.clipboard.writeText(num).catch(() => {});
+                              }
+                              setCopiedBazarPayNum(true);
+                              setTimeout(() => setCopiedBazarPayNum(false), 1800);
+                            }}
+                            className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                          >
+                            {copiedBazarPayNum ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedBazarPayNum ? 'কপি হয়েছে' : 'কপি'}</span>
+                          </button>
                         </div>
                         <p className="text-[10px] text-gray-600">
                           উপরের নম্বরে <b>৳ {advanceAmount}</b> পেমেন্ট করে SMS-এ পাওয়া TrxID দিন — <b>BazarPay</b> সাথে সাথে অটো ভেরিফাই করবে।

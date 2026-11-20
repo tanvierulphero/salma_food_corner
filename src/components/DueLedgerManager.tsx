@@ -551,23 +551,23 @@ export default function DueLedgerManager({
 
     if (!searchTerm.trim()) return hasTransactions || grp.remainingDue > 0 || grp.advanceDeposit > 0;
 
-    const q = searchTerm.toLowerCase().trim();
+    const q = String(searchTerm || '').toLowerCase().trim();
     const matchCustomer =
-      grp.customerName.toLowerCase().includes(q) ||
-      grp.customerPhone.includes(q) ||
-      (grp.customerAddress && grp.customerAddress.toLowerCase().includes(q));
+      String(grp.customerName || '').toLowerCase().includes(q) ||
+      String(grp.customerPhone || '').includes(q) ||
+      (grp.customerAddress && String(grp.customerAddress).toLowerCase().includes(q));
     if (matchCustomer) return true;
 
-    const matchVoucher = grp.dueEntries.some(
+    const matchVoucher = (grp.dueEntries || []).some(
       d =>
-        d.voucherNo.toLowerCase().includes(q) ||
-        d.itemsDescription.toLowerCase().includes(q) ||
-        (d.note && d.note.toLowerCase().includes(q))
+        String(d.voucherNo || '').toLowerCase().includes(q) ||
+        String(d.itemsDescription || '').toLowerCase().includes(q) ||
+        (d.note && String(d.note).toLowerCase().includes(q))
     );
     if (matchVoucher) return true;
 
-    const matchOrder = grp.orders.some(
-      o => o.id.toLowerCase().includes(q) || o.items.some(i => i.nameBn.toLowerCase().includes(q))
+    const matchOrder = (grp.orders || []).some(
+      o => String(o.id || '').toLowerCase().includes(q) || (o.items || []).some(i => String(i.nameBn || '').toLowerCase().includes(q))
     );
     return matchOrder;
   });

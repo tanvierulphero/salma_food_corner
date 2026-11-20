@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {
   buildBazarPaySignaturePayload,
+  createBazarPayPaymentSession,
+  DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+  markBazarPaySessionPaid,
   storeIncomingBazarPayTx,
   verifyAndClaimBazarPayTx,
+  type BazarPayPaymentSession,
   type BazarPayTransaction,
 } from './bazarpayPool.ts';
 
@@ -65,6 +69,33 @@ test('verifyAndClaimBazarPayTx rejects unknown TrxID (404), amount mismatch (400
   storeIncomingBazarPayTx(pool, { trx_id: 'NG123456', amount_bdt: 150, gateway: 'Nagad' });
   const stillClaimed = verifyAndClaimBazarPayTx(pool, { orderId: 'SF-3', trxId: 'NG123456', amountBdt: 150 });
   assert.equal(stillClaimed.status, 409);
+});
+
+test('createBazarPayPaymentSession creates session with 01840684615 receiver numbers and marks PAID cleanly', () => {
+  const sessions: Record<string, BazarPayPaymentSession> = {};
+  const created = createBazarPayPaymentSession(
+    sessions,
+    { orderId: 'ORD-1001', amountBdt: 1500, customerName: 'Rahim', gateway: 'BKASH' },
+    DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+    1763560000000
+  );
+
+  assert.equal(created.paymentId, 'bp_pay_1763560000000');
+  assert.equal(created.checkoutUrl, '/bazarpay/checkout/bp_pay_1763560000000');
+  assert.equal(created.receiverNumbers.BKASH, '01840684615');
+  assert.equal(created.receiverNumbers.NAGAD, '01840684615');
+  assert.equal(created.receiverNumbers.ROCKET, '01840684615');
+  assert.equal(created.receiverNumbers.BANGLA_QR, '01840684615');
+  assert.equal(created.session.status, 'PENDING');
+
+  const paidSession = markBazarPaySessionPaid(sessions, {
+    paymentId: created.paymentId,
+    trxId: 'BK999111',
+    gateway: 'BKASH',
+  });
+  assert.ok(paidSession);
+  assert.equal(paidSession.status, 'PAID');
+  assert.equal(paidSession.trxId, 'BK999111');
 });
 
 test('buildBazarPaySignaturePayload matches expected HMAC-SHA256 format', () => {

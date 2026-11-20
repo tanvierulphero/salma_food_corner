@@ -7,8 +7,12 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import {
   buildBazarPaySignaturePayload,
+  createBazarPayPaymentSession,
+  DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+  markBazarPaySessionPaid,
   storeIncomingBazarPayTx,
   verifyAndClaimBazarPayTx,
+  type BazarPayPaymentSession,
   type BazarPayTransaction,
 } from './src/utils/bazarpayPool.js';
 
@@ -18,6 +22,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const BAZARPAY_SECRET = process.env.BAZARPAY_SECRET || 'bp_test_94f8a2c1e7b04d39';
+const BAZARPAY_RECEIVER_NUMBERS = {
+  BKASH: process.env.BAZARPAY_BKASH_NUMBER || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH,
+  NAGAD: process.env.BAZARPAY_NAGAD_NUMBER || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.NAGAD,
+  ROCKET: process.env.BAZARPAY_ROCKET_NUMBER || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.ROCKET,
+  BANGLA_QR: process.env.BAZARPAY_BANGLA_QR_NUMBER || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR,
+};
 
 const app = express();
 
@@ -59,15 +69,51 @@ app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (
 
 app.use(express.json({ limit: '15mb' }));
 
-// 2) Website Checkout calls this to verify Customer TrxID & confirm Order!
+// 2) Create Self-Hosted BazarPay Payment Session & Checkout URL
+app.post('/api/bazarpay/create-payment', (req, res) => {
+  serverDbStore = loadServerDbFromDisk();
+  if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+    serverDbStore._bazarpay_sessions = {};
+  }
+  const sessions = serverDbStore._bazarpay_sessions as Record<string, BazarPayPaymentSession>;
+  const created = createBazarPayPaymentSession(sessions, req.body || {}, BAZARPAY_RECEIVER_NUMBERS);
+  saveServerDbToDisk(serverDbStore);
+  return res.json({
+    ok: true,
+    paymentId: created.paymentId,
+    checkoutUrl: created.checkoutUrl,
+    receiverNumbers: created.receiverNumbers,
+    session: created.session,
+  });
+});
+
+app.get('/api/bazarpay/payment/:paymentId', (req, res) => {
+  serverDbStore = loadServerDbFromDisk();
+  const sessions = (serverDbStore._bazarpay_sessions || {}) as Record<string, BazarPayPaymentSession>;
+  const session = sessions[req.params.paymentId];
+  if (!session) return res.status(404).json({ ok: false, error: 'Session not found' });
+  return res.json({ ok: true, session });
+});
+
+// 3) Website Checkout calls this to verify Customer TrxID & confirm Order!
 app.post('/api/bazarpay/verify-order', (req, res) => {
   serverDbStore = loadServerDbFromDisk();
   if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
     serverDbStore._bazarpay_pool = {};
   }
+  if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+    serverDbStore._bazarpay_sessions = {};
+  }
   const pool = serverDbStore._bazarpay_pool as Record<string, BazarPayTransaction>;
+  const sessions = serverDbStore._bazarpay_sessions as Record<string, BazarPayPaymentSession>;
   const result = verifyAndClaimBazarPayTx(pool, req.body || {});
   if (result.status === 200) {
+    markBazarPaySessionPaid(sessions, {
+      paymentId: req.body?.paymentId,
+      orderId: result.body.orderId,
+      trxId: result.body.trxId,
+      gateway: result.body.gateway,
+    });
     saveServerDbToDisk(serverDbStore);
   }
   return res.status(result.status).json(result.body);
@@ -199,10 +245,17 @@ function saveServerDbToDisk(data: Record<string, any>): void {
 
 let serverDbStore: Record<string, any> = loadServerDbFromDisk();
 
-app.get('/api.php', (_req, res) => {
+app.get('/api.php', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   serverDbStore = loadServerDbFromDisk();
-  const { _salma_meta, _bazarpay_pool: _ignoredPool, ...publicData } = serverDbStore;
+  if (req.query.action === 'bazarpay_payment') {
+    const paymentId = String(req.query.paymentId || '').trim();
+    const sessions = (serverDbStore._bazarpay_sessions || {}) as Record<string, BazarPayPaymentSession>;
+    const session = sessions[paymentId];
+    if (!session) return res.status(404).json({ ok: false, error: 'Session not found' });
+    return res.json({ ok: true, session });
+  }
+  const { _salma_meta, _bazarpay_pool: _ignoredPool, _bazarpay_sessions: _ignoredSessions, ...publicData } = serverDbStore;
   res.json({
     status: 'ok',
     connected: true,
@@ -215,13 +268,38 @@ app.get('/api.php', (_req, res) => {
 app.post('/api.php', (req, res) => {
   serverDbStore = loadServerDbFromDisk();
   const action = req.query.action || req.body?.action;
+  if (action === 'bazarpay_create') {
+    if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+      serverDbStore._bazarpay_sessions = {};
+    }
+    const sessions = serverDbStore._bazarpay_sessions as Record<string, BazarPayPaymentSession>;
+    const created = createBazarPayPaymentSession(sessions, req.body || {}, BAZARPAY_RECEIVER_NUMBERS);
+    saveServerDbToDisk(serverDbStore);
+    return res.json({
+      ok: true,
+      paymentId: created.paymentId,
+      checkoutUrl: created.checkoutUrl,
+      receiverNumbers: created.receiverNumbers,
+      session: created.session,
+    });
+  }
   if (action === 'bazarpay_verify') {
     if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
       serverDbStore._bazarpay_pool = {};
     }
+    if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+      serverDbStore._bazarpay_sessions = {};
+    }
     const pool = serverDbStore._bazarpay_pool as Record<string, BazarPayTransaction>;
+    const sessions = serverDbStore._bazarpay_sessions as Record<string, BazarPayPaymentSession>;
     const result = verifyAndClaimBazarPayTx(pool, req.body || {});
     if (result.status === 200) {
+      markBazarPaySessionPaid(sessions, {
+        paymentId: req.body?.paymentId,
+        orderId: result.body.orderId,
+        trxId: result.body.trxId,
+        gateway: result.body.gateway,
+      });
       saveServerDbToDisk(serverDbStore);
     }
     return res.status(result.status).json(result.body);

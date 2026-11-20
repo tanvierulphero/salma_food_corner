@@ -538,7 +538,7 @@ export default function SmsMarketingPanel({
 
                 <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 divide-y divide-gray-100">
                   {customerList
-                    .filter(c => c.name.toLowerCase().includes(searchCustomer.toLowerCase()) || c.phone.includes(searchCustomer))
+                    .filter(c => String(c?.name || '').toLowerCase().includes(String(searchCustomer || '').toLowerCase()) || String(c?.phone || '').includes(String(searchCustomer || '')))
                     .map(cust => {
                       const isChecked = selectedPhones.includes(cust.phone);
                       return (

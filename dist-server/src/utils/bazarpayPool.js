@@ -1,12 +1,60 @@
 /**
- * Pure BazarPay webhook & TrxID verification logic.
+ * Pure BazarPay webhook, payment session, and TrxID verification logic.
  * Used by server.ts and unit-tested with node:test.
  */
+export const DEFAULT_BAZARPAY_RECEIVER_NUMBERS = {
+    BKASH: '01840684615',
+    NAGAD: '01840684615',
+    ROCKET: '01840684615',
+    BANGLA_QR: '01840684615',
+};
 export function normalizeTrxId(raw) {
     return String(raw ?? '').trim().toUpperCase();
 }
 export function buildBazarPaySignaturePayload(timestamp, rawBody) {
     return `${timestamp}.${rawBody.trim()}`;
+}
+export function createBazarPayPaymentSession(sessions, input, receiverNumbers = DEFAULT_BAZARPAY_RECEIVER_NUMBERS, nowMs = Date.now()) {
+    const paymentId = `bp_pay_${nowMs}`;
+    const amount = Number(input.amountBdt ?? 0);
+    const gateway = String(input.gateway || 'BKASH').trim().toUpperCase() || 'BKASH';
+    const orderId = String(input.orderId || `ORD-${nowMs}`).trim();
+    const session = {
+        paymentId,
+        orderId,
+        amountBdt: Number.isFinite(amount) ? amount : 0,
+        customerName: String(input.customerName || 'Customer').trim() || 'Customer',
+        gateway,
+        status: 'PENDING',
+        trxId: null,
+        receiverNumbers: { ...receiverNumbers },
+        createdAt: nowMs,
+        paidAt: null,
+    };
+    sessions[paymentId] = session;
+    return {
+        paymentId,
+        checkoutUrl: `/bazarpay/checkout/${paymentId}`,
+        receiverNumbers: { ...receiverNumbers },
+        session,
+    };
+}
+export function markBazarPaySessionPaid(sessions, opts, nowMs = Date.now()) {
+    let target;
+    if (opts.paymentId && sessions[opts.paymentId]) {
+        target = sessions[opts.paymentId];
+    }
+    else if (opts.orderId) {
+        target = Object.values(sessions).find((s) => s.orderId === opts.orderId);
+    }
+    if (!target)
+        return null;
+    target.status = 'PAID';
+    target.trxId = opts.trxId;
+    if (opts.gateway)
+        target.gateway = opts.gateway;
+    target.paidAt = nowMs;
+    return target;
 }
 export function storeIncomingBazarPayTx(pool, data, nowMs = Date.now()) {
     const trxId = normalizeTrxId(data.trx_id ?? data.trxId);
@@ -19,7 +67,7 @@ export function storeIncomingBazarPayTx(pool, data, nowMs = Date.now()) {
         return { ok: true, trxId };
     }
     const amount = Number(data.amount_bdt ?? data.amount ?? 0);
-    const gateway = String(data.gateway ?? data.method ?? 'bKash').trim() || 'bKash';
+    const gateway = String(data.gateway ?? data.method ?? 'BKASH').trim() || 'BKASH';
     const senderWallet = data.sender_wallet !== undefined ? String(data.sender_wallet) : undefined;
     pool[trxId] = {
         ...data,
@@ -53,6 +101,7 @@ export function verifyAndClaimBazarPayTx(pool, input, nowMs = Date.now()) {
         };
     }
     const requestedOrderId = String(input.orderId || '').trim();
+    const requestedPaymentId = String(input.paymentId || '').trim() || undefined;
     if (tx.claimed) {
         // Allow idempotent re-check for the exact same orderId
         if (requestedOrderId && tx.claimed_order_id === requestedOrderId) {
@@ -61,6 +110,7 @@ export function verifyAndClaimBazarPayTx(pool, input, nowMs = Date.now()) {
                 body: {
                     paid: true,
                     orderId: requestedOrderId,
+                    paymentId: requestedPaymentId,
                     trxId: key,
                     gateway: tx.gateway,
                     amountBdt: Number(tx.amount_bdt),
@@ -92,6 +142,7 @@ export function verifyAndClaimBazarPayTx(pool, input, nowMs = Date.now()) {
         body: {
             paid: true,
             orderId: requestedOrderId,
+            paymentId: requestedPaymentId,
             trxId: key,
             gateway: tx.gateway,
             amountBdt: receivedAmount,

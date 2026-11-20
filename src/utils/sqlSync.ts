@@ -134,6 +134,9 @@ function getApiUrl(action: string): string {
     if (/\/admin\/$/i.test(path)) {
       return `../api.php?action=${action}&_t=${Date.now()}`;
     }
+    if (/^\/(bazarpay|checkout)(\/|$)/i.test(path)) {
+      return `/api.php?action=${action}&_t=${Date.now()}`;
+    }
   }
   return `./api.php?action=${action}&_t=${Date.now()}`;
 }
