@@ -49,7 +49,7 @@ export interface Order {
   advancePaid: number; // কমপক্ষে ৩০% অগ্রীম
   dueAmount: number;   // বাকি টাকা (ডেলিভারির সময় প্রদেয়)
   paymentMethod: string;
-  advancePaymentMethod: 'bKash' | 'Nagad' | 'Card';
+  advancePaymentMethod: 'BazarPay' | 'bKash' | 'Nagad' | 'Card';
   transactionId?: string;
   paymentStatus: '30% Advance Paid (Due on Delivery)' | '50% Advance Paid (Due on Delivery)' | 'Fully Paid (100%)';
   status: 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled';
@@ -68,7 +68,7 @@ export interface LedgerEntry {
   category: string;
   amount: number;
   date: string; // YYYY-MM-DD
-  paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank' | 'Card';
+  paymentMethod: 'Cash' | 'BazarPay' | 'bKash' | 'Nagad' | 'Bank' | 'Card';
   note: string;
 }
 

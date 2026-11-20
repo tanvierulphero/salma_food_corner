@@ -67,7 +67,7 @@ interface Order {
   advancePaid: number; // কমপক্ষে ৩০% অগ্রীম
   dueAmount: number;   // বাকি টাকা (ডেলিভারির সময় প্রদেয়)
   paymentMethod: string;
-  advancePaymentMethod: 'bKash' | 'Nagad' | 'Card';
+  advancePaymentMethod: 'BazarPay' | 'bKash' | 'Nagad' | 'Card';
   transactionId?: string;
   paymentStatus: '30% Advance Paid (Due on Delivery)' | '50% Advance Paid (Due on Delivery)' | 'Fully Paid (100%)';
   status: 'Placed' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled';
@@ -86,7 +86,7 @@ interface LedgerEntry {
   category: string;
   amount: number;
   date: string; // YYYY-MM-DD
-  paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank' | 'Card';
+  paymentMethod: 'Cash' | 'BazarPay' | 'bKash' | 'Nagad' | 'Bank' | 'Card';
   note: string;
 }
 
@@ -584,7 +584,7 @@ export default function App() {
     phone: currentCustomer ? currentCustomer.phone : '',
     address: currentCustomer ? currentCustomer.address : '',
     advanceOption: '30' as '30' | '100', // '30' = ৩০% অগ্রীম, '100' = ১০০% সম্পূর্ণ
-    advancePaymentMethod: 'bKash' as 'bKash' | 'Nagad' | 'Card',
+    advancePaymentMethod: 'BazarPay' as 'BazarPay' | 'bKash' | 'Nagad' | 'Card',
     transactionId: '',
     coupon: '',
     useLoyalty: false
@@ -993,8 +993,9 @@ export default function App() {
 
   const mapBazarPayGateway = (
     gw: string | undefined,
-    fallback: 'bKash' | 'Nagad' | 'Card'
-  ): 'bKash' | 'Nagad' | 'Card' => {
+    fallback: 'BazarPay' | 'bKash' | 'Nagad' | 'Card'
+  ): 'BazarPay' | 'bKash' | 'Nagad' | 'Card' => {
+    if (fallback === 'BazarPay') return 'BazarPay';
     const lower = (gw || '').toLowerCase();
     if (lower.includes('bkash')) return 'bKash';
     if (lower.includes('nagad')) return 'Nagad';
@@ -1067,7 +1068,7 @@ export default function App() {
 
     let confirmedOrderId = 'SF-' + Math.floor(1000 + Math.random() * 9000);
     let confirmedTrxId = normalizedTrx;
-    let confirmedMethod: 'bKash' | 'Nagad' | 'Card' = checkoutForm.advancePaymentMethod;
+    let confirmedMethod: 'BazarPay' | 'bKash' | 'Nagad' | 'Card' = checkoutForm.advancePaymentMethod;
 
     if (
       bazarPayVerified &&
@@ -3316,35 +3317,31 @@ export default function App() {
                         </div>
                       </div>
                       
-                      {/* Advance Payment Method Selection */}
+                      {/* Advance Payment Method (BazarPay Only) */}
                       <div className="space-y-1.5">
                         <label className="block text-[11px] font-bold text-gray-700">অগ্রীম পেমেন্ট মেথড</label>
-                        <div className="grid grid-cols-3 gap-2">
-                          {[
-                            { id: 'bKash', label: 'বিকাশ (bKash)', color: 'border-pink-500 text-pink-700 bg-pink-50' },
-                            { id: 'Nagad', label: 'নগদ (Nagad)', color: 'border-orange-500 text-orange-700 bg-orange-50' },
-                            { id: 'Card', label: 'কার্ড (Card)', color: 'border-blue-500 text-blue-700 bg-blue-50' }
-                          ].map(pm => (
-                            <button
-                              key={pm.id}
-                              type="button"
-                              onClick={() => setCheckoutForm(prev => ({ ...prev, advancePaymentMethod: pm.id as any }))}
-                              className={`p-2 rounded-xl border text-center text-xs font-bold transition ${checkoutForm.advancePaymentMethod === pm.id ? `${pm.color} ring-2 ring-amber-300` : 'border-gray-200 bg-white text-gray-600'}`}
-                            >
-                              {pm.label}
-                            </button>
-                          ))}
+                        <div className="p-2.5 rounded-xl border-2 border-emerald-600 bg-emerald-50 text-emerald-900 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                              <ShieldCheck className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <p className="text-xs font-extrabold">BazarPay</p>
+                              <p className="text-[10px] text-emerald-700">অটো ভেরিফাই পেমেন্ট গেটওয়ে</p>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-md">সক্রিয়</span>
                         </div>
                       </div>
 
-                      {/* Payment Number & TrxID Input */}
-                      <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 space-y-2">
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="font-semibold text-gray-700">সালমা ফুড {checkoutForm.advancePaymentMethod} নম্বর:</span>
-                          <span className="font-mono font-bold text-red-600 bg-white px-2 py-0.5 rounded border border-amber-300">01712-345678</span>
+                      {/* BazarPay TrxID Verification Box */}
+                      <div className="border rounded-xl p-3 space-y-2 bg-emerald-50/70 border-emerald-200">
+                        <div className="flex justify-between items-center text-xs gap-2">
+                          <span className="font-semibold text-gray-700">BazarPay পেমেন্ট নম্বর:</span>
+                          <span className="font-mono font-bold text-red-600 bg-white px-2 py-0.5 rounded border border-emerald-300">01712-345678</span>
                         </div>
-                        <p className="text-[10px] text-gray-500">
-                          নম্বরে <b>৳ {advanceAmount}</b> সেন্ড মানি/পেমেন্ট করে SMS-এ পাওয়া TrxID দিন — BazarPay স্বয়ংক্রিয়ভাবে যাচাই করবে।
+                        <p className="text-[10px] text-gray-600">
+                          উপরের নম্বরে <b>৳ {advanceAmount}</b> পেমেন্ট করে SMS-এ পাওয়া TrxID দিন — <b>BazarPay</b> সাথে সাথে অটো ভেরিফাই করবে।
                         </p>
                         <div className="flex gap-2">
                           <input 

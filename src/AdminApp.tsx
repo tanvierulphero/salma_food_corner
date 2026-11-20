@@ -710,7 +710,7 @@ export default function AdminApp() {
     totalAmount: '',
     advancePaid: '',
     dueAmount: '',
-    advancePaymentMethod: 'bKash' as 'bKash' | 'Nagad' | 'Card',
+    advancePaymentMethod: 'bKash' as 'BazarPay' | 'bKash' | 'Nagad' | 'Card',
     transactionId: '',
     status: 'Placed' as Order['status']
   });
