@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL,
   isSafeQrImageUrl,
   normalizeBazarPaySettings,
+  resolveBanglaQrImageUrl,
 } from './bazarpaySettings.ts';
 
 test('isSafeQrImageUrl allows uploads/, https://, and data:image base64 while blocking unsafe schemes', () => {
   assert.equal(isSafeQrImageUrl('uploads/food_12345.png'), true);
-  assert.equal(isSafeQrImageUrl('https://example.com/bangla-qr.png'), true);
+  assert.equal(isSafeQrImageUrl('https://i.ibb.co.com/pBp92Fs9/QR-only.png'), true);
   assert.equal(isSafeQrImageUrl('data:image/png;base64,iVBORw0KGgo='), true);
   assert.equal(isSafeQrImageUrl('javascript:alert(1)'), false);
   assert.equal(isSafeQrImageUrl('uploads/../etc/passwd'), false);
@@ -37,4 +39,18 @@ test('normalizeBazarPaySettings strips unsafe QR image URLs', () => {
     banglaQrImageUrl: 'javascript:evil()',
   });
   assert.equal(normalized.banglaQrImageUrl, '');
+});
+
+test('resolveBanglaQrImageUrl defaults to official BazarPay QR image unless a valid custom image is set', () => {
+  assert.equal(resolveBanglaQrImageUrl('', ''), DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL);
+  assert.equal(resolveBanglaQrImageUrl('javascript:evil()', ''), DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL);
+  assert.equal(resolveBanglaQrImageUrl('uploads/my_qr.png', ''), '/uploads/my_qr.png');
+  assert.equal(
+    resolveBanglaQrImageUrl('', '00020101021126300014BD.COM.BANGLAQR'),
+    DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL
+  );
+  assert.equal(
+    resolveBanglaQrImageUrl('https://i.ibb.co.com/pBp92Fs9/QR-only.png', '000201...'),
+    'https://i.ibb.co.com/pBp92Fs9/QR-only.png'
+  );
 });

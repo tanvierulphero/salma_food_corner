@@ -13,6 +13,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import {
+  DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL,
   loadBazarPaySettings,
   saveBazarPaySettings,
   type BazarPaySettings,
@@ -109,10 +110,13 @@ export default function BazarPaySettingsManager() {
   const handleRemoveQrImage = () => {
     const next = saveBazarPaySettings({
       ...settings,
-      banglaQrImageUrl: '',
+      banglaQrImageUrl: DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL,
     });
     setSettings(next);
-    setStatusMsg({ type: 'ok', text: 'আপলোড করা QR ছবি সরানো হয়েছে।' });
+    setStatusMsg({
+      type: 'ok',
+      text: 'ডিফল্ট অফিশিয়াল BazarPay Bangla QR পুনরায় চালু করা হয়েছে।',
+    });
   };
 
   const handleSave = (e: React.FormEvent) => {

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { Download, QrCode } from 'lucide-react';
 import { buildBanglaQrPayload } from '../utils/bazarpayPool';
-import { isSafeQrImageUrl } from '../utils/bazarpaySettings';
+import { resolveBanglaQrImageUrl } from '../utils/bazarpaySettings';
 
 interface BanglaQrCardProps {
   receiverNumber: string;
@@ -22,16 +22,19 @@ export default function BanglaQrCard({
   compact = false,
 }: BanglaQrCardProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [remoteImgFailed, setRemoteImgFailed] = useState(false);
 
-  const customImageSrc = useMemo(() => {
-    const clean = (qrImageUrl || '').trim();
-    if (!isSafeQrImageUrl(clean)) return '';
-    if (clean.startsWith('uploads/')) return `/${clean}`;
-    return clean;
-  }, [qrImageUrl]);
+  const officialImageSrc = useMemo(
+    () => resolveBanglaQrImageUrl(qrImageUrl, qrPayloadOverride),
+    [qrImageUrl, qrPayloadOverride]
+  );
 
+  useEffect(() => {
+    setRemoteImgFailed(false);
+  }, [officialImageSrc]);
+
+  const activeCustomImageSrc = remoteImgFailed ? '' : officialImageSrc;
   const hasCustomPayload = Boolean(qrPayloadOverride && qrPayloadOverride.trim().length > 0);
-  const isOfficialMerchantQr = Boolean(customImageSrc || hasCustomPayload);
 
   const qrString = useMemo(() => {
     if (hasCustomPayload && qrPayloadOverride) {
@@ -45,7 +48,7 @@ export default function BanglaQrCard({
   }, [hasCustomPayload, qrPayloadOverride, receiverNumber, amountBdt, orderId]);
 
   useEffect(() => {
-    if (customImageSrc) {
+    if (activeCustomImageSrc) {
       setQrDataUrl('');
       return;
     }
@@ -53,9 +56,9 @@ export default function BanglaQrCard({
     QRCode.toDataURL(qrString, {
       errorCorrectionLevel: 'M',
       margin: 2,
-      width: compact ? 180 : 220,
+      width: 220,
       color: {
-        dark: '#064e3b',
+        dark: '#006A4E',
         light: '#ffffff',
       },
     })
@@ -69,69 +72,61 @@ export default function BanglaQrCard({
     return () => {
       active = false;
     };
-  }, [customImageSrc, qrString, compact]);
+  }, [activeCustomImageSrc, qrString]);
 
-  const displayImageSrc = customImageSrc || qrDataUrl;
+  const displayImageSrc = activeCustomImageSrc || qrDataUrl;
 
   return (
     <div
       data-testid="bangla-qr-card"
-      className="bg-white border border-emerald-200 rounded-2xl overflow-hidden shadow-xs"
+      className="mx-auto w-full max-w-[360px] rounded-[14px] border-2 border-[#006A4E] bg-white p-4 text-center shadow-xs"
     >
-      <div className="bg-gradient-to-r from-emerald-700 via-emerald-600 to-red-600 px-3 py-1.5 flex items-center justify-between text-white">
-        <div className="flex items-center gap-1.5">
-          <QrCode className="w-4 h-4" />
-          <span className="text-[11px] font-black tracking-wider uppercase">
-            {isOfficialMerchantQr ? 'অফিশিয়াল BANGLA QR' : 'BANGLA QR'}
-          </span>
-        </div>
-        <span className="text-[11px] font-extrabold bg-black/25 px-2 py-0.5 rounded-md">
-          ৳ {amountBdt}
-        </span>
+      <h3 className="m-0 mb-2 text-base font-extrabold text-[#006A4E]">
+        Scan Bangla QR to Pay
+      </h3>
+
+      <div className="flex justify-center">
+        {displayImageSrc ? (
+          <img
+            data-testid="bangla-qr-image"
+            src={displayImageSrc}
+            alt="Bangla QR"
+            referrerPolicy="no-referrer"
+            onError={() => {
+              if (activeCustomImageSrc) {
+                setRemoteImgFailed(true);
+              }
+            }}
+            className={`${
+              compact ? 'h-[200px] w-[200px] sm:h-[220px] sm:w-[220px]' : 'h-[220px] w-[220px]'
+            } rounded-[10px] border border-[#006A4E] bg-white p-1.5 object-contain`}
+          />
+        ) : (
+          <div className="flex h-[220px] w-[220px] flex-col items-center justify-center rounded-[10px] border border-[#006A4E] text-xs font-semibold text-[#006A4E]">
+            <QrCode className="mb-1 h-8 w-8 animate-pulse" />
+            <span>QR তৈরি হচ্ছে...</span>
+          </div>
+        )}
       </div>
 
-      <div className="p-3 flex flex-col items-center text-center gap-2">
-        <div className="bg-white p-2 rounded-xl border-2 border-emerald-100 shadow-xs inline-flex items-center justify-center">
-          {displayImageSrc ? (
-            <img
-              data-testid="bangla-qr-image"
-              src={displayImageSrc}
-              alt="Bangla QR Code"
-              className={
-                customImageSrc
-                  ? compact
-                    ? 'max-w-[190px] max-h-[210px] w-auto h-auto object-contain rounded-lg'
-                    : 'max-w-[230px] max-h-[260px] w-auto h-auto object-contain rounded-lg'
-                  : compact
-                    ? 'w-36 h-36 object-contain'
-                    : 'w-44 h-44 object-contain'
-              }
-            />
-          ) : (
-            <div
-              className={`${compact ? 'w-36 h-36' : 'w-44 h-44'} flex flex-col items-center justify-center text-emerald-700 text-xs font-semibold`}
-            >
-              <QrCode className="w-8 h-8 animate-pulse mb-1" />
-              <span>QR তৈরি হচ্ছে...</span>
-            </div>
-          )}
-        </div>
+      <p className="mt-2 mb-0 text-[12px] leading-snug text-[#444444]">
+        bKash / Nagad / Rocket / যেকোনো ব্যাংক অ্যাপ দিয়ে স্ক্যান করে TrxID দিন
+      </p>
 
-        <p className="text-[11px] text-gray-600 leading-snug">
-          যেকোনো ব্যাংক অ্যাপ বা bKash/Nagad/Rocket/Upay থেকে <b>Bangla QR</b> স্ক্যান করে <b>৳ {amountBdt}</b> পেমেন্ট করুন
-        </p>
-
-        {displayImageSrc && (
+      {displayImageSrc && (
+        <div className="mt-2.5 flex justify-center">
           <a
             href={displayImageSrc}
             download={`bangla-qr-${orderId || 'salma-food'}.png`}
-            className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1 rounded-lg transition"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-bold text-[#006A4E] transition hover:bg-emerald-100"
           >
-            <Download className="w-3.5 h-3.5" />
+            <Download className="h-3.5 w-3.5" />
             <span>QR কোড সেভ করুন</span>
           </a>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -4,6 +4,8 @@ import {
 } from './bazarpayPool';
 
 export const BAZARPAY_SETTINGS_KEY = 'salma_bazarpay_settings';
+export const DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL =
+  'https://i.ibb.co.com/pBp92Fs9/QR-only.png';
 
 export interface BazarPaySettings {
   banglaQrImageUrl: string;
@@ -12,7 +14,7 @@ export interface BazarPaySettings {
 }
 
 export const DEFAULT_BAZARPAY_SETTINGS: BazarPaySettings = {
-  banglaQrImageUrl: '',
+  banglaQrImageUrl: DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL,
   banglaQrPayload: '',
   receiverNumbers: { ...DEFAULT_BAZARPAY_RECEIVER_NUMBERS },
 };
@@ -31,6 +33,17 @@ export function isSafeQrImageUrl(url: unknown): boolean {
     return true;
   }
   return false;
+}
+
+export function resolveBanglaQrImageUrl(
+  qrImageUrl?: string,
+  _qrPayloadOverride?: string
+): string {
+  const cleanImg = typeof qrImageUrl === 'string' ? qrImageUrl.trim() : '';
+  if (isSafeQrImageUrl(cleanImg)) {
+    return cleanImg.startsWith('uploads/') ? `/${cleanImg}` : cleanImg;
+  }
+  return DEFAULT_OFFICIAL_BANGLA_QR_IMAGE_URL;
 }
 
 export function normalizeBazarPaySettings(raw: unknown): BazarPaySettings {

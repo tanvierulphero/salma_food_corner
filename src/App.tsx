@@ -648,7 +648,7 @@ export default function App() {
   const [bazarPayChecking, setBazarPayChecking] = useState<boolean>(false);
   const [bazarPayError, setBazarPayError] = useState<string>('');
   const [checkoutError, setCheckoutError] = useState<string>('');
-  const [bazarPayGateway, setBazarPayGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'>('BKASH');
+  const [bazarPayGateway, setBazarPayGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'>('BANGLA_QR');
   const [bazarPaySession, setBazarPaySession] = useState<BazarPayPaymentSession | null>(null);
   const [bazarPaySettings, setBazarPaySettings] = useState<BazarPaySettings>(() =>
     loadBazarPaySettings()
@@ -3575,22 +3575,18 @@ export default function App() {
                             </button>
                           ))}
                         </div>
-                        {bazarPayGateway === 'BANGLA_QR' && (
-                          <BanglaQrCard
-                            receiverNumber={
-                              bazarPaySettings.receiverNumbers.BANGLA_QR ||
-                              bazarPayReceiverNumbers.BANGLA_QR ||
-                              DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR
-                            }
-                            amountBdt={advanceAmount}
-                            orderId={bazarPaySession?.orderId}
-                            qrImageUrl={bazarPaySettings.banglaQrImageUrl}
-                            qrPayloadOverride={
-                              bazarPaySettings.banglaQrPayload || bazarPaySession?.banglaQrPayload
-                            }
-                            compact
-                          />
-                        )}
+                        <BanglaQrCard
+                          receiverNumber={
+                            bazarPaySettings.receiverNumbers.BANGLA_QR ||
+                            bazarPayReceiverNumbers.BANGLA_QR ||
+                            DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR
+                          }
+                          amountBdt={advanceAmount}
+                          orderId={bazarPaySession?.orderId}
+                          qrImageUrl={bazarPaySettings.banglaQrImageUrl}
+                          qrPayloadOverride={bazarPaySettings.banglaQrPayload}
+                          compact
+                        />
                         <div className="flex justify-between items-center text-xs gap-2 bg-white px-2.5 py-2 rounded-lg border border-emerald-200">
                           <div>
                             <span className="block text-[10px] font-semibold text-gray-500">BazarPay ({bazarPayGateway}) নম্বর:</span>

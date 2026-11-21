@@ -28,7 +28,7 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
   const [session, setSession] = useState<BazarPayPaymentSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [selectedGateway, setSelectedGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'>('BKASH');
+  const [selectedGateway, setSelectedGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'>('BANGLA_QR');
   const [trxId, setTrxId] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState('');
@@ -247,15 +247,13 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                 <p className="text-[11px] text-gray-600 leading-relaxed">
                   উপরের নম্বরে <b>৳ {session.amountBdt}</b> সেন্ড মানি/পেমেন্ট করে SMS-এ পাওয়া <b>TrxID</b> নিচে বসান।
                 </p>
-                {selectedGateway === 'BANGLA_QR' && (
-                  <BanglaQrCard
-                    receiverNumber={activeNumber}
-                    amountBdt={session.amountBdt}
-                    orderId={session.orderId}
-                    qrImageUrl={bazarPaySettings.banglaQrImageUrl}
-                    qrPayloadOverride={bazarPaySettings.banglaQrPayload || session.banglaQrPayload}
-                  />
-                )}
+                <BanglaQrCard
+                  receiverNumber={activeNumber}
+                  amountBdt={session.amountBdt}
+                  orderId={session.orderId}
+                  qrImageUrl={bazarPaySettings.banglaQrImageUrl}
+                  qrPayloadOverride={bazarPaySettings.banglaQrPayload}
+                />
               </div>
 
               <form onSubmit={handleVerify} className="space-y-3">
