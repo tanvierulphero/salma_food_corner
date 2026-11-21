@@ -22,7 +22,8 @@ export const SYNCED_KEYS = new Set([
   'salma_location_presets',
   'salma_sms_logs',
   'salma_active_offer',
-  'salma_menu_categories'
+  'salma_menu_categories',
+  'salma_bazarpay_settings'
 ]);
 
 const SYNC_META_STORAGE_KEY = 'salma_sync_meta_ts';

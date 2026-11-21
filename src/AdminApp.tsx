@@ -10,7 +10,7 @@ import {
   Search, Lock, Unlock, LogOut, ArrowUpRight, ArrowDownRight, DollarSign, 
   Printer, Volume2, VolumeX, Eye, ArrowLeft, ShieldCheck, Tag, Sparkles,
   ShoppingBag, Calendar, Clock, MapPin, Hash, Check, X, ShieldAlert,
-  BookOpen, Upload, Camera, Image as ImageIcon, Layers
+  BookOpen, Upload, Camera, Image as ImageIcon, Layers, QrCode
 } from 'lucide-react';
 import { 
   FoodItem, Order, LedgerEntry, CustomerProfile, INITIAL_MENU_DATA,
@@ -23,6 +23,7 @@ import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import DueLedgerManager from './components/DueLedgerManager';
 import CategoryManagerModal from './components/CategoryManagerModal';
+import BazarPaySettingsManager from './components/BazarPaySettingsManager';
 import { formatDateDMY } from './utils/dateFormatter';
 import {
   saveToCpanelDb,
@@ -47,7 +48,7 @@ export default function AdminApp() {
   const [soundOn, setSoundOn] = useState<boolean>(() => isSoundEnabled());
 
   // Active Navigation Tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'ledger' | 'due' | 'reports' | 'orders' | 'customers' | 'marketing' | 'location'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'ledger' | 'due' | 'reports' | 'orders' | 'customers' | 'marketing' | 'location' | 'bazarpay'>('dashboard');
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -1040,6 +1041,7 @@ export default function AdminApp() {
             { id: 'orders', label: 'লাইভ অর্ডার', icon: Truck, badge: countActiveOrders(orders) },
             { id: 'customers', label: 'গ্রাহক', icon: Users, badge: Object.keys(customers).length },
             { id: 'marketing', label: 'বাল্ক এসএমএস', icon: Smartphone },
+            { id: 'bazarpay', label: 'BazarPay QR', icon: QrCode },
             { id: 'location', label: 'দোকানের অবস্থান', icon: MapPin }
           ].map(tab => {
             const Icon = tab.icon;
@@ -2150,6 +2152,13 @@ export default function AdminApp() {
           <ShopLocationManager 
             soundOn={soundOn}
           />
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 9: BAZARPAY & OFFICIAL BANGLA QR SETTINGS                  */}
+        {/* ============================================================== */}
+        {activeTab === 'bazarpay' && (
+          <BazarPaySettingsManager />
         )}
 
       </main>

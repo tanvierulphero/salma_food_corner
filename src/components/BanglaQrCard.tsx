@@ -2,11 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { Download, QrCode } from 'lucide-react';
 import { buildBanglaQrPayload } from '../utils/bazarpayPool';
+import { isSafeQrImageUrl } from '../utils/bazarpaySettings';
 
 interface BanglaQrCardProps {
   receiverNumber: string;
   amountBdt: number;
   orderId?: string;
+  qrImageUrl?: string;
   qrPayloadOverride?: string;
   compact?: boolean;
 }
@@ -15,13 +17,24 @@ export default function BanglaQrCard({
   receiverNumber,
   amountBdt,
   orderId,
+  qrImageUrl,
   qrPayloadOverride,
   compact = false,
 }: BanglaQrCardProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
+  const customImageSrc = useMemo(() => {
+    const clean = (qrImageUrl || '').trim();
+    if (!isSafeQrImageUrl(clean)) return '';
+    if (clean.startsWith('uploads/')) return `/${clean}`;
+    return clean;
+  }, [qrImageUrl]);
+
+  const hasCustomPayload = Boolean(qrPayloadOverride && qrPayloadOverride.trim().length > 0);
+  const isOfficialMerchantQr = Boolean(customImageSrc || hasCustomPayload);
+
   const qrString = useMemo(() => {
-    if (qrPayloadOverride && qrPayloadOverride.trim().length > 0) {
+    if (hasCustomPayload && qrPayloadOverride) {
       return qrPayloadOverride.trim();
     }
     return buildBanglaQrPayload({
@@ -29,9 +42,13 @@ export default function BanglaQrCard({
       amountBdt,
       orderId,
     });
-  }, [qrPayloadOverride, receiverNumber, amountBdt, orderId]);
+  }, [hasCustomPayload, qrPayloadOverride, receiverNumber, amountBdt, orderId]);
 
   useEffect(() => {
+    if (customImageSrc) {
+      setQrDataUrl('');
+      return;
+    }
     let active = true;
     QRCode.toDataURL(qrString, {
       errorCorrectionLevel: 'M',
@@ -52,7 +69,9 @@ export default function BanglaQrCard({
     return () => {
       active = false;
     };
-  }, [qrString, compact]);
+  }, [customImageSrc, qrString, compact]);
+
+  const displayImageSrc = customImageSrc || qrDataUrl;
 
   return (
     <div
@@ -62,7 +81,9 @@ export default function BanglaQrCard({
       <div className="bg-gradient-to-r from-emerald-700 via-emerald-600 to-red-600 px-3 py-1.5 flex items-center justify-between text-white">
         <div className="flex items-center gap-1.5">
           <QrCode className="w-4 h-4" />
-          <span className="text-[11px] font-black tracking-wider uppercase">BANGLA QR</span>
+          <span className="text-[11px] font-black tracking-wider uppercase">
+            {isOfficialMerchantQr ? 'অফিশিয়াল BANGLA QR' : 'BANGLA QR'}
+          </span>
         </div>
         <span className="text-[11px] font-extrabold bg-black/25 px-2 py-0.5 rounded-md">
           ৳ {amountBdt}
@@ -71,12 +92,20 @@ export default function BanglaQrCard({
 
       <div className="p-3 flex flex-col items-center text-center gap-2">
         <div className="bg-white p-2 rounded-xl border-2 border-emerald-100 shadow-xs inline-flex items-center justify-center">
-          {qrDataUrl ? (
+          {displayImageSrc ? (
             <img
               data-testid="bangla-qr-image"
-              src={qrDataUrl}
+              src={displayImageSrc}
               alt="Bangla QR Code"
-              className={compact ? 'w-36 h-36 object-contain' : 'w-44 h-44 object-contain'}
+              className={
+                customImageSrc
+                  ? compact
+                    ? 'max-w-[190px] max-h-[210px] w-auto h-auto object-contain rounded-lg'
+                    : 'max-w-[230px] max-h-[260px] w-auto h-auto object-contain rounded-lg'
+                  : compact
+                    ? 'w-36 h-36 object-contain'
+                    : 'w-44 h-44 object-contain'
+              }
             />
           ) : (
             <div
@@ -92,9 +121,9 @@ export default function BanglaQrCard({
           যেকোনো ব্যাংক অ্যাপ বা bKash/Nagad/Rocket/Upay থেকে <b>Bangla QR</b> স্ক্যান করে <b>৳ {amountBdt}</b> পেমেন্ট করুন
         </p>
 
-        {qrDataUrl && (
+        {displayImageSrc && (
           <a
-            href={qrDataUrl}
+            href={displayImageSrc}
             download={`bangla-qr-${orderId || 'salma-food'}.png`}
             className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1 rounded-lg transition"
           >

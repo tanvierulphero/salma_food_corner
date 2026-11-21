@@ -5,11 +5,14 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { buildBazarPaySignaturePayload, createBazarPayPaymentSession, DEFAULT_BAZARPAY_RECEIVER_NUMBERS, markBazarPaySessionPaid, storeIncomingBazarPayTx, verifyAndClaimBazarPayTx, } from './src/utils/bazarpayPool.js';
+import { buildBazarPaySignaturePayload, computeBazarPayWalletSummary, createBazarPayPaymentSession, DEFAULT_BAZARPAY_RECEIVER_NUMBERS, markBazarPaySessionPaid, storeIncomingBazarPayTx, verifyAndClaimBazarPayTx, } from './src/utils/bazarpayPool.js';
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const BAZARPAY_SECRET = process.env.BAZARPAY_SECRET || 'bp_test_94f8a2c1e7b04d39';
+const DEFAULT_BAZARPAY_SECRET = 'bp_test_e4f767322bc64af2';
+const BAZARPAY_SECRETS = Array.from(new Set([process.env.BAZARPAY_SECRET, DEFAULT_BAZARPAY_SECRET]
+    .map((s) => (s || '').trim())
+    .filter((s) => s.length > 0 && !/^(YOUR_|MY_)/i.test(s))));
 const BAZARPAY_RECEIVER_NUMBERS = {
     BKASH: process.env.BAZARPAY_BKASH_NUMBER || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH,
     NAGAD: process.env.BAZARPAY_NAGAD_NUMBER || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.NAGAD,
@@ -20,15 +23,26 @@ const app = express();
 // 1) BazarPay live payment webhook (MUST run before express.json() so raw body HMAC matches exactly)
 app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (req, res) => {
     const ts = req.header('X-BazarPay-Timestamp') || '';
-    const sig = req.header('X-BazarPay-Signature') || '';
+    const sig = (req.header('X-BazarPay-Signature') || '').trim().toLowerCase();
     const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? '');
-    const expected = crypto
-        .createHmac('sha256', BAZARPAY_SECRET)
-        .update(buildBazarPaySignaturePayload(ts, rawBody))
-        .digest('hex');
-    const sigBuf = Buffer.from(sig.toLowerCase(), 'utf8');
-    const expBuf = Buffer.from(expected.toLowerCase(), 'utf8');
-    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    const sigBuf = Buffer.from(sig, 'utf8');
+    const signatureValid = BAZARPAY_SECRETS.some((secret) => {
+        const expectedExact = crypto
+            .createHmac('sha256', secret)
+            .update(`${ts}.${rawBody}`)
+            .digest('hex')
+            .toLowerCase();
+        const expectedTrimmed = crypto
+            .createHmac('sha256', secret)
+            .update(buildBazarPaySignaturePayload(ts, rawBody))
+            .digest('hex')
+            .toLowerCase();
+        const expExactBuf = Buffer.from(expectedExact, 'utf8');
+        const expTrimmedBuf = Buffer.from(expectedTrimmed, 'utf8');
+        return ((sigBuf.length === expExactBuf.length && crypto.timingSafeEqual(sigBuf, expExactBuf)) ||
+            (sigBuf.length === expTrimmedBuf.length && crypto.timingSafeEqual(sigBuf, expTrimmedBuf)));
+    });
+    if (!signatureValid) {
         return res.status(401).json({ ok: false, error: 'Invalid HMAC signature' });
     }
     let data;
@@ -99,6 +113,12 @@ app.post('/api/bazarpay/verify-order', (req, res) => {
         saveServerDbToDisk(serverDbStore);
     }
     return res.status(result.status).json(result.body);
+});
+// 4) BazarPay Wallet Summary API: GET /api/bazarpay/wallet/summary
+app.get('/api/bazarpay/wallet/summary', (_req, res) => {
+    serverDbStore = loadServerDbFromDisk();
+    const pool = (serverDbStore._bazarpay_pool || {});
+    return res.json(computeBazarPayWalletSummary(pool));
 });
 const appRoot = fs.existsSync(path.resolve(__dirname, 'package.json'))
     ? __dirname
@@ -221,6 +241,10 @@ app.get('/api.php', (req, res) => {
         if (!session)
             return res.status(404).json({ ok: false, error: 'Session not found' });
         return res.json({ ok: true, session });
+    }
+    if (req.query.action === 'bazarpay_wallet_summary') {
+        const pool = (serverDbStore._bazarpay_pool || {});
+        return res.json(computeBazarPayWalletSummary(pool));
     }
     const { _salma_meta, _bazarpay_pool: _ignoredPool, _bazarpay_sessions: _ignoredSessions, ...publicData } = serverDbStore;
     res.json({

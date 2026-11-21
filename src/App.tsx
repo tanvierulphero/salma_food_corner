@@ -40,6 +40,11 @@ import {
   type BazarPayReceiverNumbers,
 } from './utils/bazarpayClient';
 import {
+  BAZARPAY_SETTINGS_KEY,
+  loadBazarPaySettings,
+  type BazarPaySettings,
+} from './utils/bazarpaySettings';
+import {
   addItemToCart,
   calculateCartSubtotal,
   countCartItems,
@@ -645,10 +650,28 @@ export default function App() {
   const [checkoutError, setCheckoutError] = useState<string>('');
   const [bazarPayGateway, setBazarPayGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'>('BKASH');
   const [bazarPaySession, setBazarPaySession] = useState<BazarPayPaymentSession | null>(null);
+  const [bazarPaySettings, setBazarPaySettings] = useState<BazarPaySettings>(() =>
+    loadBazarPaySettings()
+  );
   const [bazarPayReceiverNumbers, setBazarPayReceiverNumbers] = useState<BazarPayReceiverNumbers>(
-    DEFAULT_BAZARPAY_RECEIVER_NUMBERS
+    () => loadBazarPaySettings().receiverNumbers
   );
   const [copiedBazarPayNum, setCopiedBazarPayNum] = useState<boolean>(false);
+
+  useEffect(() => {
+    const syncBpSettings = () => {
+      const latest = loadBazarPaySettings();
+      setBazarPaySettings(latest);
+      setBazarPayReceiverNumbers((prev) => ({ ...prev, ...latest.receiverNumbers }));
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === BAZARPAY_SETTINGS_KEY) {
+        syncBpSettings();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
   const [bazarPayVerified, setBazarPayVerified] = useState<{
     orderId: string;
     trxId: string;
@@ -3552,18 +3575,38 @@ export default function App() {
                             </button>
                           ))}
                         </div>
+                        {bazarPayGateway === 'BANGLA_QR' && (
+                          <BanglaQrCard
+                            receiverNumber={
+                              bazarPaySettings.receiverNumbers.BANGLA_QR ||
+                              bazarPayReceiverNumbers.BANGLA_QR ||
+                              DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR
+                            }
+                            amountBdt={advanceAmount}
+                            orderId={bazarPaySession?.orderId}
+                            qrImageUrl={bazarPaySettings.banglaQrImageUrl}
+                            qrPayloadOverride={
+                              bazarPaySettings.banglaQrPayload || bazarPaySession?.banglaQrPayload
+                            }
+                            compact
+                          />
+                        )}
                         <div className="flex justify-between items-center text-xs gap-2 bg-white px-2.5 py-2 rounded-lg border border-emerald-200">
                           <div>
                             <span className="block text-[10px] font-semibold text-gray-500">BazarPay ({bazarPayGateway}) নম্বর:</span>
                             <span className="font-mono font-black text-sm text-red-600 tracking-wide">
-                              {bazarPayReceiverNumbers[bazarPayGateway] || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH}
+                              {bazarPaySettings.receiverNumbers[bazarPayGateway] ||
+                                bazarPayReceiverNumbers[bazarPayGateway] ||
+                                DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH}
                             </span>
                           </div>
                           <button
                             type="button"
                             onClick={() => {
                               const num =
-                                bazarPayReceiverNumbers[bazarPayGateway] || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH;
+                                bazarPaySettings.receiverNumbers[bazarPayGateway] ||
+                                bazarPayReceiverNumbers[bazarPayGateway] ||
+                                DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH;
                               if (navigator.clipboard) {
                                 navigator.clipboard.writeText(num).catch(() => {});
                               }
@@ -3577,18 +3620,10 @@ export default function App() {
                           </button>
                         </div>
                         <p className="text-[10px] text-gray-600">
-                          উপরের নম্বরে <b>৳ {advanceAmount}</b> পেমেন্ট করে SMS-এ পাওয়া TrxID দিন — <b>BazarPay</b> সাথে সাথে অটো ভেরিফাই করবে।
+                          {bazarPayGateway === 'BANGLA_QR'
+                            ? `উপরের Bangla QR স্ক্যান করে ৳ ${advanceAmount} পেমেন্ট করে SMS/অ্যাপের TrxID নিচে দিন — BazarPay সাথে সাথে অটো ভেরিফাই করবে।`
+                            : `উপরের নম্বরে ৳ ${advanceAmount} পেমেন্ট করে SMS-এ পাওয়া TrxID দিন — BazarPay সাথে সাথে অটো ভেরিফাই করবে।`}
                         </p>
-                        {bazarPayGateway === 'BANGLA_QR' && (
-                          <BanglaQrCard
-                            receiverNumber={
-                              bazarPayReceiverNumbers.BANGLA_QR || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR
-                            }
-                            amountBdt={advanceAmount}
-                            orderId={bazarPaySession?.orderId}
-                            compact
-                          />
-                        )}
                         <div className="flex gap-2">
                           <input 
                             type="text" 

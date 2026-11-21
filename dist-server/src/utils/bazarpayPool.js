@@ -126,18 +126,42 @@ export function storeIncomingBazarPayTx(pool, data, nowMs = Date.now()) {
     const amount = Number(data.amount_bdt ?? data.amount ?? 0);
     const gateway = String(data.gateway ?? data.method ?? 'BKASH').trim() || 'BKASH';
     const senderWallet = data.sender_wallet !== undefined ? String(data.sender_wallet) : undefined;
+    const accountMode = data.account_mode !== undefined ? String(data.account_mode) : undefined;
+    const externalOrderId = data.external_order_id !== undefined ? String(data.external_order_id) : undefined;
+    const event = data.event !== undefined ? String(data.event) : 'bazarpay.mfs.payment_received';
+    const timestampMs = Number(data.timestamp_ms ?? nowMs);
     pool[trxId] = {
         ...data,
+        event,
         trx_id: trxId,
         amount_bdt: Number.isFinite(amount) ? amount : 0,
         gateway,
+        account_mode: accountMode,
         sender_wallet: senderWallet,
+        external_order_id: externalOrderId,
+        timestamp_ms: Number.isFinite(timestampMs) ? timestampMs : nowMs,
         claimed: false,
         claimed_order_id: null,
         received_at: nowMs,
         claimed_at: null,
     };
     return { ok: true, trxId };
+}
+export function computeBazarPayWalletSummary(pool) {
+    const all = pool && typeof pool === 'object' ? Object.values(pool) : [];
+    const verified = all.filter((tx) => Boolean(tx && tx.claimed));
+    const unclaimedCount = all.filter((tx) => tx && !tx.claimed).length;
+    const totalSettledBdt = verified.reduce((sum, tx) => {
+        const amt = Number(tx.amount_bdt ?? 0);
+        return sum + (Number.isFinite(amt) ? amt : 0);
+    }, 0);
+    return {
+        ok: true,
+        currency: 'BDT',
+        totalSettledBdt,
+        verifiedCount: verified.length,
+        unclaimedCount,
+    };
 }
 export function verifyAndClaimBazarPayTx(pool, input, nowMs = Date.now()) {
     const key = normalizeTrxId(input.trxId);

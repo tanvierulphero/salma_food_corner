@@ -6,6 +6,11 @@ import {
   verifyBazarPayOrder,
   type BazarPayPaymentSession,
 } from '../utils/bazarpayClient';
+import {
+  BAZARPAY_SETTINGS_KEY,
+  loadBazarPaySettings,
+  type BazarPaySettings,
+} from '../utils/bazarpaySettings';
 import BanglaQrCard from './BanglaQrCard';
 
 interface BazarPayCheckoutPageProps {
@@ -28,6 +33,19 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [bazarPaySettings, setBazarPaySettings] = useState<BazarPaySettings>(() =>
+    loadBazarPaySettings()
+  );
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === BAZARPAY_SETTINGS_KEY) {
+        setBazarPaySettings(loadBazarPaySettings());
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -54,7 +72,11 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
     };
   }, [paymentId]);
 
-  const receiverNumbers = session?.receiverNumbers || DEFAULT_BAZARPAY_RECEIVER_NUMBERS;
+  const receiverNumbers = {
+    ...DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+    ...(session?.receiverNumbers || {}),
+    ...bazarPaySettings.receiverNumbers,
+  };
   const activeNumber = receiverNumbers[selectedGateway] || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH;
 
   const handleCopy = () => {
@@ -230,7 +252,8 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                     receiverNumber={activeNumber}
                     amountBdt={session.amountBdt}
                     orderId={session.orderId}
-                    qrPayloadOverride={session.banglaQrPayload}
+                    qrImageUrl={bazarPaySettings.banglaQrImageUrl}
+                    qrPayloadOverride={bazarPaySettings.banglaQrPayload || session.banglaQrPayload}
                   />
                 )}
               </div>
