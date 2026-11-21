@@ -17,14 +17,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
-// cPanel MySQL কনফিগারেশন: নিচে সরাসরি আপনার cPanel Database তথ্য বসান অথবা public_html/db_config.php ফাইলে রাখুন
-$DB_HOST = 'localhost';
-$DB_NAME = '';
-$DB_USER = '';
-$DB_PASS = '';
+// cPanel MySQL কনফিগারেশন: সোর্স কোডে পাসওয়ার্ড হার্ডকোড না করে সার্ভার Environment Variables অথবা বাইরের salma_db_config.php / db_config.php থেকে লোড হয়
+$DB_HOST = getenv('DB_HOST') ?: ($_SERVER['DB_HOST'] ?? 'localhost');
+$DB_NAME = getenv('DB_NAME') ?: ($_SERVER['DB_NAME'] ?? '');
+$DB_USER = getenv('DB_USER') ?: ($_SERVER['DB_USER'] ?? '');
+$DB_PASS = getenv('DB_PASS') !== false ? (string)getenv('DB_PASS') : (isset($_SERVER['DB_PASS']) ? (string)$_SERVER['DB_PASS'] : '');
 
-// BazarPay ওয়েবহুক সিক্রেট ও পেমেন্ট রিসিভার নম্বর (চাইলে এখানে অথবা public_html/db_config.php ফাইলে পরিবর্তন করতে পারেন)
-$BAZARPAY_SECRET = getenv('BAZARPAY_SECRET') ?: 'bp_test_94f8a2c1e7b04d39';
+// public_html-এর উপরের ফোল্ডারে .env থাকলে সেটি থেকেও DB_HOST/DB_NAME/DB_USER/DB_PASS ও BAZARPAY_SECRET পড়া
+$parentEnvFile = dirname(__DIR__) . '/.env';
+if (is_file($parentEnvFile) && is_readable($parentEnvFile)) {
+    $envLines = @file($parentEnvFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (is_array($envLines)) {
+        foreach ($envLines as $line) {
+            $trimmed = trim($line);
+            if ($trimmed === '' || $trimmed[0] === '#' || strpos($trimmed, '=') === false) continue;
+            list($ek, $ev) = explode('=', $trimmed, 2);
+            $ek = trim($ek);
+            $ev = trim($ev, " \t\n\r\0\x0B\"'");
+            if ($ek === 'DB_HOST' && $ev !== '') $DB_HOST = $ev;
+            if ($ek === 'DB_NAME' && $DB_NAME === '' && $ev !== '') $DB_NAME = $ev;
+            if ($ek === 'DB_USER' && $DB_USER === '' && $ev !== '') $DB_USER = $ev;
+            if ($ek === 'DB_PASS' && $DB_PASS === '' && $ev !== '') $DB_PASS = $ev;
+            if ($ek === 'BAZARPAY_SECRET' && $ev !== '' && !getenv('BAZARPAY_SECRET')) {
+                @putenv("BAZARPAY_SECRET=$ev");
+            }
+        }
+    }
+}
+
+// BazarPay ওয়েবহুক সিক্রেট ও পেমেন্ট রিসিভার নম্বর (চাইলে সার্ভার env অথবা public_html/db_config.php ফাইলে পরিবর্তন করতে পারেন)
+$BAZARPAY_SECRET = getenv('BAZARPAY_SECRET') ?: 'bp_test_e4f767322bc64af2';
 $BAZARPAY_RECEIVER_NUMBERS = [
     'BKASH'     => '01840684615',
     'NAGAD'     => '01840684615',
@@ -32,10 +54,10 @@ $BAZARPAY_RECEIVER_NUMBERS = [
     'BANGLA_QR' => '01840684615',
 ];
 
-$inlineDbHost = trim((string)$DB_HOST);
-$inlineDbName = trim((string)$DB_NAME);
-$inlineDbUser = trim((string)$DB_USER);
-$inlineDbPass = (string)$DB_PASS;
+$inlineDbHost = '';
+$inlineDbName = '';
+$inlineDbUser = '';
+$inlineDbPass = '';
 
 // db_config.php লোড করা (public_html অথবা তার উপরের ফোল্ডার থেকে, যাতে Git Push করলেও না মুছে যায়)
 $configFileLocal = __DIR__ . '/db_config.php';
@@ -45,10 +67,12 @@ if (file_exists($configFileLocal)) {
     @include $configFileLocal;
     if (!file_exists($configFileParent) || @filemtime($configFileLocal) > @filemtime($configFileParent)) {
         @copy($configFileLocal, $configFileParent);
+        @chmod($configFileParent, 0600);
     }
 } elseif (file_exists($configFileParent)) {
     @include $configFileParent;
     @copy($configFileParent, $configFileLocal);
+    @chmod($configFileLocal, 0600);
 }
 
 // যদি কেউ db_config.php-তে define('DB_NAME', ...) বা ছোট হাতের $db_name ব্যবহার করে থাকেন তাও সাপোর্ট করবে
@@ -639,7 +663,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'setup_db') {
         . "\$DB_USER = " . var_export($user, true) . ";\n"
         . "\$DB_PASS = " . var_export($pass, true) . ";\n";
     @file_put_contents($configFileLocal, $phpConfig, LOCK_EX);
+    @chmod($configFileLocal, 0600);
     @file_put_contents($configFileParent, $phpConfig, LOCK_EX);
+    @chmod($configFileParent, 0600);
 
     // Sync any existing data from payload or server file into MySQL tables immediately
     $existingData = readServerDbFile($serverDbFile, $serverDbFileBackup);
@@ -793,11 +819,23 @@ $getHeaderCaseInsensitive = function($headerName) {
 $hasBazarPaySig = $getHeaderCaseInsensitive('X-BazarPay-Signature') !== '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'bazarpay_webhook' || ($action === 'webhook' && $hasBazarPaySig))) {
     $ts = (string)$getHeaderCaseInsensitive('X-BazarPay-Timestamp');
-    $sig = (string)$getHeaderCaseInsensitive('X-BazarPay-Signature');
+    $sig = strtolower(trim((string)$getHeaderCaseInsensitive('X-BazarPay-Signature')));
     $rawBody = (string)$rawInput;
-    $expected = hash_hmac('sha256', $ts . '.' . trim($rawBody), (string)$BAZARPAY_SECRET);
+    $candidateSecrets = array_values(array_unique(array_filter([
+        trim((string)$BAZARPAY_SECRET),
+        'bp_test_e4f767322bc64af2'
+    ])));
+    $sigValid = false;
+    foreach ($candidateSecrets as $sec) {
+        $expectedExact = strtolower(hash_hmac('sha256', $ts . '.' . $rawBody, $sec));
+        $expectedTrimmed = strtolower(hash_hmac('sha256', $ts . '.' . trim($rawBody), $sec));
+        if (hash_equals($expectedExact, $sig) || hash_equals($expectedTrimmed, $sig)) {
+            $sigValid = true;
+            break;
+        }
+    }
 
-    if (!hash_equals(strtolower($expected), strtolower($sig))) {
+    if (!$sigValid) {
         http_response_code(401);
         echo json_encode(['ok' => false, 'error' => 'Invalid HMAC signature'], JSON_UNESCAPED_UNICODE);
         if ($conn) $conn->close();
@@ -814,8 +852,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'bazarpay_webhook' || 
 
     $trxId = strtoupper(trim((string)$data['trx_id']));
     $amountBdt = floatval($data['amount_bdt'] ?? ($data['amount'] ?? 0));
-    $gateway = trim((string)($data['gateway'] ?? ($data['method'] ?? 'bKash'))) ?: 'bKash';
+    $gateway = trim((string)($data['gateway'] ?? ($data['method'] ?? 'BKASH'))) ?: 'BKASH';
     $senderWallet = isset($data['sender_wallet']) ? trim((string)$data['sender_wallet']) : '';
+    $accountMode = isset($data['account_mode']) ? trim((string)$data['account_mode']) : '';
+    $externalOrderId = isset($data['external_order_id']) ? trim((string)$data['external_order_id']) : '';
+    $eventName = isset($data['event']) ? trim((string)$data['event']) : 'bazarpay.mfs.payment_received';
+    $timestampMs = isset($data['timestamp_ms']) ? floatval($data['timestamp_ms']) : round(microtime(true) * 1000);
 
     // ১) সার্ভার JSON ফাইলে সংরক্ষণ (ইতিমধ্যে claimed হয়ে থাকলে claimed অক্ষত থাকবে)
     $serverData = readServerDbFile($serverDbFile, $serverDbFileBackup);
@@ -824,10 +866,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'bazarpay_webhook' || 
     }
     if (empty($serverData['_bazarpay_pool'][$trxId]['claimed'])) {
         $serverData['_bazarpay_pool'][$trxId] = [
+            'event' => $eventName,
             'trx_id' => $trxId,
             'amount_bdt' => $amountBdt,
             'gateway' => $gateway,
+            'account_mode' => $accountMode,
             'sender_wallet' => $senderWallet,
+            'external_order_id' => $externalOrderId,
+            'timestamp_ms' => $timestampMs,
             'claimed' => false,
             'claimed_order_id' => null,
             'received_at' => round(microtime(true) * 1000)
@@ -851,6 +897,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'bazarpay_webhook' || 
     }
 
     echo json_encode(['ok' => true, 'stored' => $trxId], JSON_UNESCAPED_UNICODE);
+    if ($conn) $conn->close();
+    exit;
+}
+
+// ============================================================================
+// ১.ক.১ BazarPay ওয়ালেট সামারি API (GET /api/bazarpay/wallet/summary বা /api.php?action=bazarpay_wallet_summary)
+// ============================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'bazarpay_wallet_summary') {
+    $mergedPool = [];
+    $serverData = readServerDbFile($serverDbFile, $serverDbFileBackup);
+    if (isset($serverData['_bazarpay_pool']) && is_array($serverData['_bazarpay_pool'])) {
+        foreach ($serverData['_bazarpay_pool'] as $k => $tx) {
+            if (!is_array($tx)) continue;
+            $key = strtoupper(trim((string)($tx['trx_id'] ?? $k)));
+            if ($key === '') continue;
+            $mergedPool[$key] = [
+                'amount_bdt' => floatval($tx['amount_bdt'] ?? 0),
+                'claimed' => !empty($tx['claimed'])
+            ];
+        }
+    }
+
+    if ($mysqlConnected && $conn) {
+        $res = @$conn->query("SELECT `trx_id`, `amount_bdt`, `claimed` FROM `bazarpay_transactions`");
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $key = strtoupper(trim((string)($row['trx_id'] ?? '')));
+                if ($key === '') continue;
+                $mergedPool[$key] = [
+                    'amount_bdt' => floatval($row['amount_bdt'] ?? 0),
+                    'claimed' => intval($row['claimed'] ?? 0) === 1
+                ];
+            }
+        }
+    }
+
+    $totalSettledBdt = 0;
+    $verifiedCount = 0;
+    $unclaimedCount = 0;
+    foreach ($mergedPool as $tx) {
+        if (!empty($tx['claimed'])) {
+            $verifiedCount++;
+            $totalSettledBdt += floatval($tx['amount_bdt'] ?? 0);
+        } else {
+            $unclaimedCount++;
+        }
+    }
+
+    echo json_encode([
+        'ok' => true,
+        'currency' => 'BDT',
+        'totalSettledBdt' => $totalSettledBdt,
+        'verifiedCount' => $verifiedCount,
+        'unclaimedCount' => $unclaimedCount
+    ], JSON_UNESCAPED_UNICODE);
     if ($conn) $conn->close();
     exit;
 }

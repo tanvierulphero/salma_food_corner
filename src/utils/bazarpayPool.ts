@@ -34,15 +34,27 @@ export interface BazarPayPaymentSession {
 }
 
 export interface BazarPayTransaction {
+  event?: string;
   trx_id: string;
   amount_bdt: number;
   gateway: string;
+  account_mode?: string;
   sender_wallet?: string;
+  external_order_id?: string;
+  timestamp_ms?: number;
   claimed: boolean;
   claimed_order_id?: string | null;
   received_at?: number;
   claimed_at?: number | null;
   [key: string]: unknown;
+}
+
+export interface BazarPayWalletSummary {
+  ok: true;
+  currency: 'BDT';
+  totalSettledBdt: number;
+  verifiedCount: number;
+  unclaimedCount: number;
 }
 
 export interface BazarPayVerifyInput {
@@ -226,13 +238,21 @@ export function storeIncomingBazarPayTx(
   const amount = Number(data.amount_bdt ?? data.amount ?? 0);
   const gateway = String(data.gateway ?? data.method ?? 'BKASH').trim() || 'BKASH';
   const senderWallet = data.sender_wallet !== undefined ? String(data.sender_wallet) : undefined;
+  const accountMode = data.account_mode !== undefined ? String(data.account_mode) : undefined;
+  const externalOrderId = data.external_order_id !== undefined ? String(data.external_order_id) : undefined;
+  const event = data.event !== undefined ? String(data.event) : 'bazarpay.mfs.payment_received';
+  const timestampMs = Number(data.timestamp_ms ?? nowMs);
 
   pool[trxId] = {
     ...data,
+    event,
     trx_id: trxId,
     amount_bdt: Number.isFinite(amount) ? amount : 0,
     gateway,
+    account_mode: accountMode,
     sender_wallet: senderWallet,
+    external_order_id: externalOrderId,
+    timestamp_ms: Number.isFinite(timestampMs) ? timestampMs : nowMs,
     claimed: false,
     claimed_order_id: null,
     received_at: nowMs,
@@ -240,6 +260,26 @@ export function storeIncomingBazarPayTx(
   };
 
   return { ok: true, trxId };
+}
+
+export function computeBazarPayWalletSummary(
+  pool: Record<string, BazarPayTransaction> | undefined | null
+): BazarPayWalletSummary {
+  const all = pool && typeof pool === 'object' ? Object.values(pool) : [];
+  const verified = all.filter((tx) => Boolean(tx && tx.claimed));
+  const unclaimedCount = all.filter((tx) => tx && !tx.claimed).length;
+  const totalSettledBdt = verified.reduce((sum, tx) => {
+    const amt = Number(tx.amount_bdt ?? 0);
+    return sum + (Number.isFinite(amt) ? amt : 0);
+  }, 0);
+
+  return {
+    ok: true,
+    currency: 'BDT',
+    totalSettledBdt,
+    verifiedCount: verified.length,
+    unclaimedCount,
+  };
 }
 
 export function verifyAndClaimBazarPayTx(

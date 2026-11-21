@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import {
   buildBanglaQrPayload,
   buildBazarPaySignaturePayload,
+  computeBazarPayWalletSummary,
   crc16Ccitt,
   createBazarPayPaymentSession,
   DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
@@ -118,12 +119,57 @@ test('buildBanglaQrPayload generates valid EMVCo payload with BDT currency, wall
 });
 
 test('buildBazarPaySignaturePayload matches expected HMAC-SHA256 format', () => {
-  const secret = 'bp_test_94f8a2c1e7b04d39';
-  const ts = '1763560000';
-  const rawBody = '  {"trx_id":"TRX123","amount_bdt":500,"gateway":"bKash"}  ';
+  const secret = 'bp_test_e4f767322bc64af2';
+  const ts = '1763290000000';
+  const rawBody = '  {"event":"bazarpay.mfs.payment_received","trx_id":"BK7M91K42P","gateway":"BKASH","account_mode":"PERSONAL_SEND_MONEY","amount_bdt":1500,"sender_wallet":"017XXXXXXXX","external_order_id":"","timestamp_ms":1763290000000}  ';
   const payload = buildBazarPaySignaturePayload(ts, rawBody);
-  assert.equal(payload, `${ts}.{"trx_id":"TRX123","amount_bdt":500,"gateway":"bKash"}`);
+  assert.equal(payload, `${ts}.${rawBody.trim()}`);
 
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
   assert.equal(sig.length, 64);
+});
+
+test('computeBazarPayWalletSummary computes totalSettledBdt, verifiedCount, and unclaimedCount accurately', () => {
+  const pool: Record<string, BazarPayTransaction> = {};
+  storeIncomingBazarPayTx(pool, {
+    event: 'bazarpay.mfs.payment_received',
+    trx_id: 'BK7M91K42P',
+    gateway: 'BKASH',
+    account_mode: 'PERSONAL_SEND_MONEY',
+    amount_bdt: 1500,
+    sender_wallet: '01711111111',
+    external_order_id: '',
+    timestamp_ms: 1763290000000,
+  });
+  storeIncomingBazarPayTx(pool, {
+    event: 'bazarpay.mfs.payment_received',
+    trx_id: 'NG88889999',
+    gateway: 'NAGAD',
+    account_mode: 'PERSONAL_SEND_MONEY',
+    amount_bdt: 650,
+    sender_wallet: '01822222222',
+    external_order_id: '',
+    timestamp_ms: 1763290010000,
+  });
+
+  const beforeClaim = computeBazarPayWalletSummary(pool);
+  assert.deepEqual(beforeClaim, {
+    ok: true,
+    currency: 'BDT',
+    totalSettledBdt: 0,
+    verifiedCount: 0,
+    unclaimedCount: 2,
+  });
+
+  verifyAndClaimBazarPayTx(pool, { orderId: 'ORD-1001', trxId: 'BK7M91K42P', amountBdt: 1500 });
+
+  const afterClaim = computeBazarPayWalletSummary(pool);
+  assert.deepEqual(afterClaim, {
+    ok: true,
+    currency: 'BDT',
+    totalSettledBdt: 1500,
+    verifiedCount: 1,
+    unclaimedCount: 1,
+  });
+  assert.equal(pool['BK7M91K42P'].account_mode, 'PERSONAL_SEND_MONEY');
 });

@@ -2,8 +2,9 @@
   RewriteEngine On
   RewriteBase /
 
-  # BazarPay Webhook, Create Payment, Session ও TrxID ভেরিফিকেশন রুট সরাসরি api.php-তে পাঠানো
+  # BazarPay Webhook, Wallet Summary, Create Payment, Session ও TrxID ভেরিফিকেশন রুট সরাসরি api.php-তে পাঠানো
   RewriteRule ^api/bazarpay/webhook/?$ api.php?action=bazarpay_webhook [QSA,L]
+  RewriteRule ^api/bazarpay/wallet/summary/?$ api.php?action=bazarpay_wallet_summary [QSA,L]
   RewriteRule ^api/bazarpay/verify-order/?$ api.php?action=bazarpay_verify [QSA,L]
   RewriteRule ^api/bazarpay/create-payment/?$ api.php?action=bazarpay_create [QSA,L]
   RewriteRule ^api/bazarpay/payment/([^/]+)/?$ api.php?action=bazarpay_payment&paymentId=$1 [QSA,L]
@@ -24,6 +25,17 @@
   # বাকি সব রাউট index.html এ পাঠাবে (React SPA Routing)
   RewriteRule . /index.html [L]
 </IfModule>
+
+# সংবেদনশীল ডাটাবেস কনফিগ, ব্যাকআপ JSON ও .env ফাইলে সরাসরি ওয়েব অ্যাক্সেস বন্ধ রাখা
+<FilesMatch "^(db_config\.php|salma_db_config\.php|salma_server_db\.json|\.env.*)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
 
 # API ও HTML ক্যাশিং বন্ধ রাখা যাতে সবসময় লাইভ ডাটা লোড হয়
 <IfModule mod_headers.c>
