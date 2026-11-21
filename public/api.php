@@ -23,23 +23,29 @@ $DB_NAME = getenv('DB_NAME') ?: ($_SERVER['DB_NAME'] ?? '');
 $DB_USER = getenv('DB_USER') ?: ($_SERVER['DB_USER'] ?? '');
 $DB_PASS = getenv('DB_PASS') !== false ? (string)getenv('DB_PASS') : (isset($_SERVER['DB_PASS']) ? (string)$_SERVER['DB_PASS'] : '');
 
-// public_html-এর উপরের ফোল্ডারে .env থাকলে সেটি থেকেও DB_HOST/DB_NAME/DB_USER/DB_PASS ও BAZARPAY_SECRET পড়া
-$parentEnvFile = dirname(__DIR__) . '/.env';
-if (is_file($parentEnvFile) && is_readable($parentEnvFile)) {
-    $envLines = @file($parentEnvFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    if (is_array($envLines)) {
-        foreach ($envLines as $line) {
-            $trimmed = trim($line);
-            if ($trimmed === '' || $trimmed[0] === '#' || strpos($trimmed, '=') === false) continue;
-            list($ek, $ev) = explode('=', $trimmed, 2);
-            $ek = trim($ek);
-            $ev = trim($ev, " \t\n\r\0\x0B\"'");
-            if ($ek === 'DB_HOST' && $ev !== '') $DB_HOST = $ev;
-            if ($ek === 'DB_NAME' && $DB_NAME === '' && $ev !== '') $DB_NAME = $ev;
-            if ($ek === 'DB_USER' && $DB_USER === '' && $ev !== '') $DB_USER = $ev;
-            if ($ek === 'DB_PASS' && $DB_PASS === '' && $ev !== '') $DB_PASS = $ev;
-            if ($ek === 'BAZARPAY_SECRET' && $ev !== '' && !getenv('BAZARPAY_SECRET')) {
-                @putenv("BAZARPAY_SECRET=$ev");
+// public_html অথবা তার উপরের ফোল্ডারে .env থাকলে সেটি থেকেও DB_HOST/DB_NAME/DB_USER/DB_PASS ও BAZARPAY_SECRET পড়া
+$configSource = ($DB_NAME !== '' && $DB_USER !== '') ? 'env' : 'none';
+foreach ([dirname(__DIR__) . '/.env', __DIR__ . '/.env'] as $envCandidate) {
+    if (@is_file($envCandidate) && @is_readable($envCandidate)) {
+        $envLines = @file($envCandidate, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (is_array($envLines)) {
+            $loadedFromEnv = false;
+            foreach ($envLines as $line) {
+                $trimmed = trim($line);
+                if ($trimmed === '' || $trimmed[0] === '#' || strpos($trimmed, '=') === false) continue;
+                list($ek, $ev) = explode('=', $trimmed, 2);
+                $ek = trim($ek);
+                $ev = trim($ev, " \t\n\r\0\x0B\"'");
+                if ($ek === 'DB_HOST' && $ev !== '') $DB_HOST = $ev;
+                if ($ek === 'DB_NAME' && $DB_NAME === '' && $ev !== '') { $DB_NAME = $ev; $loadedFromEnv = true; }
+                if ($ek === 'DB_USER' && $DB_USER === '' && $ev !== '') { $DB_USER = $ev; $loadedFromEnv = true; }
+                if ($ek === 'DB_PASS' && $DB_PASS === '' && $ev !== '') $DB_PASS = $ev;
+                if ($ek === 'BAZARPAY_SECRET' && $ev !== '' && !getenv('BAZARPAY_SECRET')) {
+                    @putenv("BAZARPAY_SECRET=$ev");
+                }
+            }
+            if ($loadedFromEnv && $configSource === 'none') {
+                $configSource = ($envCandidate === __DIR__ . '/.env') ? 'local_env' : 'parent_env';
             }
         }
     }
@@ -59,10 +65,13 @@ $inlineDbName = '';
 $inlineDbUser = '';
 $inlineDbPass = '';
 
-// db_config লোড ও ভ্যালিডেশন (public_html-এর উপরের salma_db_config.php কে অগ্রাধিকার দেওয়া হয় এবং নষ্ট ফাইল অটো-স্কিপ/রিপেয়ার হয়)
+// db_config লোড ও ভ্যালিডেশন (হোম/উপরের ফোল্ডার ও public_html সব নিরাপদ লোকেশন চেক করে এবং নষ্ট ফাইল অটো-স্কিপ/রিপেয়ার করে)
 $configFileLocal = __DIR__ . '/db_config.php';
+$configFileLocalAlt = __DIR__ . '/salma_db_config.php';
 $configFileParent = dirname(__DIR__) . '/salma_db_config.php';
 $configFileParentAlt = dirname(__DIR__) . '/db_config.php';
+$configFileGrandParent = dirname(dirname(__DIR__)) . '/salma_db_config.php';
+$homeDir = getenv('HOME') ?: ($_SERVER['HOME'] ?? '');
 
 function isValidDbConfigValues($host, $name, $user) {
     $host = trim((string)$host);
@@ -80,7 +89,7 @@ function isValidDbConfigValues($host, $name, $user) {
 }
 
 function loadDbConfigFromFile($filePath) {
-    if (!is_file($filePath) || !is_readable($filePath)) return null;
+    if (!$filePath || !@is_file($filePath) || !@is_readable($filePath)) return null;
     $rawText = @file_get_contents($filePath);
     if (!is_string($rawText) || strpos($rawText, 'var_export(') !== false) {
         return null;
@@ -95,7 +104,9 @@ function loadDbConfigFromFile($filePath) {
     $db_user = '';
     $db_pass = '';
 
+    @ob_start();
     @include $filePath;
+    @ob_end_clean();
 
     $host = $DB_HOST !== '' ? $DB_HOST : ($db_host !== '' ? $db_host : (defined('DB_HOST') ? (string)constant('DB_HOST') : 'localhost'));
     $name = $DB_NAME !== '' ? $DB_NAME : ($db_name !== '' ? $db_name : (defined('DB_NAME') ? (string)constant('DB_NAME') : ''));
@@ -114,32 +125,38 @@ function loadDbConfigFromFile($filePath) {
 }
 
 if (!isValidDbConfigValues($DB_HOST, $DB_NAME, $DB_USER)) {
-    $parentSrcPath = $configFileParent;
-    $parentCfg = loadDbConfigFromFile($configFileParent);
-    if ($parentCfg === null) {
-        $parentSrcPath = $configFileParentAlt;
-        $parentCfg = loadDbConfigFromFile($configFileParentAlt);
+    $candidates = [
+        ['label' => 'parent_salma_db_config', 'path' => $configFileParent],
+        ['label' => 'parent_db_config', 'path' => $configFileParentAlt],
+        ['label' => 'grandparent_salma_db_config', 'path' => $configFileGrandParent],
+        ['label' => 'local_salma_db_config', 'path' => $configFileLocalAlt],
+        ['label' => 'local_db_config', 'path' => $configFileLocal],
+    ];
+    if ($homeDir !== '') {
+        array_splice($candidates, 3, 0, [
+            ['label' => 'home_salma_db_config', 'path' => rtrim($homeDir, '/\\') . '/salma_db_config.php'],
+        ]);
     }
-    $localCfg = loadDbConfigFromFile($configFileLocal);
 
-    if ($parentCfg !== null) {
-        $DB_HOST = $parentCfg['host'];
-        $DB_NAME = $parentCfg['name'];
-        $DB_USER = $parentCfg['user'];
-        $DB_PASS = $parentCfg['pass'];
-        // লোকাল db_config.php না থাকলে বা নষ্ট থাকলে উপরের সঠিক কনফিগ দিয়ে স্বয়ংক্রিয়ভাবে রিপেয়ার করা
-        if ($localCfg === null) {
-            @copy($parentSrcPath, $configFileLocal);
-            @chmod($configFileLocal, 0600);
-        }
-    } elseif ($localCfg !== null) {
-        $DB_HOST = $localCfg['host'];
-        $DB_NAME = $localCfg['name'];
-        $DB_USER = $localCfg['user'];
-        $DB_PASS = $localCfg['pass'];
-        if (!file_exists($configFileParent)) {
-            @copy($configFileLocal, $configFileParent);
-            @chmod($configFileParent, 0600);
+    $localCfg = loadDbConfigFromFile($configFileLocal);
+    foreach ($candidates as $cand) {
+        $cfg = loadDbConfigFromFile($cand['path']);
+        if ($cfg !== null) {
+            $DB_HOST = $cfg['host'];
+            $DB_NAME = $cfg['name'];
+            $DB_USER = $cfg['user'];
+            $DB_PASS = $cfg['pass'];
+            $configSource = $cand['label'];
+            // নষ্ট বা অনুপস্থিত লোকাল db_config.php স্বয়ংক্রিয়ভাবে রিপেয়ার করা
+            if ($cand['path'] !== $configFileLocal && $localCfg === null) {
+                @copy($cand['path'], $configFileLocal);
+                @chmod($configFileLocal, 0600);
+            }
+            if ($cand['path'] !== $configFileParent && !@file_exists($configFileParent)) {
+                @copy($cand['path'], $configFileParent);
+                @chmod($configFileParent, 0600);
+            }
+            break;
         }
     }
 }
@@ -271,22 +288,30 @@ $conn = null;
 $mysqlConnected = false;
 $mysqlError = null;
 
-if (!empty($DB_NAME) && !empty($DB_USER) && $DB_NAME !== 'cpaneluser_salmafood') {
-    try {
-        $conn = @new mysqli($DB_HOST ?: 'localhost', $DB_USER, $DB_PASS, $DB_NAME);
-        if ($conn && !$conn->connect_error) {
-            @$conn->set_charset('utf8mb4');
-            @$conn->query("SET SESSION sql_mode = ''");
-            $mysqlConnected = true;
-        } else {
-            $mysqlError = $conn ? $conn->connect_error : 'MySQL connection failed';
+if (isValidDbConfigValues($DB_HOST ?: 'localhost', $DB_NAME, $DB_USER)) {
+    $hostsToTry = [$DB_HOST ?: 'localhost'];
+    if (($DB_HOST ?: 'localhost') === 'localhost') {
+        $hostsToTry[] = '127.0.0.1';
+    }
+    foreach ($hostsToTry as $tryHost) {
+        try {
+            $conn = @new mysqli($tryHost, $DB_USER, $DB_PASS, $DB_NAME);
+            if ($conn && !$conn->connect_error) {
+                @$conn->set_charset('utf8mb4');
+                @$conn->query("SET SESSION sql_mode = ''");
+                $mysqlConnected = true;
+                $mysqlError = null;
+                break;
+            } else {
+                $mysqlError = $conn ? $conn->connect_error : 'MySQL connection failed';
+            }
+        } catch (\Throwable $e) {
+            $mysqlConnected = false;
+            $mysqlError = $e->getMessage();
         }
-    } catch (\Throwable $e) {
-        $mysqlConnected = false;
-        $mysqlError = $e->getMessage();
     }
 } else {
-    $mysqlError = 'cPanel-এ public_html/db_config.php অথবা api.php ফাইলে এখনো Database Name, Username ও Password বসানো হয়নি।';
+    $mysqlError = 'cPanel-এ salma_db_config.php অথবা public_html/db_config.php ফাইলে সঠিক Database Name, Username ও Password পাওয়া যায়নি।';
 }
 
 function ensureColumn($conn, $table, $column, $definition) {
@@ -851,6 +876,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
         'status' => 'ok',
         'connected' => true,
         'mysqlConnected' => $mysqlConnected,
+        'configSource' => $configSource,
         'dbName' => $mysqlConnected ? $DB_NAME : null,
         'mysqlError' => $mysqlError ?: (!empty($syncErrors) ? implode(' | ', $syncErrors) : null),
         'tableCounts' => isset($tableCounts) ? (object)$tableCounts : (object)[],
