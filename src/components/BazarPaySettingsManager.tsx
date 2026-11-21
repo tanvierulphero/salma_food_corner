@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Check,
   CheckCircle2,
+  Copy,
   Image as ImageIcon,
   QrCode,
   RefreshCw,
@@ -32,6 +34,19 @@ export default function BazarPaySettingsManager() {
   const [statusMsg, setStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
   const [loadingWallet, setLoadingWallet] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState<'webhook' | 'summary' | null>(null);
+
+  const originUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const webhookUrl = `${originUrl}/api/bazarpay/webhook`;
+  const walletSummaryUrl = `${originUrl}/api/bazarpay/wallet/summary`;
+
+  const copyEndpoint = (kind: 'webhook' | 'summary', url: string) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).catch(() => {});
+    }
+    setCopiedUrl(kind);
+    setTimeout(() => setCopiedUrl(null), 1800);
+  };
 
   const fetchWalletSummary = async () => {
     setLoadingWallet(true);
@@ -158,6 +173,36 @@ export default function BazarPaySettingsManager() {
           <div className="bg-amber-50 border border-amber-100 rounded-xl p-2">
             <p className="text-[10px] text-gray-500 font-semibold">আনক্লেইমড</p>
             <p className="text-sm font-black text-amber-700">{walletSummary?.unclaimedCount ?? 0} টি</p>
+          </div>
+        </div>
+        <div className="pt-1 space-y-1.5 border-t border-emerald-100 text-[10px]">
+          <div className="flex items-center justify-between gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+            <div className="min-w-0">
+              <span className="block font-bold text-gray-600">Android Bridge Webhook (POST):</span>
+              <span className="block font-mono text-emerald-800 truncate">{webhookUrl}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => copyEndpoint('webhook', webhookUrl)}
+              className="bg-white hover:bg-emerald-50 border border-emerald-200 text-emerald-800 px-2 py-1 rounded-md font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+            >
+              {copiedUrl === 'webhook' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              <span>{copiedUrl === 'webhook' ? 'কপি হয়েছে' : 'কপি'}</span>
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+            <div className="min-w-0">
+              <span className="block font-bold text-gray-600">Wallet Summary API (GET):</span>
+              <span className="block font-mono text-emerald-800 truncate">{walletSummaryUrl}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => copyEndpoint('summary', walletSummaryUrl)}
+              className="bg-white hover:bg-emerald-50 border border-emerald-200 text-emerald-800 px-2 py-1 rounded-md font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+            >
+              {copiedUrl === 'summary' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              <span>{copiedUrl === 'summary' ? 'কপি হয়েছে' : 'কপি'}</span>
+            </button>
           </div>
         </div>
       </div>

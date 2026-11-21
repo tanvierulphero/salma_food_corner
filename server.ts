@@ -40,9 +40,22 @@ const BAZARPAY_RECEIVER_NUMBERS = {
 const app = express();
 
 // 1) BazarPay live payment webhook (MUST run before express.json() so raw body HMAC matches exactly)
+app.get('/api/bazarpay/webhook', (_req, res) => {
+  return res.json({
+    ok: true,
+    endpoint: '/api/bazarpay/webhook',
+    method: 'POST',
+    signature: 'HMAC-SHA256',
+    status: 'ready',
+  });
+});
+
 app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (req, res) => {
-  const ts = req.header('X-BazarPay-Timestamp') || '';
-  const sig = (req.header('X-BazarPay-Signature') || '').trim().toLowerCase();
+  const ts = (req.header('X-BazarPay-Timestamp') || '').trim();
+  const sig = (req.header('X-BazarPay-Signature') || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^sha256=/, '');
   const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? '');
   const sigBuf = Buffer.from(sig, 'utf8');
 

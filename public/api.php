@@ -806,20 +806,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($action === 'load' || $action === '
 // ১.ক BazarPay লাইভ পেমেন্ট ওয়েবহুক (POST /api/bazarpay/webhook বা /api.php?action=bazarpay_webhook)
 // ============================================================================
 $getHeaderCaseInsensitive = function($headerName) {
-    $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $headerName));
-    if (isset($_SERVER[$serverKey])) return $_SERVER[$serverKey];
+    $norm = strtoupper(str_replace('-', '_', $headerName));
+    $serverKey = 'HTTP_' . $norm;
+    if (isset($_SERVER[$serverKey]) && $_SERVER[$serverKey] !== '') return $_SERVER[$serverKey];
+    $redirectKey = 'REDIRECT_HTTP_' . $norm;
+    if (isset($_SERVER[$redirectKey]) && $_SERVER[$redirectKey] !== '') return $_SERVER[$redirectKey];
     if (function_exists('getallheaders')) {
         foreach (getallheaders() as $k => $v) {
+            if (strcasecmp($k, $headerName) === 0) return $v;
+        }
+    }
+    if (function_exists('apache_request_headers')) {
+        foreach (apache_request_headers() as $k => $v) {
             if (strcasecmp($k, $headerName) === 0) return $v;
         }
     }
     return '';
 };
 
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'bazarpay_webhook') {
+    echo json_encode([
+        'ok' => true,
+        'endpoint' => '/api/bazarpay/webhook',
+        'method' => 'POST',
+        'signature' => 'HMAC-SHA256',
+        'status' => 'ready'
+    ], JSON_UNESCAPED_UNICODE);
+    if ($conn) $conn->close();
+    exit;
+}
+
 $hasBazarPaySig = $getHeaderCaseInsensitive('X-BazarPay-Signature') !== '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'bazarpay_webhook' || ($action === 'webhook' && $hasBazarPaySig))) {
-    $ts = (string)$getHeaderCaseInsensitive('X-BazarPay-Timestamp');
-    $sig = strtolower(trim((string)$getHeaderCaseInsensitive('X-BazarPay-Signature')));
+    $ts = trim((string)$getHeaderCaseInsensitive('X-BazarPay-Timestamp'));
+    $sigRaw = strtolower(trim((string)$getHeaderCaseInsensitive('X-BazarPay-Signature')));
+    $sig = preg_replace('/^sha256=/i', '', $sigRaw);
     $rawBody = (string)$rawInput;
     $candidateSecrets = array_values(array_unique(array_filter([
         trim((string)$BAZARPAY_SECRET),
