@@ -59,34 +59,93 @@ $inlineDbName = '';
 $inlineDbUser = '';
 $inlineDbPass = '';
 
-// db_config.php লোড করা (public_html অথবা তার উপরের ফোল্ডার থেকে, যাতে Git Push করলেও না মুছে যায়)
+// db_config লোড ও ভ্যালিডেশন (public_html-এর উপরের salma_db_config.php কে অগ্রাধিকার দেওয়া হয় এবং নষ্ট ফাইল অটো-স্কিপ/রিপেয়ার হয়)
 $configFileLocal = __DIR__ . '/db_config.php';
 $configFileParent = dirname(__DIR__) . '/salma_db_config.php';
+$configFileParentAlt = dirname(__DIR__) . '/db_config.php';
 
-if (file_exists($configFileLocal)) {
-    @include $configFileLocal;
-    if (!file_exists($configFileParent) || @filemtime($configFileLocal) > @filemtime($configFileParent)) {
-        @copy($configFileLocal, $configFileParent);
-        @chmod($configFileParent, 0600);
+function isValidDbConfigValues($host, $name, $user) {
+    $host = trim((string)$host);
+    $name = trim((string)$name);
+    $user = trim((string)$user);
+    if ($name === '' || $user === '' || $name === 'cpaneluser_salmafood') return false;
+    if ($host === '') $host = 'localhost';
+    foreach ([$host, $name, $user] as $val) {
+        if (strpos($val, 'var_export') !== false || strpos($val, '$DB_') !== false || strpos($val, '<?') !== false) {
+            return false;
+        }
     }
-} elseif (file_exists($configFileParent)) {
-    @include $configFileParent;
-    @copy($configFileParent, $configFileLocal);
-    @chmod($configFileLocal, 0600);
+    if (!preg_match('/^[a-zA-Z0-9._:\-]+$/', $host)) return false;
+    return true;
 }
 
-// যদি কেউ db_config.php-তে define('DB_NAME', ...) বা ছোট হাতের $db_name ব্যবহার করে থাকেন তাও সাপোর্ট করবে
-if (empty($DB_NAME) && defined('DB_NAME')) $DB_NAME = constant('DB_NAME');
-if (empty($DB_USER) && defined('DB_USER')) $DB_USER = constant('DB_USER');
-if (empty($DB_PASS) && defined('DB_PASS')) $DB_PASS = constant('DB_PASS');
-if (empty($DB_HOST) && defined('DB_HOST')) $DB_HOST = constant('DB_HOST');
-if (empty($DB_NAME) && !empty($db_name)) $DB_NAME = $db_name;
-if (empty($DB_USER) && !empty($db_user)) $DB_USER = $db_user;
-if (empty($DB_PASS) && isset($db_pass)) $DB_PASS = $db_pass;
-if (empty($DB_HOST) && !empty($db_host)) $DB_HOST = $db_host;
+function loadDbConfigFromFile($filePath) {
+    if (!is_file($filePath) || !is_readable($filePath)) return null;
+    $rawText = @file_get_contents($filePath);
+    if (!is_string($rawText) || strpos($rawText, 'var_export(') !== false) {
+        return null;
+    }
 
-// যদি ইউজার সরাসরি api.php ফাইলের উপরে ডাটাবেস তথ্য বসিয়ে থাকেন, তবে সেটি প্রাধান্য পাবে এবং স্বয়ংক্রিয়ভাবে db_config.php-তে ব্যাকআপ হয়ে থাকবে
-if ($inlineDbName !== '' && $inlineDbUser !== '' && $inlineDbName !== 'cpaneluser_salmafood') {
+    $DB_HOST = '';
+    $DB_NAME = '';
+    $DB_USER = '';
+    $DB_PASS = '';
+    $db_host = '';
+    $db_name = '';
+    $db_user = '';
+    $db_pass = '';
+
+    @include $filePath;
+
+    $host = $DB_HOST !== '' ? $DB_HOST : ($db_host !== '' ? $db_host : (defined('DB_HOST') ? (string)constant('DB_HOST') : 'localhost'));
+    $name = $DB_NAME !== '' ? $DB_NAME : ($db_name !== '' ? $db_name : (defined('DB_NAME') ? (string)constant('DB_NAME') : ''));
+    $user = $DB_USER !== '' ? $DB_USER : ($db_user !== '' ? $db_user : (defined('DB_USER') ? (string)constant('DB_USER') : ''));
+    $pass = $DB_PASS !== '' ? $DB_PASS : ($db_pass !== '' ? $db_pass : (defined('DB_PASS') ? (string)constant('DB_PASS') : ''));
+
+    if (!isValidDbConfigValues($host, $name, $user)) {
+        return null;
+    }
+    return [
+        'host' => trim((string)$host) ?: 'localhost',
+        'name' => trim((string)$name),
+        'user' => trim((string)$user),
+        'pass' => (string)$pass,
+    ];
+}
+
+if (!isValidDbConfigValues($DB_HOST, $DB_NAME, $DB_USER)) {
+    $parentSrcPath = $configFileParent;
+    $parentCfg = loadDbConfigFromFile($configFileParent);
+    if ($parentCfg === null) {
+        $parentSrcPath = $configFileParentAlt;
+        $parentCfg = loadDbConfigFromFile($configFileParentAlt);
+    }
+    $localCfg = loadDbConfigFromFile($configFileLocal);
+
+    if ($parentCfg !== null) {
+        $DB_HOST = $parentCfg['host'];
+        $DB_NAME = $parentCfg['name'];
+        $DB_USER = $parentCfg['user'];
+        $DB_PASS = $parentCfg['pass'];
+        // লোকাল db_config.php না থাকলে বা নষ্ট থাকলে উপরের সঠিক কনফিগ দিয়ে স্বয়ংক্রিয়ভাবে রিপেয়ার করা
+        if ($localCfg === null) {
+            @copy($parentSrcPath, $configFileLocal);
+            @chmod($configFileLocal, 0600);
+        }
+    } elseif ($localCfg !== null) {
+        $DB_HOST = $localCfg['host'];
+        $DB_NAME = $localCfg['name'];
+        $DB_USER = $localCfg['user'];
+        $DB_PASS = $localCfg['pass'];
+        if (!file_exists($configFileParent)) {
+            @copy($configFileLocal, $configFileParent);
+            @chmod($configFileParent, 0600);
+        }
+    }
+}
+
+// যদি ইউজার সরাসরি api.php ফাইলের উপরে ডাটাবেস তথ্য বসিয়ে থাকেন, তবে সেটি প্রাধান্য পাবে এবং স্বয়ংক্রিয়ভাবে ব্যাকআপ হয়ে থাকবে
+if (isValidDbConfigValues($inlineDbHost ?: 'localhost', $inlineDbName, $inlineDbUser)) {
     $DB_HOST = $inlineDbHost ?: 'localhost';
     $DB_NAME = $inlineDbName;
     $DB_USER = $inlineDbUser;
@@ -97,10 +156,10 @@ if ($inlineDbName !== '' && $inlineDbUser !== '' && $inlineDbName !== 'cpaneluse
         . "\$DB_NAME = " . var_export($DB_NAME, true) . ";\n"
         . "\$DB_USER = " . var_export($DB_USER, true) . ";\n"
         . "\$DB_PASS = " . var_export($DB_PASS, true) . ";\n";
-    if (!file_exists($configFileLocal)) {
-        @file_put_contents($configFileLocal, $autoPhpConfig, LOCK_EX);
-    }
+    @file_put_contents($configFileLocal, $autoPhpConfig, LOCK_EX);
+    @chmod($configFileLocal, 0600);
     @file_put_contents($configFileParent, $autoPhpConfig, LOCK_EX);
+    @chmod($configFileParent, 0600);
 }
 
 // সার্ভারের ফাইল-বেসড ব্যাকআপ ডাটাবেস (public_html এবং parent ফোল্ডারে দ্বৈত ব্যাকআপ)
