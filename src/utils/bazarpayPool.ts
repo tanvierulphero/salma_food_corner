@@ -262,6 +262,125 @@ export function storeIncomingBazarPayTx(
   return { ok: true, trxId };
 }
 
+export const AUTO_MATCH_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * Automatically matches a newly arrived unclaimed webhook transaction to a matching PENDING payment session:
+ * 1) Exact external_order_id match against session.orderId or session.paymentId (amount >= session.amountBdt)
+ * 2) Newest PENDING session within 30 minutes with exact matching amount_bdt
+ */
+export function autoMatchWebhookToPendingSession(
+  pool: Record<string, BazarPayTransaction>,
+  sessions: Record<string, BazarPayPaymentSession>,
+  trxId: string,
+  nowMs: number = Date.now()
+): BazarPayPaymentSession | null {
+  const key = normalizeTrxId(trxId);
+  const tx = pool[key];
+  if (!tx || tx.claimed) return null;
+
+  const txAmount = Number(tx.amount_bdt ?? 0);
+  if (!Number.isFinite(txAmount) || txAmount <= 0) return null;
+
+  const pending = Object.values(sessions)
+    .filter((s) => s && s.status === 'PENDING' && Number(s.amountBdt) > 0)
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+
+  if (pending.length === 0) return null;
+
+  const extRef = String(tx.external_order_id || '').trim().toLowerCase();
+  let matched: BazarPayPaymentSession | undefined;
+
+  if (extRef) {
+    matched = pending.find(
+      (s) =>
+        (s.orderId.trim().toLowerCase() === extRef ||
+          s.paymentId.trim().toLowerCase() === extRef) &&
+        txAmount >= Number(s.amountBdt)
+    );
+  }
+
+  if (!matched) {
+    matched = pending.find((s) => {
+      const ageMs = nowMs - Number(s.createdAt || 0);
+      return (
+        ageMs >= -60_000 &&
+        ageMs <= AUTO_MATCH_WINDOW_MS &&
+        Math.abs(Number(s.amountBdt) - txAmount) < 0.01
+      );
+    });
+  }
+
+  if (!matched) return null;
+
+  tx.claimed = true;
+  tx.claimed_order_id = matched.orderId;
+  tx.claimed_at = nowMs;
+
+  matched.status = 'PAID';
+  matched.trxId = key;
+  if (tx.gateway) matched.gateway = tx.gateway;
+  matched.paidAt = nowMs;
+
+  return matched;
+}
+
+/**
+ * Checks if a PENDING payment session can be auto-verified against an unclaimed recent transaction in the pool.
+ */
+export function reconcilePendingSessionWithPool(
+  pool: Record<string, BazarPayTransaction>,
+  sessions: Record<string, BazarPayPaymentSession>,
+  paymentId: string,
+  nowMs: number = Date.now()
+): { session: BazarPayPaymentSession | null; newlyMatched: boolean } {
+  const session = sessions[paymentId] || null;
+  if (!session) return { session: null, newlyMatched: false };
+  if (session.status === 'PAID') return { session, newlyMatched: false };
+
+  const expectedAmount = Number(session.amountBdt ?? 0);
+  if (!Number.isFinite(expectedAmount) || expectedAmount <= 0) {
+    return { session, newlyMatched: false };
+  }
+
+  const unclaimed = Object.values(pool)
+    .filter((tx) => tx && !tx.claimed && Number(tx.amount_bdt) > 0)
+    .sort((a, b) => Number(b.received_at || b.timestamp_ms || 0) - Number(a.received_at || a.timestamp_ms || 0));
+
+  const orderLower = session.orderId.trim().toLowerCase();
+  const payLower = session.paymentId.trim().toLowerCase();
+
+  let matchedTx = unclaimed.find((tx) => {
+    const ext = String(tx.external_order_id || '').trim().toLowerCase();
+    return ext && (ext === orderLower || ext === payLower) && Number(tx.amount_bdt) >= expectedAmount;
+  });
+
+  if (!matchedTx) {
+    matchedTx = unclaimed.find((tx) => {
+      const txTs = Number(tx.received_at || tx.timestamp_ms || 0);
+      const ageMs = nowMs - txTs;
+      return (
+        ageMs >= -60_000 &&
+        ageMs <= AUTO_MATCH_WINDOW_MS &&
+        Math.abs(Number(tx.amount_bdt) - expectedAmount) < 0.01
+      );
+    });
+  }
+
+  if (!matchedTx) return { session, newlyMatched: false };
+
+  matchedTx.claimed = true;
+  matchedTx.claimed_order_id = session.orderId;
+  matchedTx.claimed_at = nowMs;
+
+  session.status = 'PAID';
+  session.trxId = matchedTx.trx_id;
+  if (matchedTx.gateway) session.gateway = matchedTx.gateway;
+  session.paidAt = nowMs;
+
+  return { session, newlyMatched: true };
+}
+
 export function computeBazarPayWalletSummary(
   pool: Record<string, BazarPayTransaction> | undefined | null
 ): BazarPayWalletSummary {

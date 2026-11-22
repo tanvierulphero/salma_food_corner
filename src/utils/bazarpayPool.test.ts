@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {
+  autoMatchWebhookToPendingSession,
   buildBanglaQrPayload,
   buildBazarPaySignaturePayload,
   computeBazarPayWalletSummary,
@@ -9,6 +10,7 @@ import {
   createBazarPayPaymentSession,
   DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
   markBazarPaySessionPaid,
+  reconcilePendingSessionWithPool,
   storeIncomingBazarPayTx,
   verifyAndClaimBazarPayTx,
   type BazarPayPaymentSession,
@@ -172,4 +174,55 @@ test('computeBazarPayWalletSummary computes totalSettledBdt, verifiedCount, and 
     unclaimedCount: 1,
   });
   assert.equal(pool['BK7M91K42P'].account_mode, 'PERSONAL_SEND_MONEY');
+});
+
+test('autoMatchWebhookToPendingSession auto-verifies pending session by exact amount or external_order_id', () => {
+  const pool: Record<string, BazarPayTransaction> = {};
+  const sessions: Record<string, BazarPayPaymentSession> = {};
+  const t0 = 1763600000000;
+
+  const created = createBazarPayPaymentSession(
+    sessions,
+    { orderId: 'ORD-AUTO-1', amountBdt: 450, customerName: 'Karim' },
+    DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+    t0
+  );
+
+  // Wrong amount should NOT auto-match
+  storeIncomingBazarPayTx(pool, { trx_id: 'WRONG100', amount_bdt: 100, gateway: 'BKASH' }, t0 + 5000);
+  const noMatch = autoMatchWebhookToPendingSession(pool, sessions, 'WRONG100', t0 + 5000);
+  assert.equal(noMatch, null);
+  assert.equal(sessions[created.paymentId].status, 'PENDING');
+  assert.equal(pool['WRONG100'].claimed, false);
+
+  // Exact amount within 30 mins DOES auto-match and marks session PAID
+  storeIncomingBazarPayTx(pool, { trx_id: 'AUTO450OK', amount_bdt: 450, gateway: 'BANGLA_QR' }, t0 + 10000);
+  const matched = autoMatchWebhookToPendingSession(pool, sessions, 'AUTO450OK', t0 + 10000);
+  assert.ok(matched);
+  assert.equal(matched.paymentId, created.paymentId);
+  assert.equal(matched.status, 'PAID');
+  assert.equal(matched.trxId, 'AUTO450OK');
+  assert.equal(matched.gateway, 'BANGLA_QR');
+  assert.equal(pool['AUTO450OK'].claimed, true);
+  assert.equal(pool['AUTO450OK'].claimed_order_id, 'ORD-AUTO-1');
+});
+
+test('reconcilePendingSessionWithPool auto-claims an unclaimed webhook payment on poll', () => {
+  const pool: Record<string, BazarPayTransaction> = {};
+  const sessions: Record<string, BazarPayPaymentSession> = {};
+  const t0 = 1763601000000;
+
+  storeIncomingBazarPayTx(pool, { trx_id: 'PREPAY380', amount_bdt: 380, gateway: 'NAGAD' }, t0);
+  const created = createBazarPayPaymentSession(
+    sessions,
+    { orderId: 'ORD-POLL-1', amountBdt: 380, customerName: 'Salma' },
+    DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+    t0 + 4000
+  );
+
+  const res = reconcilePendingSessionWithPool(pool, sessions, created.paymentId, t0 + 6000);
+  assert.equal(res.newlyMatched, true);
+  assert.equal(res.session?.status, 'PAID');
+  assert.equal(res.session?.trxId, 'PREPAY380');
+  assert.equal(pool['PREPAY380'].claimed, true);
 });

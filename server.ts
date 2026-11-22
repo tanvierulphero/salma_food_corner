@@ -6,11 +6,13 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import {
+  autoMatchWebhookToPendingSession,
   buildBazarPaySignaturePayload,
   computeBazarPayWalletSummary,
   createBazarPayPaymentSession,
   DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
   markBazarPaySessionPaid,
+  reconcilePendingSessionWithPool,
   storeIncomingBazarPayTx,
   verifyAndClaimBazarPayTx,
   type BazarPayPaymentSession,
@@ -93,13 +95,22 @@ app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (
   if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
     serverDbStore._bazarpay_pool = {};
   }
+  if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+    serverDbStore._bazarpay_sessions = {};
+  }
   const pool = serverDbStore._bazarpay_pool as Record<string, BazarPayTransaction>;
+  const sessions = serverDbStore._bazarpay_sessions as Record<string, BazarPayPaymentSession>;
   const stored = storeIncomingBazarPayTx(pool, data);
   if (!stored.ok) {
     return res.status(400).json({ ok: false, error: stored.error });
   }
+  const matchedSession = autoMatchWebhookToPendingSession(pool, sessions, stored.trxId);
   saveServerDbToDisk(serverDbStore);
-  return res.json({ ok: true, stored: stored.trxId });
+  return res.json({
+    ok: true,
+    stored: stored.trxId,
+    autoMatchedOrderId: matchedSession?.orderId || null,
+  });
 });
 
 app.use(express.json({ limit: '15mb' }));
@@ -125,10 +136,24 @@ app.post('/api/bazarpay/create-payment', (req, res) => {
 
 app.get('/api/bazarpay/payment/:paymentId', (req, res) => {
   serverDbStore = loadServerDbFromDisk();
-  const sessions = (serverDbStore._bazarpay_sessions || {}) as Record<string, BazarPayPaymentSession>;
-  const session = sessions[req.params.paymentId];
-  if (!session) return res.status(404).json({ ok: false, error: 'Session not found' });
-  return res.json({ ok: true, session });
+  if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
+    serverDbStore._bazarpay_pool = {};
+  }
+  if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+    serverDbStore._bazarpay_sessions = {};
+  }
+  const pool = serverDbStore._bazarpay_pool as Record<string, BazarPayTransaction>;
+  const sessions = serverDbStore._bazarpay_sessions as Record<string, BazarPayPaymentSession>;
+  const reconciled = reconcilePendingSessionWithPool(pool, sessions, req.params.paymentId);
+  if (!reconciled.session) return res.status(404).json({ ok: false, error: 'Session not found' });
+  if (reconciled.newlyMatched) {
+    saveServerDbToDisk(serverDbStore);
+  }
+  return res.json({
+    ok: true,
+    paid: reconciled.session.status === 'PAID',
+    session: reconciled.session,
+  });
 });
 
 // 3) Website Checkout calls this to verify Customer TrxID & confirm Order!

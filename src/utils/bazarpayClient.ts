@@ -23,6 +23,7 @@ export interface BazarPayCreatePaymentResponse {
 
 export interface BazarPayGetPaymentResponse {
   ok: boolean;
+  paid?: boolean;
   session?: BazarPayPaymentSession;
   error?: string;
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, CheckCircle2, AlertCircle, Copy, Check, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, AlertCircle, Copy, Check, ArrowLeft, Loader2 } from 'lucide-react';
 import {
   DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
   getBazarPayPayment,
@@ -11,24 +11,74 @@ import {
   loadBazarPaySettings,
   type BazarPaySettings,
 } from '../utils/bazarpaySettings';
+import type { BazarPayGateway } from '../utils/bazarpayPool';
 import BanglaQrCard from './BanglaQrCard';
 
 interface BazarPayCheckoutPageProps {
   paymentId: string;
 }
 
-const GATEWAYS: Array<{ key: 'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'; label: string }> = [
-  { key: 'BKASH', label: 'bKash' },
-  { key: 'NAGAD', label: 'Nagad' },
-  { key: 'ROCKET', label: 'Rocket' },
-  { key: 'BANGLA_QR', label: 'Bangla QR' },
+const GATEWAYS: Array<{
+  key: BazarPayGateway;
+  label: string;
+  sublabel: string;
+  ussd?: string;
+  activeClass: string;
+  inactiveClass: string;
+  borderClass: string;
+  textClass: string;
+  btnClass: string;
+}> = [
+  {
+    key: 'BKASH',
+    label: 'বিকাশ',
+    sublabel: 'সেন্ড মানি',
+    ussd: '*247#',
+    activeClass: 'border-[#E2136E] bg-[#E2136E] text-white',
+    inactiveClass: 'border-[#E2136E] bg-white text-[#E2136E]',
+    borderClass: 'border-2 border-[#E2136E]',
+    textClass: 'text-[#E2136E]',
+    btnClass: 'bg-[#E2136E] text-white',
+  },
+  {
+    key: 'NAGAD',
+    label: 'নগদ',
+    sublabel: 'সেন্ড মানি',
+    ussd: '*167#',
+    activeClass: 'border-[#F6921E] bg-[#F6921E] text-white',
+    inactiveClass: 'border-[#F6921E] bg-white text-[#F6921E]',
+    borderClass: 'border-2 border-[#F6921E]',
+    textClass: 'text-[#F6921E]',
+    btnClass: 'bg-[#F6921E] text-white',
+  },
+  {
+    key: 'ROCKET',
+    label: 'রকেট',
+    sublabel: 'সেন্ড মানি',
+    ussd: '*322#',
+    activeClass: 'border-[#8C3494] bg-[#8C3494] text-white',
+    inactiveClass: 'border-[#8C3494] bg-white text-[#8C3494]',
+    borderClass: 'border-2 border-[#8C3494]',
+    textClass: 'text-[#8C3494]',
+    btnClass: 'bg-[#8C3494] text-white',
+  },
+  {
+    key: 'BANGLA_QR',
+    label: 'বাংলা QR',
+    sublabel: 'স্ক্যান পে',
+    activeClass: 'border-[#006A4E] bg-[#006A4E] text-white',
+    inactiveClass: 'border-[#006A4E] bg-white text-[#006A4E]',
+    borderClass: 'border-2 border-[#006A4E]',
+    textClass: 'text-[#006A4E]',
+    btnClass: 'bg-[#006A4E] text-white',
+  },
 ];
 
 export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPageProps) {
   const [session, setSession] = useState<BazarPayPaymentSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [selectedGateway, setSelectedGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'>('BANGLA_QR');
+  const [selectedGateway, setSelectedGateway] = useState<BazarPayGateway | null>(null);
   const [trxId, setTrxId] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState('');
@@ -59,10 +109,6 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
           return;
         }
         setSession(res.session);
-        const gw = String(res.session.gateway || 'BKASH').toUpperCase();
-        if (gw === 'BKASH' || gw === 'NAGAD' || gw === 'ROCKET' || gw === 'BANGLA_QR') {
-          setSelectedGateway(gw);
-        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -72,12 +118,36 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
     };
   }, [paymentId]);
 
+  // Auto-poll every 3 seconds until Android Bridge webhook auto-verifies the payment
+  useEffect(() => {
+    if (!session || session.status === 'PAID') return;
+    let active = true;
+    const timer = window.setInterval(async () => {
+      try {
+        const st = await getBazarPayPayment(paymentId);
+        if (!active) return;
+        if (st.ok && (st.paid || st.session?.status === 'PAID') && st.session) {
+          setSession(st.session);
+        }
+      } catch {
+        // Ignore transient polling failures
+      }
+    }, 3000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [paymentId, session?.status]);
+
   const receiverNumbers = {
     ...DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
     ...(session?.receiverNumbers || {}),
     ...bazarPaySettings.receiverNumbers,
   };
-  const activeNumber = receiverNumbers[selectedGateway] || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH;
+  const activeMeta = selectedGateway ? GATEWAYS.find((g) => g.key === selectedGateway) || null : null;
+  const activeNumber = selectedGateway
+    ? receiverNumbers[selectedGateway] || DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH
+    : DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH;
 
   const handleCopy = () => {
     if (navigator.clipboard && activeNumber) {
@@ -115,7 +185,7 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
               ...prev,
               status: 'PAID',
               trxId: res.trxId || cleanTrx,
-              gateway: res.gateway || selectedGateway,
+              gateway: res.gateway || selectedGateway || 'BKASH',
               paidAt: Date.now(),
             }
           : prev
@@ -128,7 +198,7 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-950 via-gray-900 to-red-950 flex items-center justify-center p-4">
       <div className="max-w-[430px] w-full bg-white rounded-3xl shadow-2xl overflow-hidden border border-emerald-200">
-        <div className="bg-gradient-to-r from-emerald-700 to-emerald-600 text-white p-4 flex items-center justify-between">
+        <div className="bg-gradient-to-r from-[#006A4E] to-emerald-600 text-white p-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center">
               <ShieldCheck className="w-5 h-5" />
@@ -165,10 +235,10 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
             </div>
           ) : session.status === 'PAID' ? (
             <div className="py-6 text-center space-y-3">
-              <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+              <div className="w-14 h-14 rounded-full bg-emerald-100 text-[#006A4E] flex items-center justify-center mx-auto">
                 <CheckCircle2 className="w-8 h-8" />
               </div>
-              <h2 className="text-lg font-extrabold text-gray-900">পেমেন্ট সফলভাবে ভেরিফাই হয়েছে!</h2>
+              <h2 className="text-lg font-extrabold text-gray-900">পেমেন্ট অটো-ভেরিফাই সম্পন্ন!</h2>
               <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 text-left text-xs space-y-1.5">
                 <div className="flex justify-between">
                   <span className="text-gray-600">অর্ডার আইডি:</span>
@@ -176,7 +246,7 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">পরিমাণ:</span>
-                  <span className="font-extrabold text-emerald-700">৳ {session.amountBdt}</span>
+                  <span className="font-extrabold text-[#006A4E]">৳ {session.amountBdt}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">গেটওয়ে:</span>
@@ -185,13 +255,13 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                 {session.trxId && (
                   <div className="flex justify-between">
                     <span className="text-gray-600">TrxID:</span>
-                    <span className="font-mono font-bold text-emerald-800">{session.trxId}</span>
+                    <span className="font-mono font-bold text-[#006A4E]">{session.trxId}</span>
                   </div>
                 )}
               </div>
               <a
                 href="/"
-                className="inline-block w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-sm shadow"
+                className="inline-block w-full bg-[#006A4E] hover:opacity-95 text-white font-bold py-3 rounded-xl text-sm shadow"
               >
                 ওয়েবসাইটে ফিরে যান
               </a>
@@ -205,48 +275,40 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] text-gray-500">প্রদেয় টাকা</p>
-                  <p className="text-xl font-black text-emerald-700">৳ {session.amountBdt}</p>
+                  <p className="text-xl font-black text-[#006A4E]">৳ {session.amountBdt}</p>
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[11px] font-bold text-gray-700">BazarPay গেটওয়ে নির্বাচন করুন</label>
-                <div className="grid grid-cols-4 gap-1.5">
+                <label className="block text-[11px] font-bold text-gray-700 text-center">
+                  পেমেন্ট মাধ্যম নির্বাচন করুন
+                </label>
+                <div className="grid grid-cols-2 gap-2">
                   {GATEWAYS.map((gw) => (
                     <button
                       key={gw.key}
                       type="button"
-                      onClick={() => setSelectedGateway(gw.key)}
-                      className={`py-2 px-1.5 rounded-xl border text-[11px] font-bold transition cursor-pointer ${
-                        selectedGateway === gw.key
-                          ? 'border-emerald-600 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-200'
-                          : 'border-gray-200 bg-white text-gray-600'
+                      data-gw={gw.key}
+                      onClick={() => {
+                        setSelectedGateway(gw.key);
+                        setCopied(false);
+                      }}
+                      className={`py-2.5 px-2 rounded-xl border-2 text-center font-bold transition cursor-pointer ${
+                        selectedGateway === gw.key ? gw.activeClass : gw.inactiveClass
                       }`}
                     >
-                      {gw.label}
+                      <span className="block text-sm leading-tight">{gw.label}</span>
+                      <span className="block text-[11px] font-medium opacity-90">{gw.sublabel}</span>
                     </button>
                   ))}
                 </div>
               </div>
 
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-[11px] font-semibold text-gray-600">BazarPay {selectedGateway} নম্বর:</p>
-                    <p className="text-base font-mono font-black text-red-600 tracking-wide">{activeNumber}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleCopy}
-                    className="bg-white hover:bg-emerald-100 border border-emerald-300 text-emerald-800 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
-                  >
-                    {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copied ? 'কপি হয়েছে' : 'কপি'}</span>
-                  </button>
+              {!selectedGateway ? (
+                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3.5 text-center text-xs font-semibold text-gray-600">
+                  👆 পেমেন্ট করতে উপরের যেকোনো একটি মাধ্যম ক্লিক করুন
                 </div>
-                <p className="text-[11px] text-gray-600 leading-relaxed">
-                  উপরের নম্বরে <b>৳ {session.amountBdt}</b> সেন্ড মানি/পেমেন্ট করে SMS-এ পাওয়া <b>TrxID</b> নিচে বসান।
-                </p>
+              ) : selectedGateway === 'BANGLA_QR' ? (
                 <BanglaQrCard
                   receiverNumber={activeNumber}
                   amountBdt={session.amountBdt}
@@ -254,18 +316,46 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                   qrImageUrl={bazarPaySettings.banglaQrImageUrl}
                   qrPayloadOverride={bazarPaySettings.banglaQrPayload}
                 />
-              </div>
+              ) : (
+                activeMeta && (
+                  <div className={`rounded-2xl bg-white p-4 text-center space-y-2 ${activeMeta.borderClass}`}>
+                    <p className={`text-xs font-extrabold ${activeMeta.textClass}`}>
+                      {activeMeta.label} পার্সোনাল নম্বর (সেন্ড মানি)
+                    </p>
+                    <p className="text-xl font-mono font-black text-gray-900 tracking-wide">
+                      {activeNumber}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${activeMeta.btnClass}`}
+                    >
+                      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copied ? '✅ কপি হয়েছে' : 'নম্বর কপি করুন'}</span>
+                    </button>
+                    <p className="text-xs text-gray-700 leading-relaxed">
+                      {activeMeta.label} অ্যাপ বা <b>{activeMeta.ussd}</b> থেকে এই পার্সোনাল নম্বরে{' '}
+                      <b>৳{session.amountBdt} সেন্ড মানি (Send Money)</b> করুন।
+                    </p>
+                  </div>
+                )
+              )}
 
-              <form onSubmit={handleVerify} className="space-y-3">
+              <p className="text-center text-xs font-bold text-[#006A4E] flex items-center justify-center gap-1.5">
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <span>⏳ টাকা পাঠালেই অটোমেটিক ভেরিফাই হয়ে যাবে...</span>
+              </p>
+
+              <form onSubmit={handleVerify} className="space-y-2.5 border-t border-gray-100 pt-3">
                 <input
                   type="text"
-                  placeholder="ট্রানজেকশন আইডি (যেমন: 9J4K2L)"
+                  placeholder="অথবা ট্রানজেকশন আইডি (যেমন: 9J4K2L)"
                   value={trxId}
                   onChange={(e) => {
                     setTrxId(e.target.value);
                     setVerifyError('');
                   }}
-                  className="w-full border-2 border-emerald-200 focus:border-emerald-600 rounded-xl p-3 text-sm font-mono uppercase focus:outline-none"
+                  className="w-full border-2 border-emerald-200 focus:border-[#006A4E] rounded-xl p-3 text-sm font-mono uppercase focus:outline-none"
                 />
 
                 {verifyError && (
@@ -278,7 +368,7 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                 <button
                   type="submit"
                   disabled={verifying}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 hover:opacity-95 disabled:opacity-60 text-white font-bold py-3 rounded-xl text-sm shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-[#006A4E] to-emerald-700 hover:opacity-95 disabled:opacity-60 text-white font-bold py-3 rounded-xl text-sm shadow-lg cursor-pointer"
                 >
                   {verifying ? 'BazarPay যাচাই হচ্ছে...' : `৳ ${session.amountBdt} পেমেন্ট ভেরিফাই করুন`}
                 </button>

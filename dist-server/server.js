@@ -5,7 +5,7 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { buildBazarPaySignaturePayload, computeBazarPayWalletSummary, createBazarPayPaymentSession, DEFAULT_BAZARPAY_RECEIVER_NUMBERS, markBazarPaySessionPaid, storeIncomingBazarPayTx, verifyAndClaimBazarPayTx, } from './src/utils/bazarpayPool.js';
+import { autoMatchWebhookToPendingSession, buildBazarPaySignaturePayload, computeBazarPayWalletSummary, createBazarPayPaymentSession, DEFAULT_BAZARPAY_RECEIVER_NUMBERS, markBazarPaySessionPaid, reconcilePendingSessionWithPool, storeIncomingBazarPayTx, verifyAndClaimBazarPayTx, } from './src/utils/bazarpayPool.js';
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,9 +21,21 @@ const BAZARPAY_RECEIVER_NUMBERS = {
 };
 const app = express();
 // 1) BazarPay live payment webhook (MUST run before express.json() so raw body HMAC matches exactly)
+app.get('/api/bazarpay/webhook', (_req, res) => {
+    return res.json({
+        ok: true,
+        endpoint: '/api/bazarpay/webhook',
+        method: 'POST',
+        signature: 'HMAC-SHA256',
+        status: 'ready',
+    });
+});
 app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (req, res) => {
-    const ts = req.header('X-BazarPay-Timestamp') || '';
-    const sig = (req.header('X-BazarPay-Signature') || '').trim().toLowerCase();
+    const ts = (req.header('X-BazarPay-Timestamp') || '').trim();
+    const sig = (req.header('X-BazarPay-Signature') || '')
+        .trim()
+        .toLowerCase()
+        .replace(/^sha256=/, '');
     const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? '');
     const sigBuf = Buffer.from(sig, 'utf8');
     const signatureValid = BAZARPAY_SECRETS.some((secret) => {
@@ -56,13 +68,22 @@ app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (
     if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
         serverDbStore._bazarpay_pool = {};
     }
+    if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+        serverDbStore._bazarpay_sessions = {};
+    }
     const pool = serverDbStore._bazarpay_pool;
+    const sessions = serverDbStore._bazarpay_sessions;
     const stored = storeIncomingBazarPayTx(pool, data);
     if (!stored.ok) {
         return res.status(400).json({ ok: false, error: stored.error });
     }
+    const matchedSession = autoMatchWebhookToPendingSession(pool, sessions, stored.trxId);
     saveServerDbToDisk(serverDbStore);
-    return res.json({ ok: true, stored: stored.trxId });
+    return res.json({
+        ok: true,
+        stored: stored.trxId,
+        autoMatchedOrderId: matchedSession?.orderId || null,
+    });
 });
 app.use(express.json({ limit: '15mb' }));
 // 2) Create Self-Hosted BazarPay Payment Session & Checkout URL
@@ -85,11 +106,25 @@ app.post('/api/bazarpay/create-payment', (req, res) => {
 });
 app.get('/api/bazarpay/payment/:paymentId', (req, res) => {
     serverDbStore = loadServerDbFromDisk();
-    const sessions = (serverDbStore._bazarpay_sessions || {});
-    const session = sessions[req.params.paymentId];
-    if (!session)
+    if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
+        serverDbStore._bazarpay_pool = {};
+    }
+    if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+        serverDbStore._bazarpay_sessions = {};
+    }
+    const pool = serverDbStore._bazarpay_pool;
+    const sessions = serverDbStore._bazarpay_sessions;
+    const reconciled = reconcilePendingSessionWithPool(pool, sessions, req.params.paymentId);
+    if (!reconciled.session)
         return res.status(404).json({ ok: false, error: 'Session not found' });
-    return res.json({ ok: true, session });
+    if (reconciled.newlyMatched) {
+        saveServerDbToDisk(serverDbStore);
+    }
+    return res.json({
+        ok: true,
+        paid: reconciled.session.status === 'PAID',
+        session: reconciled.session,
+    });
 });
 // 3) Website Checkout calls this to verify Customer TrxID & confirm Order!
 app.post('/api/bazarpay/verify-order', (req, res) => {

@@ -1002,7 +1002,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'bazarpay_webhook' || 
               `raw_payload` = IF(`claimed` = 0, VALUES(`raw_payload`), `raw_payload`)");
     }
 
-    echo json_encode(['ok' => true, 'stored' => $trxId], JSON_UNESCAPED_UNICODE);
+    // ৩) PENDING অর্ডারের সাথে অটো-ম্যাচ (external_order_id অথবা ৩০ মিনিটের মধ্যে সঠিক টাকার পরিমাণ মিলে গেলে অটো-PAID)
+    $autoMatchedOrderId = null;
+    $nowMs = round(microtime(true) * 1000);
+    $windowMs = 30 * 60 * 1000;
+    $matchedSession = null;
+
+    if ($amountBdt > 0 && empty($serverData['_bazarpay_pool'][$trxId]['claimed'])) {
+        $pendingSessions = [];
+        if ($mysqlConnected && $conn) {
+            $pRes = @$conn->query("SELECT `payment_id`, `order_id`, `amount_bdt`, `customer_name`, `gateway`, `status`, `created_at_ms` FROM `bazarpay_sessions` WHERE `status` = 'PENDING' ORDER BY `created_at_ms` DESC LIMIT 50");
+            if ($pRes) {
+                while ($pRow = $pRes->fetch_assoc()) {
+                    $pendingSessions[$pRow['payment_id']] = [
+                        'paymentId' => $pRow['payment_id'],
+                        'orderId' => $pRow['order_id'],
+                        'amountBdt' => floatval($pRow['amount_bdt']),
+                        'createdAt' => floatval($pRow['created_at_ms'])
+                    ];
+                }
+            }
+        }
+        if (isset($serverData['_bazarpay_sessions']) && is_array($serverData['_bazarpay_sessions'])) {
+            foreach ($serverData['_bazarpay_sessions'] as $pid => $s) {
+                if (!is_array($s) || ($s['status'] ?? '') !== 'PENDING') continue;
+                if (!isset($pendingSessions[$pid])) {
+                    $pendingSessions[$pid] = [
+                        'paymentId' => (string)($s['paymentId'] ?? $pid),
+                        'orderId' => (string)($s['orderId'] ?? ''),
+                        'amountBdt' => floatval($s['amountBdt'] ?? 0),
+                        'createdAt' => floatval($s['createdAt'] ?? 0)
+                    ];
+                }
+            }
+        }
+        usort($pendingSessions, function($a, $b) {
+            return ($b['createdAt'] ?? 0) <=> ($a['createdAt'] ?? 0);
+        });
+
+        $extLower = strtolower($externalOrderId);
+        if ($extLower !== '') {
+            foreach ($pendingSessions as $ps) {
+                if ((strtolower($ps['orderId']) === $extLower || strtolower($ps['paymentId']) === $extLower) && $amountBdt >= $ps['amountBdt'] && $ps['amountBdt'] > 0) {
+                    $matchedSession = $ps;
+                    break;
+                }
+            }
+        }
+        if (!$matchedSession) {
+            foreach ($pendingSessions as $ps) {
+                $ageMs = $nowMs - floatval($ps['createdAt'] ?? 0);
+                if ($ageMs >= -60000 && $ageMs <= $windowMs && $ps['amountBdt'] > 0 && abs($ps['amountBdt'] - $amountBdt) < 0.01) {
+                    $matchedSession = $ps;
+                    break;
+                }
+            }
+        }
+
+        if ($matchedSession) {
+            $autoMatchedOrderId = $matchedSession['orderId'];
+            $mPid = $matchedSession['paymentId'];
+            $serverData['_bazarpay_pool'][$trxId]['claimed'] = true;
+            $serverData['_bazarpay_pool'][$trxId]['claimed_order_id'] = $autoMatchedOrderId;
+            $serverData['_bazarpay_pool'][$trxId]['claimed_at'] = $nowMs;
+            if (isset($serverData['_bazarpay_sessions'][$mPid]) && is_array($serverData['_bazarpay_sessions'][$mPid])) {
+                $serverData['_bazarpay_sessions'][$mPid]['status'] = 'PAID';
+                $serverData['_bazarpay_sessions'][$mPid]['trxId'] = $trxId;
+                $serverData['_bazarpay_sessions'][$mPid]['gateway'] = $gateway;
+                $serverData['_bazarpay_sessions'][$mPid]['paidAt'] = $nowMs;
+            }
+            writeServerDbFile($serverDbFile, $serverData, $serverDbFileBackup);
+
+            if ($mysqlConnected && $conn) {
+                $trxEsc = $conn->real_escape_string($trxId);
+                $ordEsc = $conn->real_escape_string(safeSubstr($autoMatchedOrderId, 60));
+                $pidEsc = $conn->real_escape_string($mPid);
+                $gwEsc = $conn->real_escape_string(safeSubstr($gateway, 45));
+                @$conn->query("UPDATE `bazarpay_transactions` SET `claimed` = 1, `claimed_order_id` = '$ordEsc', `claimed_at` = CURRENT_TIMESTAMP WHERE `trx_id` = '$trxEsc'");
+                @$conn->query("UPDATE `bazarpay_sessions` SET `status` = 'PAID', `trx_id` = '$trxEsc', `gateway` = '$gwEsc', `paid_at_ms` = $nowMs WHERE `payment_id` = '$pidEsc'");
+            }
+        }
+    }
+
+    echo json_encode(['ok' => true, 'stored' => $trxId, 'autoMatchedOrderId' => $autoMatchedOrderId], JSON_UNESCAPED_UNICODE);
     if ($conn) $conn->close();
     exit;
 }
@@ -1161,7 +1243,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'bazarpay_payment') {
         exit;
     }
 
-    echo json_encode(['ok' => true, 'session' => $session], JSON_UNESCAPED_UNICODE);
+    // সেশন এখনো PENDING থাকলে ৩০ মিনিটের মধ্যে আসা কোনো আনক্লেইমড ওয়েবহুক পেমেন্টের সাথে অটো-ম্যাচ চেক করা
+    if (($session['status'] ?? '') === 'PENDING' && floatval($session['amountBdt'] ?? 0) > 0) {
+        $nowMs = round(microtime(true) * 1000);
+        $windowMs = 30 * 60 * 1000;
+        $expectedAmt = floatval($session['amountBdt']);
+        $matchedTx = null;
+
+        if ($mysqlConnected && $conn) {
+            $uRes = @$conn->query("SELECT `trx_id`, `amount_bdt`, `gateway`, UNIX_TIMESTAMP(`created_at`) * 1000 AS ts_ms FROM `bazarpay_transactions` WHERE `claimed` = 0 ORDER BY `created_at` DESC LIMIT 50");
+            if ($uRes) {
+                while ($uRow = $uRes->fetch_assoc()) {
+                    $uAmt = floatval($uRow['amount_bdt']);
+                    $uTs = floatval($uRow['ts_ms']);
+                    if ($uTs > 0 && ($nowMs - $uTs) <= $windowMs && abs($uAmt - $expectedAmt) < 0.01) {
+                        $matchedTx = [
+                            'trx_id' => strtoupper(trim((string)$uRow['trx_id'])),
+                            'gateway' => trim((string)$uRow['gateway']) ?: 'BKASH',
+                            'amount_bdt' => $uAmt
+                        ];
+                        break;
+                    }
+                }
+            }
+        }
+
+        $serverData = readServerDbFile($serverDbFile, $serverDbFileBackup);
+        if (!$matchedTx && isset($serverData['_bazarpay_pool']) && is_array($serverData['_bazarpay_pool'])) {
+            foreach ($serverData['_bazarpay_pool'] as $k => $txItem) {
+                if (!is_array($txItem) || !empty($txItem['claimed'])) continue;
+                $tAmt = floatval($txItem['amount_bdt'] ?? 0);
+                $tTs = floatval($txItem['received_at'] ?? ($txItem['timestamp_ms'] ?? 0));
+                if ($tTs > 0 && ($nowMs - $tTs) <= $windowMs && abs($tAmt - $expectedAmt) < 0.01) {
+                    $matchedTx = [
+                        'trx_id' => strtoupper(trim((string)($txItem['trx_id'] ?? $k))),
+                        'gateway' => trim((string)($txItem['gateway'] ?? 'BKASH')) ?: 'BKASH',
+                        'amount_bdt' => $tAmt
+                    ];
+                    break;
+                }
+            }
+        }
+
+        if ($matchedTx) {
+            $mTrx = $matchedTx['trx_id'];
+            $mGw = $matchedTx['gateway'];
+            $session['status'] = 'PAID';
+            $session['trxId'] = $mTrx;
+            $session['gateway'] = $mGw;
+            $session['paidAt'] = $nowMs;
+
+            if ($mysqlConnected && $conn) {
+                $trxEsc = $conn->real_escape_string($mTrx);
+                $ordEsc = $conn->real_escape_string(safeSubstr((string)$session['orderId'], 60));
+                $pidEsc = $conn->real_escape_string($paymentId);
+                $gwEsc = $conn->real_escape_string(safeSubstr($mGw, 45));
+                @$conn->query("UPDATE `bazarpay_transactions` SET `claimed` = 1, `claimed_order_id` = '$ordEsc', `claimed_at` = CURRENT_TIMESTAMP WHERE `trx_id` = '$trxEsc'");
+                @$conn->query("UPDATE `bazarpay_sessions` SET `status` = 'PAID', `trx_id` = '$trxEsc', `gateway` = '$gwEsc', `paid_at_ms` = $nowMs WHERE `payment_id` = '$pidEsc'");
+            }
+            if (isset($serverData['_bazarpay_pool'][$mTrx]) && is_array($serverData['_bazarpay_pool'][$mTrx])) {
+                $serverData['_bazarpay_pool'][$mTrx]['claimed'] = true;
+                $serverData['_bazarpay_pool'][$mTrx]['claimed_order_id'] = $session['orderId'];
+                $serverData['_bazarpay_pool'][$mTrx]['claimed_at'] = $nowMs;
+            }
+            if (!isset($serverData['_bazarpay_sessions']) || !is_array($serverData['_bazarpay_sessions'])) {
+                $serverData['_bazarpay_sessions'] = [];
+            }
+            $serverData['_bazarpay_sessions'][$paymentId] = $session;
+            writeServerDbFile($serverDbFile, $serverData, $serverDbFileBackup);
+        }
+    }
+
+    echo json_encode([
+        'ok' => true,
+        'paid' => (($session['status'] ?? '') === 'PAID'),
+        'session' => $session
+    ], JSON_UNESCAPED_UNICODE);
     if ($conn) $conn->close();
     exit;
 }

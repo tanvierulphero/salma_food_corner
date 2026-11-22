@@ -25,6 +25,7 @@ import {
 import SmsMarketingPanel from './components/SmsMarketingPanel';
 import ShopLocationManager from './components/ShopLocationManager';
 import BazarPayCheckoutPage from './components/BazarPayCheckoutPage';
+import BazarPayAutoCheckoutModal from './components/BazarPayAutoCheckoutModal';
 import BanglaQrCard from './components/BanglaQrCard';
 import { ShopLocationConfig, DEFAULT_SHOP_LOCATION, MenuCategory, DEFAULT_MENU_CATEGORIES } from './types';
 import CategoryManagerModal from './components/CategoryManagerModal';
@@ -35,6 +36,7 @@ import { countActiveOrders, removeOrderById, setOrderStatusById } from './utils/
 import {
   createBazarPayPayment,
   DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+  getBazarPayPayment,
   verifyBazarPayOrder,
   type BazarPayPaymentSession,
   type BazarPayReceiverNumbers,
@@ -42,6 +44,7 @@ import {
 import {
   BAZARPAY_SETTINGS_KEY,
   loadBazarPaySettings,
+  resolveBanglaQrImageUrl,
   type BazarPaySettings,
 } from './utils/bazarpaySettings';
 import {
@@ -648,7 +651,7 @@ export default function App() {
   const [bazarPayChecking, setBazarPayChecking] = useState<boolean>(false);
   const [bazarPayError, setBazarPayError] = useState<string>('');
   const [checkoutError, setCheckoutError] = useState<string>('');
-  const [bazarPayGateway, setBazarPayGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR'>('BANGLA_QR');
+  const [bazarPayGateway, setBazarPayGateway] = useState<'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR' | null>(null);
   const [bazarPaySession, setBazarPaySession] = useState<BazarPayPaymentSession | null>(null);
   const [bazarPaySettings, setBazarPaySettings] = useState<BazarPaySettings>(() =>
     loadBazarPaySettings()
@@ -657,6 +660,55 @@ export default function App() {
     () => loadBazarPaySettings().receiverNumbers
   );
   const [copiedBazarPayNum, setCopiedBazarPayNum] = useState<boolean>(false);
+  const [bazarPayAutoModal, setBazarPayAutoModal] = useState<{
+    orderId: string;
+    amountBdt: number;
+    customerName: string;
+    existingPaymentId?: string;
+    onSuccess?: (session: BazarPayPaymentSession) => void;
+  } | null>(null);
+
+  useEffect(() => {
+    const win = window as unknown as {
+      BazarPay?: {
+        banglaQrImageUrl: string;
+        numbers: BazarPayReceiverNumbers;
+        openCheckout: (opts: {
+          orderId: string;
+          amountBdt: number;
+          customerName?: string;
+          onSuccess?: (session: BazarPayPaymentSession) => void;
+        }) => void;
+      };
+      selectBazarPayMethod?: (gw: 'BKASH' | 'NAGAD' | 'ROCKET' | 'BANGLA_QR') => void;
+      startBazarPayAutoCheckout?: (orderId: string, amountBdt: number) => void;
+    };
+    win.BazarPay = {
+      banglaQrImageUrl: resolveBanglaQrImageUrl(bazarPaySettings.banglaQrImageUrl),
+      numbers: { ...DEFAULT_BAZARPAY_RECEIVER_NUMBERS, ...bazarPaySettings.receiverNumbers },
+      openCheckout: ({ orderId, amountBdt, customerName = 'Customer', onSuccess }) => {
+        setBazarPayAutoModal({
+          orderId,
+          amountBdt,
+          customerName,
+          onSuccess,
+        });
+      },
+    };
+    win.selectBazarPayMethod = (gw) => {
+      if (gw === 'BKASH' || gw === 'NAGAD' || gw === 'ROCKET' || gw === 'BANGLA_QR') {
+        setBazarPayGateway(gw);
+        setCopiedBazarPayNum(false);
+      }
+    };
+    win.startBazarPayAutoCheckout = (orderId, amountBdt) => {
+      setBazarPayAutoModal({
+        orderId,
+        amountBdt,
+        customerName: 'Customer',
+      });
+    };
+  }, [bazarPaySettings]);
 
   useEffect(() => {
     const syncBpSettings = () => {
@@ -1098,7 +1150,7 @@ export default function App() {
       orderId: nextOrderId,
       amountBdt: advanceAmount,
       customerName: checkoutForm.name.trim() || 'Customer',
-      gateway: bazarPayGateway,
+      gateway: bazarPayGateway || 'BANGLA_QR',
     }).then((res) => {
       if (!active) return;
       if (res.receiverNumbers) {
@@ -1115,6 +1167,38 @@ export default function App() {
       active = false;
     };
   }, [isCartOpen, cartStep, cart.length, subtotal, advanceAmount]);
+
+  // Auto-poll active checkout payment session every 3 seconds so webhook payments auto-verify without typing TrxID
+  useEffect(() => {
+    if (!isCartOpen || cartStep !== 'checkout' || !bazarPaySession?.paymentId || bazarPayVerified) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const st = await getBazarPayPayment(bazarPaySession.paymentId);
+        if (!active) return;
+        if (st.ok && (st.paid || st.session?.status === 'PAID') && st.session) {
+          const verifiedTrx = st.session.trxId || 'PAID';
+          setBazarPaySession(st.session);
+          setCheckoutForm((prev) => ({ ...prev, transactionId: verifiedTrx }));
+          setBazarPayVerified({
+            orderId: st.session.orderId,
+            trxId: verifiedTrx,
+            gateway: st.session.gateway || bazarPayGateway || 'BANGLA_QR',
+            amountBdt: Number(st.session.amountBdt || advanceAmount),
+          });
+          setBazarPayError('');
+        }
+      } catch {
+        // Ignore transient network errors while polling
+      }
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [isCartOpen, cartStep, bazarPaySession?.paymentId, bazarPayVerified, advanceAmount, bazarPayGateway]);
 
   const mapBazarPayGateway = (
     gw: string | undefined,
@@ -1164,7 +1248,7 @@ export default function App() {
       setBazarPayVerified({
         orderId: res.orderId || candidateOrderId,
         trxId: res.trxId || normalizedTrx,
-        gateway: res.gateway || bazarPayGateway,
+        gateway: res.gateway || bazarPayGateway || 'BANGLA_QR',
         amountBdt: Number(res.amountBdt || advanceAmount)
       });
     } finally {
@@ -3550,80 +3634,174 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* BazarPay TrxID Verification Box */}
-                      <div className="border rounded-xl p-3 space-y-2.5 bg-emerald-50/70 border-emerald-200">
-                        <div className="grid grid-cols-4 gap-1.5">
+                      {/* BazarPay Auto-Verify Box (No Default Method — User Chooses & Pays) */}
+                      <div
+                        id="bazarpay-box"
+                        data-testid="bazarpay-box"
+                        className="border rounded-xl p-3 space-y-2.5 bg-emerald-50/70 border-[#006A4E]/40"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-extrabold text-[#006A4E]">
+                            পেমেন্ট মাধ্যম নির্বাচন করুন (৳ {advanceAmount})
+                          </span>
+                          <button
+                            type="button"
+                            data-testid="open-bazarpay-modal-btn"
+                            onClick={() => {
+                              const nextOrd =
+                                bazarPaySession?.orderId ||
+                                ('SF-' + Math.floor(1000 + Math.random() * 9000));
+                              setBazarPayAutoModal({
+                                orderId: nextOrd,
+                                amountBdt: advanceAmount,
+                                customerName: checkoutForm.name.trim() || 'Customer',
+                                existingPaymentId:
+                                  bazarPaySession && bazarPaySession.amountBdt === advanceAmount
+                                    ? bazarPaySession.paymentId
+                                    : undefined,
+                                onSuccess: (paid) => {
+                                  const verifiedTrx = paid.trxId || 'PAID';
+                                  setBazarPaySession(paid);
+                                  setCheckoutForm((prev) => ({ ...prev, transactionId: verifiedTrx }));
+                                  setBazarPayVerified({
+                                    orderId: paid.orderId || nextOrd,
+                                    trxId: verifiedTrx,
+                                    gateway: paid.gateway || bazarPayGateway || 'BANGLA_QR',
+                                    amountBdt: Number(paid.amountBdt || advanceAmount),
+                                  });
+                                  setBazarPayError('');
+                                },
+                              });
+                            }}
+                            className="bg-[#006A4E] hover:opacity-95 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-xs cursor-pointer shrink-0"
+                          >
+                            Pay Now (পপআপ)
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
                           {(
                             [
-                              { key: 'BKASH', label: 'bKash' },
-                              { key: 'NAGAD', label: 'Nagad' },
-                              { key: 'ROCKET', label: 'Rocket' },
-                              { key: 'BANGLA_QR', label: 'Bangla QR' },
+                              {
+                                key: 'BKASH',
+                                label: 'বিকাশ',
+                                sub: 'সেন্ড মানি',
+                                activeCls: 'border-[#E2136E] bg-[#E2136E] text-white',
+                                idleCls: 'border-[#E2136E] bg-white text-[#E2136E]',
+                              },
+                              {
+                                key: 'NAGAD',
+                                label: 'নগদ',
+                                sub: 'সেন্ড মানি',
+                                activeCls: 'border-[#F6921E] bg-[#F6921E] text-white',
+                                idleCls: 'border-[#F6921E] bg-white text-[#F6921E]',
+                              },
+                              {
+                                key: 'ROCKET',
+                                label: 'রকেট',
+                                sub: 'সেন্ড মানি',
+                                activeCls: 'border-[#8C3494] bg-[#8C3494] text-white',
+                                idleCls: 'border-[#8C3494] bg-white text-[#8C3494]',
+                              },
+                              {
+                                key: 'BANGLA_QR',
+                                label: 'বাংলা QR',
+                                sub: 'স্ক্যান পে',
+                                activeCls: 'border-[#006A4E] bg-[#006A4E] text-white',
+                                idleCls: 'border-[#006A4E] bg-white text-[#006A4E]',
+                              },
                             ] as const
                           ).map((gw) => (
                             <button
                               key={gw.key}
+                              id={`bp-btn-${gw.key}`}
                               type="button"
-                              onClick={() => setBazarPayGateway(gw.key)}
-                              className={`py-1.5 px-1 rounded-lg border text-[10px] font-bold transition cursor-pointer ${
-                                bazarPayGateway === gw.key
-                                  ? 'border-emerald-600 bg-emerald-600 text-white shadow-xs'
-                                  : 'border-emerald-200 bg-white text-gray-700 hover:bg-emerald-50'
+                              data-gw={gw.key}
+                              onClick={() => {
+                                setBazarPayGateway(gw.key);
+                                setCopiedBazarPayNum(false);
+                              }}
+                              className={`py-2 px-2 rounded-[10px] border-2 text-center font-bold transition cursor-pointer ${
+                                bazarPayGateway === gw.key ? gw.activeCls : gw.idleCls
                               }`}
                             >
-                              {gw.label}
+                              <span className="block text-xs leading-tight">{gw.label}</span>
+                              <span className="block text-[10px] font-medium opacity-90">{gw.sub}</span>
                             </button>
                           ))}
                         </div>
-                        <BanglaQrCard
-                          receiverNumber={
-                            bazarPaySettings.receiverNumbers.BANGLA_QR ||
-                            bazarPayReceiverNumbers.BANGLA_QR ||
-                            DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR
-                          }
-                          amountBdt={advanceAmount}
-                          orderId={bazarPaySession?.orderId}
-                          qrImageUrl={bazarPaySettings.banglaQrImageUrl}
-                          qrPayloadOverride={bazarPaySettings.banglaQrPayload}
-                          compact
-                        />
-                        <div className="flex justify-between items-center text-xs gap-2 bg-white px-2.5 py-2 rounded-lg border border-emerald-200">
-                          <div>
-                            <span className="block text-[10px] font-semibold text-gray-500">BazarPay ({bazarPayGateway}) নম্বর:</span>
-                            <span className="font-mono font-black text-sm text-red-600 tracking-wide">
-                              {bazarPaySettings.receiverNumbers[bazarPayGateway] ||
-                                bazarPayReceiverNumbers[bazarPayGateway] ||
-                                DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
+
+                        <div id="bp-method-details">
+                          {!bazarPayGateway ? (
+                            <div className="rounded-xl border border-dashed border-gray-300 bg-white p-3 text-center text-xs font-medium text-gray-600">
+                              👆 পেমেন্ট করতে উপরের যেকোনো একটি মাধ্যম ক্লিক করুন
+                            </div>
+                          ) : bazarPayGateway === 'BANGLA_QR' ? (
+                            <BanglaQrCard
+                              receiverNumber={
+                                bazarPaySettings.receiverNumbers.BANGLA_QR ||
+                                bazarPayReceiverNumbers.BANGLA_QR ||
+                                DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BANGLA_QR
+                              }
+                              amountBdt={advanceAmount}
+                              orderId={bazarPaySession?.orderId}
+                              qrImageUrl={bazarPaySettings.banglaQrImageUrl}
+                              qrPayloadOverride={bazarPaySettings.banglaQrPayload}
+                              compact
+                            />
+                          ) : (
+                            (() => {
+                              const gwMeta = {
+                                BKASH: { name: 'বিকাশ', ussd: '*247#', border: 'border-[#E2136E]', text: 'text-[#E2136E]', btn: 'bg-[#E2136E]' },
+                                NAGAD: { name: 'নগদ', ussd: '*167#', border: 'border-[#F6921E]', text: 'text-[#F6921E]', btn: 'bg-[#F6921E]' },
+                                ROCKET: { name: 'রকেট', ussd: '*322#', border: 'border-[#8C3494]', text: 'text-[#8C3494]', btn: 'bg-[#8C3494]' },
+                              }[bazarPayGateway];
                               const num =
                                 bazarPaySettings.receiverNumbers[bazarPayGateway] ||
                                 bazarPayReceiverNumbers[bazarPayGateway] ||
                                 DEFAULT_BAZARPAY_RECEIVER_NUMBERS.BKASH;
-                              if (navigator.clipboard) {
-                                navigator.clipboard.writeText(num).catch(() => {});
-                              }
-                              setCopiedBazarPayNum(true);
-                              setTimeout(() => setCopiedBazarPayNum(false), 1800);
-                            }}
-                            className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
-                          >
-                            {copiedBazarPayNum ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                            <span>{copiedBazarPayNum ? 'কপি হয়েছে' : 'কপি'}</span>
-                          </button>
+                              return (
+                                <div className={`rounded-xl border-2 bg-white p-3 text-center space-y-1.5 ${gwMeta.border}`}>
+                                  <p className={`text-xs font-extrabold ${gwMeta.text}`}>
+                                    {gwMeta.name} পার্সোনাল নম্বর — সেন্ড মানি (Send Money)
+                                  </p>
+                                  <div className="font-mono text-lg font-black text-gray-900 tracking-wide">
+                                    {num}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (navigator.clipboard) {
+                                        navigator.clipboard.writeText(num).catch(() => {});
+                                      }
+                                      setCopiedBazarPayNum(true);
+                                      setTimeout(() => setCopiedBazarPayNum(false), 1800);
+                                    }}
+                                    className={`${gwMeta.btn} hover:opacity-95 text-white px-3 py-1 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer`}
+                                  >
+                                    {copiedBazarPayNum ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                    <span>{copiedBazarPayNum ? '✅ নম্বর কপি হয়েছে' : 'নম্বর কপি করুন'}</span>
+                                  </button>
+                                  <p className="text-[11px] text-gray-700 leading-snug">
+                                    {gwMeta.name} অ্যাপ বা <b>{gwMeta.ussd}</b> থেকে এই পার্সোনাল নম্বরে{' '}
+                                    <b>৳{advanceAmount} সেন্ড মানি (Send Money)</b> করুন।
+                                  </p>
+                                </div>
+                              );
+                            })()
+                          )}
                         </div>
-                        <p className="text-[10px] text-gray-600">
-                          {bazarPayGateway === 'BANGLA_QR'
-                            ? `উপরের Bangla QR স্ক্যান করে ৳ ${advanceAmount} পেমেন্ট করে SMS/অ্যাপের TrxID নিচে দিন — BazarPay সাথে সাথে অটো ভেরিফাই করবে।`
-                            : `উপরের নম্বরে ৳ ${advanceAmount} পেমেন্ট করে SMS-এ পাওয়া TrxID দিন — BazarPay সাথে সাথে অটো ভেরিফাই করবে।`}
-                        </p>
+
+                        {!bazarPayVerified && (
+                          <p id="bp-status" className="text-center text-[11px] font-bold text-[#006A4E]">
+                            ⏳ টাকা পাঠালেই অটোমেটিক ভেরিফাই হয়ে পেমেন্ট সম্পন্ন হবে...
+                          </p>
+                        )}
+
                         <div className="flex gap-2">
-                          <input 
-                            type="text" 
-                            placeholder="ট্রানজেকশন আইডি (যেমন: 9J4K2L)" 
+                          <input
+                            type="text"
+                            placeholder="অথবা SMS TrxID দিন (ঐচ্ছিক)"
                             value={checkoutForm.transactionId}
                             onChange={(e) => {
                               const nextVal = e.target.value;
@@ -3639,16 +3817,19 @@ export default function App() {
                             type="button"
                             disabled={bazarPayChecking}
                             onClick={handleVerifyBazarPayTrx}
-                            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold shadow-xs shrink-0 cursor-pointer flex items-center gap-1"
+                            className="bg-[#006A4E] hover:opacity-95 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold shadow-xs shrink-0 cursor-pointer flex items-center gap-1"
                           >
                             <ShieldCheck className="w-3.5 h-3.5" />
                             <span>{bazarPayChecking ? 'যাচাই হচ্ছে...' : 'ভেরিফাই'}</span>
                           </button>
                         </div>
                         {bazarPayVerified && (
-                          <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                          <div
+                            data-testid="checkout-bazarpay-verified"
+                            className="text-[11px] font-bold text-[#006A4E] bg-emerald-50 border border-emerald-300 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5"
+                          >
                             <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                            <span>পেমেন্ট ভেরিফাইড: ৳{bazarPayVerified.amountBdt} ({bazarPayVerified.gateway}) • {bazarPayVerified.trxId}</span>
+                            <span>✅ পেমেন্ট অটো-ভেরিফাই সম্পন্ন: ৳{bazarPayVerified.amountBdt} ({bazarPayVerified.gateway}) • {bazarPayVerified.trxId}</span>
                           </div>
                         )}
                         {bazarPayError && (
@@ -4356,6 +4537,21 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* BazarPay Drop-In Auto-Verify Checkout Modal (Also accessible via window.BazarPay.openCheckout) */}
+      <BazarPayAutoCheckoutModal
+        isOpen={Boolean(bazarPayAutoModal)}
+        orderId={bazarPayAutoModal?.orderId || ''}
+        amountBdt={bazarPayAutoModal?.amountBdt || 0}
+        customerName={bazarPayAutoModal?.customerName || 'Customer'}
+        existingPaymentId={bazarPayAutoModal?.existingPaymentId}
+        banglaQrImageUrl={bazarPaySettings.banglaQrImageUrl}
+        receiverNumbers={{ ...bazarPayReceiverNumbers, ...bazarPaySettings.receiverNumbers }}
+        onClose={() => setBazarPayAutoModal(null)}
+        onSuccess={(session) => {
+          bazarPayAutoModal?.onSuccess?.(session);
+        }}
+      />
 
     </div>
   );
