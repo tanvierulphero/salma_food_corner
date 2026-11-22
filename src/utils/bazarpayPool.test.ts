@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {
   autoMatchWebhookToPendingSession,
+  BANGLA_QR_WINDOW_MS,
   buildBanglaQrPayload,
   buildBazarPaySignaturePayload,
   computeBazarPayWalletSummary,
@@ -12,6 +13,7 @@ import {
   markBazarPaySessionPaid,
   reconcilePendingSessionWithPool,
   storeIncomingBazarPayTx,
+  updateBazarPaySessionGateway,
   verifyAndClaimBazarPayTx,
   type BazarPayPaymentSession,
   type BazarPayTransaction,
@@ -37,8 +39,9 @@ test('storeIncomingBazarPayTx normalizes trx_id and verifyAndClaimBazarPayTx cla
   assert.equal(res.body.paid, true);
   if (res.body.paid) {
     assert.equal(res.body.trxId, 'BK9J4K2L');
-    assert.equal(res.body.gateway, 'bKash');
+    assert.equal(res.body.gateway, 'BKASH');
     assert.equal(res.body.orderId, 'SF-1001');
+    assert.equal(res.body.matchMode, 'TRX_ID');
   }
 });
 
@@ -176,7 +179,7 @@ test('computeBazarPayWalletSummary computes totalSettledBdt, verifiedCount, and 
   assert.equal(pool['BK7M91K42P'].account_mode, 'PERSONAL_SEND_MONEY');
 });
 
-test('autoMatchWebhookToPendingSession auto-verifies pending session by exact amount or external_order_id', () => {
+test('autoMatchWebhookToPendingSession auto-verifies pending session by exact amount, gateway preference, or external_order_id within 15-min window', () => {
   const pool: Record<string, BazarPayTransaction> = {};
   const sessions: Record<string, BazarPayPaymentSession> = {};
   const t0 = 1763600000000;
@@ -187,6 +190,7 @@ test('autoMatchWebhookToPendingSession auto-verifies pending session by exact am
     DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
     t0
   );
+  assert.equal(created.session.gateway, null);
 
   // Wrong amount should NOT auto-match
   storeIncomingBazarPayTx(pool, { trx_id: 'WRONG100', amount_bdt: 100, gateway: 'BKASH' }, t0 + 5000);
@@ -195,7 +199,7 @@ test('autoMatchWebhookToPendingSession auto-verifies pending session by exact am
   assert.equal(sessions[created.paymentId].status, 'PENDING');
   assert.equal(pool['WRONG100'].claimed, false);
 
-  // Exact amount within 30 mins DOES auto-match and marks session PAID
+  // Exact amount within 15 mins DOES auto-match and marks session PAID
   storeIncomingBazarPayTx(pool, { trx_id: 'AUTO450OK', amount_bdt: 450, gateway: 'BANGLA_QR' }, t0 + 10000);
   const matched = autoMatchWebhookToPendingSession(pool, sessions, 'AUTO450OK', t0 + 10000);
   assert.ok(matched);
@@ -203,8 +207,22 @@ test('autoMatchWebhookToPendingSession auto-verifies pending session by exact am
   assert.equal(matched.status, 'PAID');
   assert.equal(matched.trxId, 'AUTO450OK');
   assert.equal(matched.gateway, 'BANGLA_QR');
+  assert.equal(matched.matchMode, 'AMOUNT_TIME_WINDOW');
   assert.equal(pool['AUTO450OK'].claimed, true);
   assert.equal(pool['AUTO450OK'].claimed_order_id, 'ORD-AUTO-1');
+
+  // Expired session (>15 min) must NOT auto-match
+  const oldSession = createBazarPayPaymentSession(
+    sessions,
+    { orderId: 'ORD-OLD', amountBdt: 300, customerName: 'Expired' },
+    DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
+    t0
+  );
+  const afterWindow = t0 + BANGLA_QR_WINDOW_MS + 5000;
+  storeIncomingBazarPayTx(pool, { trx_id: 'LATE300', amount_bdt: 300, gateway: 'BANGLA_QR' }, afterWindow);
+  const expiredMatch = autoMatchWebhookToPendingSession(pool, sessions, 'LATE300', afterWindow);
+  assert.equal(expiredMatch, null);
+  assert.equal(sessions[oldSession.paymentId].status, 'PENDING');
 });
 
 test('reconcilePendingSessionWithPool auto-claims an unclaimed webhook payment on poll', () => {
@@ -224,5 +242,64 @@ test('reconcilePendingSessionWithPool auto-claims an unclaimed webhook payment o
   assert.equal(res.newlyMatched, true);
   assert.equal(res.session?.status, 'PAID');
   assert.equal(res.session?.trxId, 'PREPAY380');
+  assert.equal(res.session?.matchMode, 'AMOUNT_TIME_WINDOW');
   assert.equal(pool['PREPAY380'].claimed, true);
 });
+
+test('Solution 2: Bangla QR verify matches by Exact Amount + 15-min Window even when customer TrxID != Bank QR Ref', () => {
+  const pool: Record<string, BazarPayTransaction> = {};
+  const t0 = 1763602000000;
+
+  // Merchant bank notification arrives with Bank Ref 'BNKQR998811'
+  storeIncomingBazarPayTx(
+    pool,
+    { trx_id: 'BNKQR998811', amount_bdt: 520, gateway: 'BANGLA_QR' },
+    t0
+  );
+
+  // Customer enters their bKash TrxID 'BKASHCUST77' under BANGLA_QR
+  const res = verifyAndClaimBazarPayTx(
+    pool,
+    {
+      orderId: 'ORD-QR-520',
+      trxId: 'BKASHCUST77',
+      amountBdt: 520,
+      gateway: 'BANGLA_QR',
+    },
+    t0 + 2 * 60 * 1000
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.paid, true);
+  if (res.body.paid) {
+    assert.equal(res.body.matchMode, 'AMOUNT_TIME_WINDOW');
+    assert.equal(res.body.trx_id, 'BNKQR998811');
+    assert.equal(res.body.customerTrxId, 'BKASHCUST77');
+    assert.equal(res.body.amount_bdt, 520);
+  }
+});
+
+test('updateBazarPaySessionGateway validates gateway allowlist and webhook prefers exact gateway match', () => {
+  const pool: Record<string, BazarPayTransaction> = {};
+  const sessions: Record<string, BazarPayPaymentSession> = {};
+  const t0 = 1763603000000;
+
+  const s1 = createBazarPayPaymentSession(sessions, { orderId: 'ORD-GW-1', amountBdt: 200 }, DEFAULT_BAZARPAY_RECEIVER_NUMBERS, t0);
+  const s2 = createBazarPayPaymentSession(sessions, { orderId: 'ORD-GW-2', amountBdt: 200 }, DEFAULT_BAZARPAY_RECEIVER_NUMBERS, t0 + 1000);
+
+  const bad = updateBazarPaySessionGateway(sessions, s1.paymentId, 'INVALID_GW');
+  assert.equal(bad.ok, false);
+
+  const u1 = updateBazarPaySessionGateway(sessions, s1.paymentId, 'NAGAD');
+  const u2 = updateBazarPaySessionGateway(sessions, s2.paymentId, 'BKASH');
+  assert.equal(u1.ok, true);
+  assert.equal(u2.ok, true);
+
+  // Incoming NAGAD webhook for 200 should match s1 (NAGAD), NOT newer s2 (BKASH)
+  storeIncomingBazarPayTx(pool, { trx_id: 'NG200MATCH', amount_bdt: 200, gateway: 'NAGAD' }, t0 + 5000);
+  const matched = autoMatchWebhookToPendingSession(pool, sessions, 'NG200MATCH', t0 + 5000);
+  assert.ok(matched);
+  assert.equal(matched.orderId, 'ORD-GW-1');
+  assert.equal(sessions[s2.paymentId].status, 'PENDING');
+});
+

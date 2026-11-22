@@ -3,6 +3,7 @@ import { ShieldCheck, CheckCircle2, AlertCircle, Copy, Check, ArrowLeft, Loader2
 import {
   DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
   getBazarPayPayment,
+  updateBazarPayPaymentGateway,
   verifyBazarPayOrder,
   type BazarPayPaymentSession,
 } from '../utils/bazarpayClient';
@@ -162,7 +163,7 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
     if (!session) return;
     const cleanTrx = trxId.trim().toUpperCase();
     setVerifyError('');
-    if (!cleanTrx) {
+    if (!cleanTrx && selectedGateway !== 'BANGLA_QR') {
       setVerifyError('দয়া করে পেমেন্টের TrxID লিখুন।');
       return;
     }
@@ -174,9 +175,10 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
         paymentId: session.paymentId,
         trxId: cleanTrx,
         amountBdt: session.amountBdt,
+        gateway: selectedGateway || undefined,
       });
       if (!res.paid) {
-        setVerifyError(res.message || 'TrxID যাচাই করা যায়নি।');
+        setVerifyError(res.message || res.error || 'TrxID যাচাই করা যায়নি।');
         return;
       }
       setSession((prev) =>
@@ -292,6 +294,9 @@ export default function BazarPayCheckoutPage({ paymentId }: BazarPayCheckoutPage
                       onClick={() => {
                         setSelectedGateway(gw.key);
                         setCopied(false);
+                        if (session?.paymentId) {
+                          updateBazarPayPaymentGateway(session.paymentId, gw.key).catch(() => {});
+                        }
                       }}
                       className={`py-2.5 px-2 rounded-xl border-2 text-center font-bold transition cursor-pointer ${
                         selectedGateway === gw.key ? gw.activeClass : gw.inactiveClass

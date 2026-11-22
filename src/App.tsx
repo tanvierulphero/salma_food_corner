@@ -37,6 +37,7 @@ import {
   createBazarPayPayment,
   DEFAULT_BAZARPAY_RECEIVER_NUMBERS,
   getBazarPayPayment,
+  updateBazarPayPaymentGateway,
   verifyBazarPayOrder,
   type BazarPayPaymentSession,
   type BazarPayReceiverNumbers,
@@ -1150,7 +1151,7 @@ export default function App() {
       orderId: nextOrderId,
       amountBdt: advanceAmount,
       customerName: checkoutForm.name.trim() || 'Customer',
-      gateway: bazarPayGateway || 'BANGLA_QR',
+      gateway: bazarPayGateway,
     }).then((res) => {
       if (!active) return;
       if (res.receiverNumbers) {
@@ -1216,11 +1217,11 @@ export default function App() {
     const normalizedTrx = checkoutForm.transactionId.trim().toUpperCase();
     setBazarPayError('');
     setCheckoutError('');
-    if (!normalizedTrx) {
+    if (!normalizedTrx && bazarPayGateway !== 'BANGLA_QR') {
       setBazarPayError('দয়া করে পেমেন্টের TrxID লিখুন।');
       return;
     }
-    if (bazarPayVerified && bazarPayVerified.trxId === normalizedTrx && bazarPayVerified.amountBdt >= advanceAmount) {
+    if (bazarPayVerified && (!normalizedTrx || bazarPayVerified.trxId === normalizedTrx) && bazarPayVerified.amountBdt >= advanceAmount) {
       return;
     }
 
@@ -1232,11 +1233,12 @@ export default function App() {
         orderId: candidateOrderId,
         paymentId: bazarPaySession?.paymentId,
         trxId: normalizedTrx,
-        amountBdt: advanceAmount
+        amountBdt: advanceAmount,
+        gateway: bazarPayGateway || undefined,
       });
       if (!res.paid) {
         setBazarPayVerified(null);
-        setBazarPayError(res.message || 'TrxID ভেরিফাই করা যায়নি।');
+        setBazarPayError(res.message || res.error || 'TrxID ভেরিফাই করা যায়নি।');
         return;
       }
       const verifiedMethod = mapBazarPayGateway(res.gateway, checkoutForm.advancePaymentMethod);
@@ -1272,8 +1274,8 @@ export default function App() {
     if (cart.length === 0) return;
 
     const normalizedTrx = checkoutForm.transactionId.trim().toUpperCase();
-    if (!normalizedTrx) {
-      setBazarPayError('অর্ডার কনফার্ম করতে পেমেন্টের TrxID প্রদান করুন।');
+    if (!normalizedTrx && !bazarPayVerified && bazarPayGateway !== 'BANGLA_QR') {
+      setBazarPayError('অর্ডার কনফার্ম করতে পেমেন্ট সম্পন্ন করুন অথবা TrxID প্রদান করুন।');
       return;
     }
 
@@ -1283,7 +1285,7 @@ export default function App() {
 
     if (
       bazarPayVerified &&
-      bazarPayVerified.trxId === normalizedTrx &&
+      (!normalizedTrx || bazarPayVerified.trxId === normalizedTrx) &&
       bazarPayVerified.amountBdt >= advanceAmount
     ) {
       confirmedOrderId = bazarPayVerified.orderId;
@@ -1296,11 +1298,12 @@ export default function App() {
           orderId: confirmedOrderId,
           paymentId: bazarPaySession?.paymentId,
           trxId: normalizedTrx,
-          amountBdt: advanceAmount
+          amountBdt: advanceAmount,
+          gateway: bazarPayGateway || undefined,
         });
         if (!res.paid) {
           setBazarPayVerified(null);
-          setBazarPayError(res.message || 'TrxID ভেরিফাই করা যায়নি। পেমেন্ট করে সঠিক TrxID দিন।');
+          setBazarPayError(res.message || res.error || 'পেমেন্ট ভেরিফাই করা যায়নি। পেমেন্ট করে কয়েক সেকেন্ড পর চেষ্টা করুন।');
           return;
         }
         confirmedOrderId = res.orderId || confirmedOrderId;
@@ -3720,6 +3723,9 @@ export default function App() {
                               onClick={() => {
                                 setBazarPayGateway(gw.key);
                                 setCopiedBazarPayNum(false);
+                                if (bazarPaySession?.paymentId) {
+                                  updateBazarPayPaymentGateway(bazarPaySession.paymentId, gw.key).catch(() => {});
+                                }
                               }}
                               className={`py-2 px-2 rounded-[10px] border-2 text-center font-bold transition cursor-pointer ${
                                 bazarPayGateway === gw.key ? gw.activeCls : gw.idleCls

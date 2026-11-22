@@ -29,14 +29,21 @@ export interface BazarPayGetPaymentResponse {
 }
 
 export interface BazarPayClientVerifyResponse {
+  ok?: boolean;
   paid: boolean;
+  autoVerified?: boolean;
+  matchMode?: 'ORDER_ID' | 'TRX_ID' | 'AMOUNT_TIME_WINDOW';
   orderId?: string;
   paymentId?: string;
   trxId?: string;
+  trx_id?: string;
+  customerTrxId?: string;
   gateway?: string;
   amountBdt?: number;
+  amount_bdt?: number;
   senderWallet?: string;
   message?: string;
+  error?: string;
 }
 
 function getApiPhpUrl(action: string, extraQuery: string = ''): string {
@@ -73,13 +80,13 @@ export async function createBazarPayPayment(params: {
   orderId: string;
   amountBdt: number;
   customerName?: string;
-  gateway?: string;
+  gateway?: string | null;
 }): Promise<BazarPayCreatePaymentResponse> {
   const body = JSON.stringify({
     orderId: params.orderId,
     amountBdt: params.amountBdt,
     customerName: params.customerName || 'Customer',
-    gateway: params.gateway || 'BKASH',
+    gateway: params.gateway ?? null,
   });
   const init: RequestInit = {
     method: 'POST',
@@ -100,6 +107,34 @@ export async function createBazarPayPayment(params: {
   };
 }
 
+export async function updateBazarPayPaymentGateway(
+  paymentId: string,
+  gateway: string | null
+): Promise<{ ok: boolean; gateway?: string | null }> {
+  const cleanId = paymentId.trim();
+  if (!cleanId) return { ok: false };
+  const safeId = encodeURIComponent(cleanId);
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gateway }),
+  };
+
+  const primary = await fetchJsonSafe<{ ok: boolean; gateway?: string | null }>(
+    `/api/bazarpay/payment/${safeId}/gateway`,
+    init
+  );
+  if (primary && typeof primary.ok === 'boolean') return primary;
+
+  const fallback = await fetchJsonSafe<{ ok: boolean; gateway?: string | null }>(
+    getApiPhpUrl('bazarpay_gateway', `paymentId=${safeId}`),
+    init
+  );
+  if (fallback && typeof fallback.ok === 'boolean') return fallback;
+
+  return { ok: false };
+}
+
 export async function getBazarPayPayment(paymentId: string): Promise<BazarPayGetPaymentResponse> {
   const safeId = encodeURIComponent(paymentId.trim());
   const primary = await fetchJsonSafe<BazarPayGetPaymentResponse>(`/api/bazarpay/payment/${safeId}`);
@@ -116,14 +151,16 @@ export async function getBazarPayPayment(paymentId: string): Promise<BazarPayGet
 export async function verifyBazarPayOrder(params: {
   orderId: string;
   paymentId?: string;
-  trxId: string;
+  trxId?: string;
   amountBdt: number;
+  gateway?: string | null;
 }): Promise<BazarPayClientVerifyResponse> {
   const body = JSON.stringify({
     orderId: params.orderId,
     paymentId: params.paymentId,
-    trxId: params.trxId.trim().toUpperCase(),
+    trxId: (params.trxId || '').trim().toUpperCase(),
     amountBdt: params.amountBdt,
+    gateway: params.gateway || undefined,
   });
   const init: RequestInit = {
     method: 'POST',
@@ -131,7 +168,7 @@ export async function verifyBazarPayOrder(params: {
     body,
   };
 
-  const primary = await fetchJsonSafe<BazarPayClientVerifyResponse>('/api/bazarpay/verify-order', init);
+  const primary = await fetchJsonSafe<BazarPayClientVerifyResponse>('/api/bazarpay/verify', init);
   if (primary && typeof primary.paid === 'boolean') return primary;
 
   const fallback = await fetchJsonSafe<BazarPayClientVerifyResponse>(getApiPhpUrl('bazarpay_verify'), init);

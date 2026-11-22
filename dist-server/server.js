@@ -5,7 +5,7 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { autoMatchWebhookToPendingSession, buildBazarPaySignaturePayload, computeBazarPayWalletSummary, createBazarPayPaymentSession, DEFAULT_BAZARPAY_RECEIVER_NUMBERS, markBazarPaySessionPaid, reconcilePendingSessionWithPool, storeIncomingBazarPayTx, verifyAndClaimBazarPayTx, } from './src/utils/bazarpayPool.js';
+import { autoMatchWebhookToPendingSession, buildBazarPaySignaturePayload, computeBazarPayWalletSummary, createBazarPayPaymentSession, DEFAULT_BAZARPAY_RECEIVER_NUMBERS, markBazarPaySessionPaid, reconcilePendingSessionWithPool, storeIncomingBazarPayTx, updateBazarPaySessionGateway, verifyAndClaimBazarPayTx, } from './src/utils/bazarpayPool.js';
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,15 +30,24 @@ app.get('/api/bazarpay/webhook', (_req, res) => {
         status: 'ready',
     });
 });
-app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (req, res) => {
+function timingSafeEqualStr(a, b) {
+    const bufA = Buffer.from(a, 'utf8');
+    const bufB = Buffer.from(b, 'utf8');
+    return bufA.length > 0 && bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
+app.post('/api/bazarpay/webhook', express.raw({ type: '*/*', limit: '2mb' }), (req, res) => {
+    const rawBody = Buffer.isBuffer(req.body)
+        ? req.body.toString('utf8')
+        : typeof req.body === 'string'
+            ? req.body
+            : JSON.stringify(req.body ?? {});
     const ts = (req.header('X-BazarPay-Timestamp') || '').trim();
     const sig = (req.header('X-BazarPay-Signature') || '')
         .trim()
         .toLowerCase()
         .replace(/^sha256=/, '');
-    const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? '');
-    const sigBuf = Buffer.from(sig, 'utf8');
-    const signatureValid = BAZARPAY_SECRETS.some((secret) => {
+    const apiKeyHeader = (req.header('X-BazarPay-Api-Key') || '').trim();
+    const authValid = BAZARPAY_SECRETS.some((secret) => {
         const expectedExact = crypto
             .createHmac('sha256', secret)
             .update(`${ts}.${rawBody}`)
@@ -49,13 +58,12 @@ app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (
             .update(buildBazarPaySignaturePayload(ts, rawBody))
             .digest('hex')
             .toLowerCase();
-        const expExactBuf = Buffer.from(expectedExact, 'utf8');
-        const expTrimmedBuf = Buffer.from(expectedTrimmed, 'utf8');
-        return ((sigBuf.length === expExactBuf.length && crypto.timingSafeEqual(sigBuf, expExactBuf)) ||
-            (sigBuf.length === expTrimmedBuf.length && crypto.timingSafeEqual(sigBuf, expTrimmedBuf)));
+        return (timingSafeEqualStr(sig, expectedExact) ||
+            timingSafeEqualStr(sig, expectedTrimmed) ||
+            timingSafeEqualStr(apiKeyHeader, secret));
     });
-    if (!signatureValid) {
-        return res.status(401).json({ ok: false, error: 'Invalid HMAC signature' });
+    if (!authValid) {
+        return res.status(401).json({ ok: false, error: 'Invalid API key or HMAC signature' });
     }
     let data;
     try {
@@ -77,12 +85,30 @@ app.post('/api/bazarpay/webhook', express.text({ type: '*/*', limit: '2mb' }), (
     if (!stored.ok) {
         return res.status(400).json({ ok: false, error: stored.error });
     }
+    const storedTx = pool[stored.trxId];
     const matchedSession = autoMatchWebhookToPendingSession(pool, sessions, stored.trxId);
     saveServerDbToDisk(serverDbStore);
-    return res.json({
+    if (matchedSession) {
+        return res.status(200).json({
+            ok: true,
+            autoVerified: true,
+            paid: true,
+            status: 'PAID',
+            matchMode: matchedSession.matchMode || 'AMOUNT_TIME_WINDOW',
+            orderId: matchedSession.orderId,
+            trx_id: stored.trxId,
+            amount_bdt: Number(storedTx?.amount_bdt ?? matchedSession.amountBdt),
+            stored: stored.trxId,
+            autoMatchedOrderId: matchedSession.orderId,
+        });
+    }
+    return res.status(200).json({
         ok: true,
+        autoVerified: false,
         stored: stored.trxId,
-        autoMatchedOrderId: matchedSession?.orderId || null,
+        trx_id: stored.trxId,
+        amount_bdt: Number(storedTx?.amount_bdt ?? 0),
+        autoMatchedOrderId: null,
     });
 });
 app.use(express.json({ limit: '15mb' }));
@@ -104,6 +130,20 @@ app.post('/api/bazarpay/create-payment', (req, res) => {
         session: created.session,
     });
 });
+// 2.b) Save customer's selected gateway (BKASH / NAGAD / ROCKET / BANGLA_QR) on PENDING session
+app.post('/api/bazarpay/payment/:paymentId/gateway', (req, res) => {
+    serverDbStore = loadServerDbFromDisk();
+    if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+        serverDbStore._bazarpay_sessions = {};
+    }
+    const sessions = serverDbStore._bazarpay_sessions;
+    const updated = updateBazarPaySessionGateway(sessions, req.params.paymentId, req.body?.gateway);
+    if (!updated.ok) {
+        return res.status(updated.status).json({ ok: false, error: updated.error });
+    }
+    saveServerDbToDisk(serverDbStore);
+    return res.json({ ok: true, gateway: updated.gateway });
+});
 app.get('/api/bazarpay/payment/:paymentId', (req, res) => {
     serverDbStore = loadServerDbFromDisk();
     if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
@@ -116,7 +156,7 @@ app.get('/api/bazarpay/payment/:paymentId', (req, res) => {
     const sessions = serverDbStore._bazarpay_sessions;
     const reconciled = reconcilePendingSessionWithPool(pool, sessions, req.params.paymentId);
     if (!reconciled.session)
-        return res.status(404).json({ ok: false, error: 'Session not found' });
+        return res.status(404).json({ ok: false, paid: false, error: 'Session not found' });
     if (reconciled.newlyMatched) {
         saveServerDbToDisk(serverDbStore);
     }
@@ -126,8 +166,8 @@ app.get('/api/bazarpay/payment/:paymentId', (req, res) => {
         session: reconciled.session,
     });
 });
-// 3) Website Checkout calls this to verify Customer TrxID & confirm Order!
-app.post('/api/bazarpay/verify-order', (req, res) => {
+// 3) Verify endpoint (handles BOTH same-network TrxID AND Solution 2 Bangla QR Exact Amount + 15-min Window)
+const handleBazarPayVerify = (req, res) => {
     serverDbStore = loadServerDbFromDisk();
     if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
         serverDbStore._bazarpay_pool = {};
@@ -143,12 +183,16 @@ app.post('/api/bazarpay/verify-order', (req, res) => {
             paymentId: req.body?.paymentId,
             orderId: result.body.orderId,
             trxId: result.body.trxId,
+            customerTrxId: result.body.customerTrxId,
             gateway: result.body.gateway,
+            matchMode: result.body.matchMode,
         });
         saveServerDbToDisk(serverDbStore);
     }
     return res.status(result.status).json(result.body);
-});
+};
+app.post('/api/bazarpay/verify', handleBazarPayVerify);
+app.post('/api/bazarpay/verify-order', handleBazarPayVerify);
 // 4) BazarPay Wallet Summary API: GET /api/bazarpay/wallet/summary
 app.get('/api/bazarpay/wallet/summary', (_req, res) => {
     serverDbStore = loadServerDbFromDisk();
@@ -271,11 +315,14 @@ app.get('/api.php', (req, res) => {
     serverDbStore = loadServerDbFromDisk();
     if (req.query.action === 'bazarpay_payment') {
         const paymentId = String(req.query.paymentId || '').trim();
+        const pool = (serverDbStore._bazarpay_pool || {});
         const sessions = (serverDbStore._bazarpay_sessions || {});
-        const session = sessions[paymentId];
-        if (!session)
-            return res.status(404).json({ ok: false, error: 'Session not found' });
-        return res.json({ ok: true, session });
+        const reconciled = reconcilePendingSessionWithPool(pool, sessions, paymentId);
+        if (!reconciled.session)
+            return res.status(404).json({ ok: false, paid: false, error: 'Session not found' });
+        if (reconciled.newlyMatched)
+            saveServerDbToDisk(serverDbStore);
+        return res.json({ ok: true, paid: reconciled.session.status === 'PAID', session: reconciled.session });
     }
     if (req.query.action === 'bazarpay_wallet_summary') {
         const pool = (serverDbStore._bazarpay_pool || {});
@@ -308,6 +355,18 @@ app.post('/api.php', (req, res) => {
             session: created.session,
         });
     }
+    if (action === 'bazarpay_gateway') {
+        if (!serverDbStore._bazarpay_sessions || typeof serverDbStore._bazarpay_sessions !== 'object') {
+            serverDbStore._bazarpay_sessions = {};
+        }
+        const paymentId = String(req.query.paymentId || req.body?.paymentId || '').trim();
+        const sessions = serverDbStore._bazarpay_sessions;
+        const updated = updateBazarPaySessionGateway(sessions, paymentId, req.body?.gateway);
+        if (!updated.ok)
+            return res.status(updated.status).json({ ok: false, error: updated.error });
+        saveServerDbToDisk(serverDbStore);
+        return res.json({ ok: true, gateway: updated.gateway });
+    }
     if (action === 'bazarpay_verify') {
         if (!serverDbStore._bazarpay_pool || typeof serverDbStore._bazarpay_pool !== 'object') {
             serverDbStore._bazarpay_pool = {};
@@ -323,7 +382,9 @@ app.post('/api.php', (req, res) => {
                 paymentId: req.body?.paymentId,
                 orderId: result.body.orderId,
                 trxId: result.body.trxId,
+                customerTrxId: result.body.customerTrxId,
                 gateway: result.body.gateway,
+                matchMode: result.body.matchMode,
             });
             saveServerDbToDisk(serverDbStore);
         }
